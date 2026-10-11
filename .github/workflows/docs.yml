@@ -324,6 +324,14 @@ jobs:
             }
             writeFileSync(process.env.GITHUB_OUTPUT, "site=" + site + "\n", { flag: "a" });
           '
+      # The sitemap appflare.dev serves before this deploy, for IndexNow below
+      # to find the pages that changed. Missing (a first deploy, or the site is
+      # down) means every page is submitted.
+      - name: Save the live sitemap
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          SITE: ${{ steps.config.outputs.site }}
+        run: curl -fsS --retry 3 "${SITE}/sitemap.xml" -o "${RUNNER_TEMP}/previous-sitemap.xml" || true
       # First, since the site's service binding points at it.
       - name: Deploy the installer for appflare.dev
         if: steps.secrets.outputs.ready == 'true' && github.ref == 'refs/heads/main'
@@ -368,3 +376,16 @@ jobs:
             --retry-delay 10 --retry-all-errors "${www}/start/install/?from=ci" || true)
           [[ "${redirect}" == "301 ${SITE}/start/install/?from=ci" ]] ||
             echo "::warning::${www}/start/install/?from=ci answered \"${redirect}\", not a 301 to ${SITE}: the zone's www Redirect Rule is not set up yet (apps/docs/README.md)"
+      # Tells Bing and the other IndexNow engines which pages changed: new pages,
+      # pages whose <lastmod> moved, and on a push the docs pages too (they have
+      # no <lastmod> and change only with a commit). The key file is
+      # public/352e356927234335b6fd98fe348a99f4.txt. A refusal is a warning; the
+      # deploy already succeeded.
+      - name: Submit changed pages to IndexNow
+        if: steps.secrets.outputs.ready == 'true' && github.ref == 'refs/heads/main'
+        env:
+          UNDATED: ${{ github.event_name == 'push' && '--undated' || '' }}
+        run: |
+          node apps/docs/scripts/indexnow.ts apps/docs/dist/client/sitemap.xml \
+            "${RUNNER_TEMP}/previous-sitemap.xml" ${UNDATED} ||
+            echo "::warning::IndexNow did not take the submission; see the log above"
