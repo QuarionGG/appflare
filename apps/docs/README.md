@@ -22,6 +22,11 @@ every other request gets the static files' own answer.
   Signals, and names `sitemap.xml`. Cloudflare puts its Content Signals Policy
   comments above it.
 - `sitemap.xml` gives each app's page the day the catalog last tested the app.
+- After each appflare.dev deploy, the docs workflow submits the pages that
+  changed to IndexNow (Bing, Yandex and the others), comparing the new sitemap
+  with the one live before it (`scripts/indexnow.ts`). The key is in
+  `src/lib/indexnow.ts`, and the file the engines check it against is
+  `public/352e356927234335b6fd98fe348a99f4.txt`.
 - App pages and the front page carry schema.org JSON-LD
   (`src/lib/structured-data.ts`); docs pages link their Markdown as a
   `text/markdown` alternate.
