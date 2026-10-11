@@ -17,6 +17,7 @@ import {
   themeFromLabel,
   track,
   trackWhenSettled,
+  withoutForeignErrors,
   withoutManagerReferrer,
 } from "./analytics.ts";
 
@@ -361,5 +362,126 @@ describe("the referrer guard", () => {
     expect(beforeSend(event(`${manager}/`))?.properties.$referrer).toBe("$direct");
     stored.clear();
     expect(beforeSend(event(`${manager}/`))?.properties.$referrer).toBe(`${manager}/`);
+  });
+});
+
+describe("errors from other people's scripts", () => {
+  const X_IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/24A446 Twitter for iPhone/12.31.2";
+  const SAFARI_IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1";
+
+  /** An `$exception` event as PostHog builds it, with one frame per `[function, file]`. */
+  function error(
+    value: string,
+    frames: Array<[string, string]> | null,
+    userAgent: string = X_IPHONE,
+  ): CaptureResult {
+    return {
+      uuid: "0",
+      event: "$exception",
+      properties: {
+        $raw_user_agent: userAgent,
+        $exception_list: [
+          {
+            type: "ReferenceError",
+            value,
+            mechanism: { handled: false, synthetic: false },
+            ...(frames === null
+              ? {}
+              : {
+                  stacktrace: {
+                    type: "raw",
+                    frames: frames.map(([fn, filename]) => ({
+                      platform: "web:javascript",
+                      function: fn,
+                      filename,
+                      lineno: 1,
+                      colno: 120,
+                      in_app: true,
+                    })),
+                  },
+                }),
+          },
+        ],
+      },
+    };
+  }
+
+  it("drops what X's browser throws from the script it puts in every page", () => {
+    // The page itself is the file: the script is inline, not one of the site's.
+    const config = error("Can't find variable: CONFIG", [
+      ["updateGapFiller", "https://appflare.dev/apps/glance/"],
+      ["updateFooterPositions", "https://appflare.dev/apps/glance/"],
+    ]);
+    expect(withoutForeignErrors(config)).toBeNull();
+    const webkit = error(
+      "undefined is not an object (evaluating 'window.webkit.messageHandlers.scrollEventHandler')",
+      [["?", "https://appflare.dev/"]],
+    );
+    expect(withoutForeignErrors(webkit)).toBeNull();
+    const extension = error("x is not defined", [
+      ["inject", "chrome-extension://abcdefghijklmnop/content.js"],
+    ]);
+    expect(withoutForeignErrors(extension)).toBeNull();
+  });
+
+  it("keeps an error from an inline script of the page outside an app's own browser", () => {
+    // The page as the file says nothing about whose script it was.
+    const inline = error("boom", [["hydrate", "https://appflare.dev/apps/glance/"]], SAFARI_IPHONE);
+    expect(withoutForeignErrors(inline)).toBe(inline);
+    // A Home Screen web app reports a web view's user agent, without the app's name.
+    const homeScreen = error(
+      "boom",
+      [["hydrate", "https://appflare.dev/"]],
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    );
+    expect(withoutForeignErrors(homeScreen)).toBe(homeScreen);
+    const noAgent = error("boom", [["hydrate", "https://appflare.dev/"]], "");
+    expect(withoutForeignErrors(noAgent)).toBe(noAgent);
+    const otherSite = error("boom", [["f", "https://cdn.example.com/x.js"]], SAFARI_IPHONE);
+    expect(withoutForeignErrors(otherSite)).toBeNull();
+  });
+
+  it("keeps the site's own errors, even when another script called in", () => {
+    const own = error("Cannot read properties of undefined", [
+      ["AppPage", "https://appflare.dev/assets/_slug-Bq3x9Z.js"],
+    ]);
+    expect(withoutForeignErrors(own)).toBe(own);
+    const through = error("boom", [
+      ["handler", "https://appflare.dev/apps/glance/"],
+      ["onScroll", "https://appflare.dev/assets/main-Df8a1.js"],
+    ]);
+    expect(withoutForeignErrors(through)).toBe(through);
+  });
+
+  it("keeps an error with no stack, and every other event", () => {
+    const bare = error("Script error.", null);
+    expect(withoutForeignErrors(bare)).toBe(bare);
+    const empty = error("Script error.", []);
+    expect(withoutForeignErrors(empty)).toBe(empty);
+    const pageview: CaptureResult = { uuid: "0", event: "$pageview", properties: {} };
+    expect(withoutForeignErrors(pageview)).toBe(pageview);
+    expect(withoutForeignErrors(null)).toBeNull();
+  });
+
+  it("does not take another site's /assets/ for the site's own", () => {
+    const lookalike = error("boom", [["f", "https://appflare.dev.example.com/assets/main.js"]]);
+    expect(withoutForeignErrors(lookalike)).toBeNull();
+  });
+
+  it("is applied to everything PostHog sends", () => {
+    vi.stubGlobal("window", {
+      location: { href: "https://appflare.dev/apps/glance/" },
+      localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    });
+    const beforeSend = posthogOptions.before_send;
+    if (typeof beforeSend !== "function") throw new Error("before_send is not a function");
+    const config = error("Can't find variable: CONFIG", [
+      ["updateFooterPositions", "https://appflare.dev/apps/glance/"],
+    ]);
+    expect(beforeSend(config)).toBeNull();
+    const own = error("boom", [["f", "https://appflare.dev/assets/main-Df8a1.js"]]);
+    expect(beforeSend(own)).toBe(own);
   });
 });
