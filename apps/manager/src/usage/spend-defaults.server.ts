@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { readAccountPlan } from "../account/plan.server";
 import type { Database } from "../db/client";
 import { settings, usage_activity } from "../db/schema";
 import { SETTING } from "../db/settings";
@@ -7,6 +8,9 @@ import type { SetSpendDefaultsInput } from "./spend-defaults";
 import { ACTIVITY_FACTS } from "./store/activity";
 import { readSpendDefaults } from "./store/defaults.server";
 import { type SpendDefaults, spendDefaultsPatchSchema } from "./store/spend-settings";
+
+export const FREE_DOLLARS_REFUSAL =
+  "Workers Free can't bill you for Workers, so there's no dollar cap or budget.";
 
 /** A value as JSON with its keys sorted, so two objects compare by content. */
 function canonical(value: unknown): string {
@@ -51,7 +55,11 @@ export async function changeSpendDefaults(
   patch: SetSpendDefaultsInput,
   by: { userId: string; now?: Date },
 ): Promise<SpendDefaults> {
-  const before = await readSpendDefaults(db);
+  const [before, plan] = await Promise.all([readSpendDefaults(db), readAccountPlan(db)]);
+  // Workers Free bills nothing for Workers: a dollar cap or budget there would never trip.
+  if (plan === "free" && (patch.cap?.on === true || patch.budget?.on === true)) {
+    throw new Error(FREE_DOLLARS_REFUSAL);
+  }
   const changed = (Object.keys(patch) as (keyof SpendDefaults)[]).filter(
     (key) => patch[key] !== undefined && canonical(patch[key]) !== canonical(before[key]),
   );

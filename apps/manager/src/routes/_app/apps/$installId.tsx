@@ -77,6 +77,7 @@ import { NOT_REACHABLE_NOTE, type OtherWorkerView } from "../../../installs/othe
 import type { InstallSettings } from "../../../installs/reconfigure.server";
 import type { SnapshotView } from "../../../installs/versions.server";
 import { INSTALL_PAGE_STALE_MS } from "../../../router-timing";
+import { UsageTab } from "../../../usage/tab/usage-tab";
 
 const TABS = APP_TABS;
 type Tab = AppTab;
@@ -89,7 +90,9 @@ type Tab = AppTab;
  * an app needs for itself is explained where it is entered: the install
  * form, Settings, and a self-deploying app's token card), and, at the bottom for admins, the
  * danger zone (uninstall, finishing an uninstall, or once uninstalled
- * deleting what was kept or forgetting the app). Settings: the app's
+ * deleting what was kept or forgetting the app). Usage: what it used of
+ * each product, its spend protection and recent activity, read when the
+ * tab opens. Settings: the app's
  * settings and secrets (admins change them and redeploy) and automatic
  * updates. Domains and email: the workers.dev switch, custom domains, external domains,
  * Cloudflare Access protection, email routes. Resources: what the install created, and what an uninstall kept.
@@ -190,7 +193,15 @@ function InstallPage() {
         />
       </div>
       {tab === "overview" && <OverviewTab install={install} isAdmin={isAdmin} />}
-      {/* TODO: the Usage tab's content (usage by product, chart, spend protection, recent activity) is not built yet, so the tab shows nothing. */}
+      {tab === "usage" && (
+        <UsageTab
+          installId={install.id}
+          app={install.label}
+          isAdmin={isAdmin}
+          // Read again whenever the page is (after a Pause or Resume, say).
+          reloadKey={install}
+        />
+      )}
       {tab === "settings" && (
         <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
       )}

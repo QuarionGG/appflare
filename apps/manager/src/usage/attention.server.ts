@@ -5,15 +5,8 @@ import { createDb, type Database } from "../db/client";
 import { app_usage_state } from "../db/schema";
 import type { StillPastCap, UsageAttention } from "./attention";
 import { parsePauseCause } from "./attention-cause";
-import {
-  DAY_MS,
-  dayStart,
-  freeDailyLimit,
-  PRODUCTS,
-  type ProductKey,
-  periodEnd,
-  periodStart,
-} from "./math";
+import { stillPastCap } from "./cap-status";
+import { DAY_MS, dayStart, freeDailyLimit, PRODUCTS, type ProductKey } from "./math";
 import { listActivity } from "./store/activity.server";
 import { effectiveSpendSettingsOf } from "./store/app-settings.server";
 import { listOpenPauses } from "./store/pauses.server";
@@ -240,28 +233,11 @@ export async function readUsageAttention(
   // Paused apps: who paused them and why; whether Resume must deal with the cap.
   for (const pause of open) {
     const cause = parsePauseCause(pause.reason, pause.detailJson);
-    let stillPastCap: StillPastCap | null = null;
     const effective = settings.get(pause.installId);
-    if (cause?.reason === "cap" && effective !== undefined) {
-      const cap = effective.triggers.cap;
-      const setAside = effective.capSetAsideUntil !== null && effective.capSetAsideUntil > now;
-      if (
-        effective.autoPause.on &&
-        cap.on &&
-        cap.amount !== null &&
-        !setAside &&
-        cap.period === cause.period &&
-        periodStart(cap.period, pause.pausedAt) === periodStart(cap.period, now) &&
-        (cause.spent ?? cause.amount) >= cap.amount
-      ) {
-        stillPastCap = {
-          amount: cap.amount,
-          period: cap.period,
-          spent: cause.spent ?? null,
-          resetsAt: periodEnd(cap.period, now),
-        };
-      }
-    }
+    const pastCap: StillPastCap | null =
+      effective === undefined
+        ? null
+        : stillPastCap({ pausedAt: pause.pausedAt, cause }, effective, now);
     rows.push({
       kind: "paused",
       installId: pause.installId,
@@ -269,7 +245,7 @@ export async function readUsageAttention(
       pausedBy: pause.pausedBy === "auto" ? null : (names.get(pause.pausedBy) ?? "Someone"),
       cause,
       loopSince: states.get(pause.installId)?.unusualSince ?? null,
-      stillPastCap,
+      stillPastCap: pastCap,
     });
   }
   return rows;

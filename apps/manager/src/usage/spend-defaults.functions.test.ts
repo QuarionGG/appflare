@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -86,6 +87,7 @@ describe("setSpendDefaults", () => {
 
   it("saves an admin's change and records which settings changed, for the account", async () => {
     requireRole.mockResolvedValue(ADMIN);
+    await writeAccountPlan(db(), "paid");
     const saved = await set({
       data: {
         autoPause: true,
@@ -117,8 +119,24 @@ describe("setSpendDefaults", () => {
     expect(await listActivity(db())).toEqual([]);
   });
 
+  it("refuses a dollar cap or a budget on Workers Free, and changes nothing", async () => {
+    requireRole.mockResolvedValue(ADMIN);
+    await expect(set({ data: { cap: { on: true, amount: 25, period: "week" } } })).rejects.toThrow(
+      "Workers Free can't bill you for Workers",
+    );
+    await expect(set({ data: { budget: { on: true, amount: 40 } } })).rejects.toThrow(
+      "no dollar cap or budget",
+    );
+    expect(await readSpendDefaults(db())).toEqual(DEFAULT_SPEND_DEFAULTS);
+    expect(await listActivity(db())).toEqual([]);
+    // Turning them off, and everything else, still saves.
+    await set({ data: { cap: { on: false, amount: 10, period: "month" }, autoPause: true } });
+    expect(await readSpendDefaults(db())).toMatchObject({ autoPause: true, cap: { on: false } });
+  });
+
   it("turns the unusual-usage alert off with 0 and the budget on", async () => {
     requireRole.mockResolvedValue(ADMIN);
+    await writeAccountPlan(db(), "paid");
     await set({ data: { unusualFactor: 0 } });
     const saved = await set({ data: { budget: { on: true, amount: 40 } } });
     expect(saved).toMatchObject({ unusualFactor: 0, budget: { on: true, amount: 40 } });

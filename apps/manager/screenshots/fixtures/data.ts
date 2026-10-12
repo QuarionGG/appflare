@@ -16,8 +16,10 @@ import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
 import { loopingApp, spendApp, spendData } from "../../src/test/spend-fixture";
+import { type UsageScenario, usageTabFixture } from "../../src/test/usage-tab-fixture";
 import type { UsageAttention } from "../../src/usage/attention";
 import type { SpendProtectionData } from "../../src/usage/spend-defaults.functions";
+import type { UsageTabData } from "../../src/usage/tab";
 import catalogIndexJson from "./catalog.json";
 import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
@@ -775,6 +777,31 @@ function argument(args: unknown[], key: string): string {
   return first?.data?.[key] ?? "";
 }
 
+/**
+ * An app's Usage tab: Service status calm on Workers Paid; or
+ * (`?fixture=usage-runaway`) far above normal after a settings change, its
+ * loop on Free having used up the day's free Durable Objects requests
+ * (`usage-limit`), paused past its daily cap (`usage-paused`), Short links
+ * busier than usual (`usage-busy`), Contact forms installed minutes ago
+ * (`usage-fresh`), the connection without the usage permissions
+ * (`usage-reconnect`), or a member's view (`usage-member`). Times are
+ * relative to when the page loads.
+ */
+function usageTabData(): UsageTabData {
+  const scenarios: Record<string, UsageScenario> = {
+    "usage-runaway": "runaway",
+    "usage-limit": "limit",
+    "usage-paused": "paused",
+    "usage-busy": "busy",
+    "usage-fresh": "fresh",
+    "usage-reconnect": "reconnect",
+  };
+  return usageTabFixture(scenarios[variant ?? ""] ?? "calm", {
+    now: Date.now(),
+    isAdmin: variant !== "usage-member",
+  });
+}
+
 export function fixture(name: string, args: unknown[]): unknown {
   const result: Record<string, () => unknown> = {
     // Setup at the owner step: the token is saved, and nobody exists yet.
@@ -791,9 +818,9 @@ export function fixture(name: string, args: unknown[]): unknown {
         id: "user-ada",
         name: "Ada Lovelace",
         email: "ada@example.com",
-        // A member's view of the settings (`?fixture=spend-member`).
-        role: variant === "spend-member" ? "member" : "admin",
-        isOwner: variant !== "spend-member",
+        // A member's view of the settings (`?fixture=spend-member`) or of an app's Usage tab (`usage-member`).
+        role: variant === "spend-member" || variant === "usage-member" ? "member" : "admin",
+        isOwner: variant !== "spend-member" && variant !== "usage-member",
       },
       accountId: view.accountId,
     }),
@@ -920,6 +947,17 @@ export function fixture(name: string, args: unknown[]): unknown {
     startCloudflareReconnect: () => ({ url: "#", origin: "https://appflare.example.com" }),
     getDangerZoneState: () => ({ canRemove: false, reason: null }),
     getSpendProtection: () => spendFixture(),
+    getUsageTab: () => usageTabData(),
+    setAppSpend: () => usageTabData(),
+    createAlertRuleFn: () => usageTabData(),
+    updateAlertRuleFn: () => usageTabData(),
+    deleteAlertRuleFn: () => usageTabData(),
+    setObservabilityFn: () => ({
+      installId: "install-formzero",
+      state: "on",
+      workers: [{ workerName: "formzero", on: true }],
+      problem: null,
+    }),
     setSpendDefaults: () => ({
       ...spendFixture().defaults,
       ...(args[0] as { data?: object } | undefined)?.data,

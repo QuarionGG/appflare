@@ -2,11 +2,11 @@ import { Button, Link, Text, useKumoToastManager } from "@cloudflare/kumo";
 import { PauseIcon, PlayIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { appTabLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { type StillPastCap, stillPastCapCopy } from "../usage/attention";
 import { pauseAppFn, resumeAppFn } from "../usage/pause.functions";
+import { appSpendHref } from "../usage/ui/format";
 import { readerClock } from "./attention-copy";
 
 /**
@@ -155,9 +155,7 @@ export function ResumeAppButton({
       }}
     >
       <Text>
-        {/* TODO: link to the Usage tab's spend protection section (`#spend-protection`) once the tab has it. */}
-        {copy.body} To keep a cap, <Link href={appTabLink(installId, "usage")}>change it</Link>{" "}
-        instead.
+        {copy.body} To keep a cap, <Link href={appSpendHref(installId)}>change it</Link> instead.
       </Text>
     </ConfirmDialog>
   );

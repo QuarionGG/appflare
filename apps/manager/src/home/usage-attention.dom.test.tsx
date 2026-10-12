@@ -271,7 +271,9 @@ describe("Pause and Resume", () => {
     await settle();
     expect(server.resumeAppFn).not.toHaveBeenCalled();
     expect(dialog().textContent).toContain("It's still past its daily cap: $2.04 of $2.00.");
-    expect(dialog().querySelector("a")?.getAttribute("href")).toBe("/apps/status?tab=usage");
+    expect(dialog().querySelector("a")?.getAttribute("href")).toBe(
+      "/apps/status?tab=usage#spend-protection",
+    );
     await act(async () => button(dialog(), "Resume until the cap resets").click());
     await settle();
     expect(server.resumeAppFn).toHaveBeenCalledWith({

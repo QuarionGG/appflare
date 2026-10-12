@@ -47,7 +47,8 @@ export function ProgressBar({
           data-part="pace"
           className={cn(
             "absolute inset-y-0 left-0 rounded-full opacity-40",
-            toward ? "text-kumo-danger" : "text-kumo-brand",
+            // The brand blue of the spent part (Kumo's text-kumo-brand is another colour).
+            toward ? "text-kumo-danger" : "text-(--color-kumo-brand)",
           )}
           style={{
             width: at(projected),

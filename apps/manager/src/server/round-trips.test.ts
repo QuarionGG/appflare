@@ -20,8 +20,11 @@ import { fakeCloudflare } from "../test/fake-cloudflare";
 import { probeRoundTrips, type RoundTrips } from "../test/round-trips";
 import { cacheIndex, INSTALL_ID, seedInstall } from "../test/seed-install";
 import { readSpendOverview, writeSpendOverviewSnapshot } from "../usage/overview.server";
+import { createAlertRule } from "../usage/store/alert-rules.server";
 import { openPause } from "../usage/store/pauses.server";
+import { recordHourlyUsage } from "../usage/store/series.server";
 import { initialUsageState, writeUsageStates } from "../usage/store/usage-state.server";
+import { readUsageTab } from "../usage/tab.server";
 import { readGate } from "./gate.server";
 
 /**
@@ -207,6 +210,39 @@ describe("round trips of the signed-in pages", () => {
     report("spend protection, numbers computed", p);
     expect(p.waves()).toBeLessThanOrEqual(3);
     expect(p.ops.filter((o) => o.label.includes("usage_hourly")).length).toBeGreaterThan(0);
+  });
+
+  it("an app's Usage tab: two rounds beside the session check, the usage read by install and time", async () => {
+    const db = createDb(env.DB);
+    const hour = Math.floor(Date.now() / 3_600_000) * 3_600;
+    await recordHourlyUsage(db, [
+      { installId: INSTALL_ID, product: "workers_requests", hour: hour - 3_600, value: 1200 },
+      { installId: INSTALL_ID, product: "workers_requests", hour, value: 300 },
+      { installId: "i2", product: "workers_requests", hour, value: 900 },
+    ]);
+    await createAlertRule(
+      db,
+      INSTALL_ID,
+      { kind: "spent", unit: "usd", amount: 6, period: "month" },
+      { userId: "someone" },
+    );
+    await writeSpendOverviewSnapshot(env.DB);
+    const p = start();
+    const [session, tab] = await Promise.all([
+      sessionLoader("copy")(),
+      readUsageTab(env.DB, INSTALL_ID, { isAdmin: true }),
+    ]);
+    expect(session.user.role).toBe("admin");
+    expect(tab?.products.map((u) => u.key)).toEqual(["workers_requests"]);
+    expect(tab?.rules).toHaveLength(1);
+    report("usage tab", p);
+    // The rules, then their firings; everything else in the first round.
+    expect(p.waves()).toBeLessThanOrEqual(2);
+    expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
+    // Every read of the usage tables is bounded by time (and the app's own by the install).
+    const usageReads = p.ops.filter((o) => /from "?usage_(hourly|daily)"?/.test(o.label));
+    expect(usageReads.length).toBeGreaterThan(0);
+    for (const read of usageReads) expect(read.label).toMatch(/"?(hour|day)"? >= \?/);
   });
 
   it("an app's catalog page: two rounds, and the account's Workers listed once a minute", async () => {

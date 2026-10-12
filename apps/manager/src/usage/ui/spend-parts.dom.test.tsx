@@ -51,7 +51,8 @@ describe("ProgressBar", () => {
     // Scaled to 125% of the target: $2 is 16% of $12.50.
     expect(part("spent")?.style.width).toBe("16%");
     expect(part("spent")?.className).toContain("bg-kumo-brand");
-    expect(part("pace")?.className).toContain("text-kumo-brand");
+    // The pace in the spent part's blue (`text-kumo-brand` is Cloudflare's orange).
+    expect(part("pace")?.className).toContain("text-(--color-kumo-brand)");
     expect(part("target")?.style.left).toBe("80%");
     expect(part("target")?.className).toContain("bg-kumo-contrast");
     expect(text()).toContain("Cap $10.00");
