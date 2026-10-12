@@ -13,6 +13,7 @@ import {
   PLAN_DETECTION_FEATURE,
   permissionName,
   SANDBOX_BUILDS_FEATURE,
+  SPEND_PROTECTION_FEATURE,
   splitPermissionGroups,
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
@@ -58,6 +59,8 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
     "Installing an app that keeps its data in a PostgreSQL or MySQL database outside Cloudflare: Appflare creates a Hyperdrive configuration from the connection string you enter, replaces it when you change the string, and deletes it on uninstall",
   [PIPELINES_FEATURE]:
     "Installing an app that streams events into R2 (Workers Paid): Appflare creates a Pipelines stream, sink and pipeline for each stream the app uses, and deletes them on uninstall",
+  [SPEND_PROTECTION_FEATURE]:
+    "Showing each app's usage, sending the usage alerts you set, and pausing an app that runs away: Appflare reads each app's usage from Cloudflare's analytics, and an app's Workers Logs when you turn them on for it",
 };
 
 /** What a rotation saved. */

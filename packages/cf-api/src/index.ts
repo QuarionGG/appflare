@@ -51,6 +51,8 @@ export type { CloudflareClient } from "./client";
 export { createClient } from "./client";
 export type { CloudflareApiErrorInit, CloudflareError } from "./errors";
 export { CloudflareApiError } from "./errors";
+export type { GraphQLErrorItem } from "./graphql";
+export { CloudflareGraphQLError, GRAPHQL_PATH } from "./graphql";
 export type {
   ClientOptions,
   CloudflareEnvelope,
@@ -129,6 +131,21 @@ export { isAddressableObjectKey } from "./namespaces/r2";
 export type { CatalogMaintenanceUpdate, R2Catalog } from "./namespaces/r2-catalog";
 export { R2_CATALOG_NOT_FOUND_CODE } from "./namespaces/r2-catalog";
 export type {
+  UsageDataset,
+  UsageOptions,
+  UsageQuery,
+  UsageRange,
+  UsageRow,
+} from "./namespaces/usage";
+export {
+  createUsage,
+  USAGE_ID_BATCH,
+  USAGE_MAX_ROWS,
+  USAGE_MAX_WINDOW_HOURS,
+  USAGE_RETENTION_DAYS,
+  UsageRowLimitError,
+} from "./namespaces/usage";
+export type {
   CreateVectorizeIndexArgs,
   VectorizeConfig,
 } from "./namespaces/vectorize";
@@ -154,6 +171,7 @@ export {
   isWorkflowCronPaidOnly,
   isWorkflowNotFound,
   WORKFLOW_CRON_REQUIRES_PAID_PLAN_CODE,
+  WORKFLOW_INSTANCES_PER_PAGE,
   WORKFLOW_NOT_FOUND_CODE,
 } from "./namespaces/workflows";
 export type {
@@ -192,16 +210,19 @@ export {
   exchangeCode,
   isOAuthRelayOrigin,
   MANAGER_OAUTH_API_SCOPES,
+  MANAGER_OAUTH_ONLY_GROUPS,
   MANAGER_OAUTH_SCOPE_BY_GROUP,
   MANAGER_OAUTH_SCOPES,
   MANAGER_OAUTH_SCOPES_BY_PROBE,
   missingManagerScopes,
+  missingSpendProtectionScopes,
   OAUTH_INVALID_RESPONSE,
   OAUTH_NETWORK_ERROR,
   OFFLINE_ACCESS_SCOPE,
   pkceChallenge,
   refreshGrant,
   revokeToken,
+  SPEND_PROTECTION_OAUTH_SCOPES,
   signInCanProbe,
 } from "./oauth";
 

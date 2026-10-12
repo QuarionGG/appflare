@@ -4,6 +4,7 @@ import type {
   AccountSubdomain,
   DurableObjectNamespace,
   ScriptMetadata,
+  ScriptSettings,
   ScriptUploadResult,
   SubdomainResult,
   WorkerSchedule,
@@ -73,6 +74,28 @@ export function createWorkers(http: HttpApi) {
       const form = new FormData();
       form.set("settings", JSON.stringify(settings));
       return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/settings`), { form });
+    },
+
+    /**
+     * `GET /workers/scripts/{name}/script-settings`: the settings that are
+     * not part of a version, Workers Observability among them
+     * (`observability` is `null` on a script that never had it set).
+     */
+    getScriptSettings(name: string): Promise<ScriptSettings> {
+      return http.result("GET", http.acct(`/workers/scripts/${enc(name)}/script-settings`));
+    },
+
+    /**
+     * Turns a Worker's Workers Observability (Workers Logs) on or off:
+     * `PATCH /workers/scripts/{name}/script-settings` with
+     * `{ observability: { enabled } }` alone, as JSON (as wrangler sends
+     * it), so no other setting can change. It creates no new version and
+     * needs only the Workers Scripts permission.
+     */
+    setObservability(name: string, enabled: boolean): Promise<ScriptSettings> {
+      return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/script-settings`), {
+        json: { observability: { enabled } },
+      });
     },
 
     /** `GET /workers/scripts/{name}/bindings`. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
 import type { CapabilityRowsInput, CatalogNeeds } from "../capabilities/capability-rows";
-import { accountAttentionRows, accountRowLink } from "./account-attention";
+import { accountAttentionRows, accountRowLink, USAGE_RECONNECT } from "./account-attention";
 
 const ACC = "acc0000000000000000000000000000a";
 
@@ -104,6 +104,37 @@ describe("accountAttentionRows", () => {
     expect(
       accountAttentionRows({ ...input({}), connection: { kind: "oauth", missingScopes: [] } }, []),
     ).toEqual([]);
+  });
+
+  it("asks a sign-in from before usage to reconnect for usage, not for refused permissions", () => {
+    const usageScopes = [
+      "account-analytics.read",
+      "notifications.write",
+      "notifications.read",
+      "workers-observability.read",
+    ];
+    const before = {
+      ...input({}),
+      connection: { kind: "oauth" as const, missingScopes: usageScopes },
+    };
+    const row = accountAttentionRows(before, []).find((r) => r.id === "token-permissions");
+    expect(row).toMatchObject({
+      name: "Sign-in permissions",
+      found: USAGE_RECONNECT.found,
+      why: "Reconnect to Cloudflare to see each app's usage and turn on spend protection.",
+      dismissible: false,
+      reconnect: true,
+    });
+    // Missing any other permission keeps the usual words.
+    const other = accountAttentionRows(
+      {
+        ...input({}),
+        connection: { kind: "oauth", missingScopes: [...usageScopes, "d1.write"] },
+      },
+      [],
+    ).find((r) => r.id === "token-permissions");
+    expect(other?.found).toBe("Some permissions are missing");
+    expect(other?.why).toBe("Appflare can only do what you allowed when you signed in.");
   });
 
   it("links each row to its own place on Your account", () => {

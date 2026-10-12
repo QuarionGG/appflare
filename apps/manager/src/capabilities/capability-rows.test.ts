@@ -18,6 +18,7 @@ import {
   capabilityRows,
   catalogNeeds,
   installedNeeds,
+  onlyUsageScopesMissing,
   progressLabel,
   rowsNeedingAction,
 } from "./capability-rows";
@@ -581,6 +582,31 @@ describe("capabilityRows", () => {
       expect(rowsNeedingAction(Object.values(rows(EVERYTHING, { connection: SIGNED_IN })))).toEqual(
         [],
       );
+    });
+
+    it("says a sign-in from before usage was never asked for its new permissions", () => {
+      const usageScopes = [
+        "account-analytics.read",
+        "notifications.write",
+        "notifications.read",
+        "workers-observability.read",
+      ];
+      const row = rows(EVERYTHING, {
+        connection: { kind: "oauth", missingScopes: usageScopes },
+      })["token-permissions"];
+      expect(row).toMatchObject({ state: "needs-action", action: RECONNECT });
+      expect(row.details.problem).toBe(
+        "Usage and spend protection need new permissions, which Appflare did not ask for when you signed in: Account Analytics, Notifications: Edit, Notifications: Read and Workers Observability. Reconnect Cloudflare to see each app's usage and turn on spend protection.",
+      );
+      expect(row.details.problem).not.toContain("not allowed");
+      // Any other missing permission keeps the usual words.
+      const mixed = rows(EVERYTHING, {
+        connection: { kind: "oauth", missingScopes: [...usageScopes, "d1.write"] },
+      })["token-permissions"];
+      expect(mixed.details.problem).toMatch(/^These were not allowed when you signed in/);
+      expect(onlyUsageScopesMissing(usageScopes)).toBe(true);
+      expect(onlyUsageScopesMissing(["account-analytics.read", "d1.write"])).toBe(false);
+      expect(onlyUsageScopesMissing([])).toBe(false);
     });
 
     it("needs action, with Reconnect Cloudflare, when Cloudflare refused a read it cannot work without", () => {

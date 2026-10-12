@@ -62,6 +62,17 @@ export function createContainers(http: HttpApi) {
     },
 
     /**
+     * `PATCH /containers/applications/{id}` with `{ max_instances }` alone.
+     * Lowering it to 0 stops every running instance within about 15
+     * seconds, and requests that need one wait; setting it back lets them
+     * start again within about 10. Read the current value first
+     * ({@link getApplication}) to restore it later.
+     */
+    setMaxInstances(id: string, maxInstances: number): Promise<ContainerApplication> {
+      return http.result("PATCH", apps(`/${enc(id)}`), { json: { max_instances: maxInstances } });
+    },
+
+    /**
      * `DELETE /containers/applications/{id}`. Deleting the Worker whose
      * Durable Objects an application backs leaves the application behind,
      * so it is deleted on its own.

@@ -15,6 +15,7 @@ import { createQueues } from "./namespaces/queues";
 import { createR2 } from "./namespaces/r2";
 import { createR2Catalog } from "./namespaces/r2-catalog";
 import { createTokens } from "./namespaces/tokens";
+import { createUsage } from "./namespaces/usage";
 import { createVectorize } from "./namespaces/vectorize";
 import { createVersions } from "./namespaces/versions";
 import { createWorkerDomains } from "./namespaces/worker-domains";
@@ -46,6 +47,7 @@ export interface CloudflareClient {
   readonly billing: ReturnType<typeof createBilling>;
   readonly customHostnames: ReturnType<typeof createCustomHostnames>;
   readonly analyticsEngine: ReturnType<typeof createAnalyticsEngine>;
+  readonly usage: ReturnType<typeof createUsage>;
 }
 
 /**
@@ -80,5 +82,6 @@ export function createClient(options: ClientOptions): CloudflareClient {
     billing: createBilling(http),
     customHostnames: createCustomHostnames(http),
     analyticsEngine: createAnalyticsEngine(http),
+    usage: createUsage(http),
   };
 }

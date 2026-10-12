@@ -4,6 +4,7 @@ import {
   type CatalogNeeds,
   capabilityAnchor,
   capabilityRows,
+  onlyUsageScopesMissing,
   rowsNeedingAction,
 } from "../capabilities/capability-rows";
 import { settingsLink } from "../components/settings-links";
@@ -39,17 +40,29 @@ export interface InstallNeeds {
   needs: CatalogNeeds;
 }
 
+/** The sign-in row's words when all it lacks is what usage and spend protection added. */
+export const USAGE_RECONNECT = {
+  found: "New permissions for usage",
+  why: "Reconnect to Cloudflare to see each app's usage and turn on spend protection.",
+} as const;
+
 export function accountAttentionRows(
   data: CapabilityRowsInput,
   installs: readonly InstallNeeds[],
 ): AccountAttentionRow[] {
+  const usageOnly =
+    data.connection?.kind === "oauth" && onlyUsageScopesMissing(data.connection.missingScopes);
   return rowsNeedingAction(capabilityRows(data)).map((row) => {
     const need = NEED_OF[row.id];
+    const words =
+      row.id === "token-permissions" && usageOnly
+        ? USAGE_RECONNECT
+        : { found: row.details.found, why: row.why };
     return {
       id: row.id,
       name: row.name,
-      found: row.details.found,
-      why: row.why,
+      found: words.found,
+      why: words.why,
       dismissible: need !== null,
       ...(row.action?.kind === "reconnect" ? { reconnect: true } : {}),
       neededBy:

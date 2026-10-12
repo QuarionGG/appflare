@@ -24,7 +24,8 @@
  * where each key comes from.
  */
 
-import { MANAGER_OAUTH_SCOPE_BY_GROUP } from "@appflare/cf-api/oauth";
+import { MANAGER_OAUTH_ONLY_GROUPS, MANAGER_OAUTH_SCOPE_BY_GROUP } from "@appflare/cf-api/oauth";
+import { MANAGER_SCOPE_REASONS } from "@appflare/cf-api/scope-reasons";
 import {
   appTokenPermissionGroup,
   type TokenPermission,
@@ -123,6 +124,16 @@ export const DATABASE_ELSEWHERE_FEATURE = "Apps with a database elsewhere";
  * not this one.
  */
 export const PIPELINES_FEATURE = "Apps that stream events";
+
+/**
+ * Each app's usage, the usage alerts an admin sets and pausing an app that
+ * runs away: Appflare reads every product's usage from Cloudflare's GraphQL
+ * Analytics, and an app's Workers Logs when they are on. Without these the
+ * rest of Appflare works and the usage pages say what is missing. (A
+ * Cloudflare sign-in also asks for Notifications, for a later version; the
+ * token leaves it out until something uses it.)
+ */
+export const SPEND_PROTECTION_FEATURE = "Usage and spend protection";
 
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
@@ -246,6 +257,27 @@ export const TOKEN_PERMISSION_GROUPS = [
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.
   { key: "workers_tail", type: "read", label: "Workers Tail" },
+  // Read each app's usage over GraphQL Analytics (`POST /graphql`):
+  // "Account Analytics Read" in the API's group list. Key
+  // `account_analytics` is in the template page's key table.
+  {
+    key: "account_analytics",
+    type: "read",
+    label: "Account Analytics",
+    onlyFor: SPEND_PROTECTION_FEATURE,
+  },
+  // Read an app's Workers Logs while its usage is too new for the analytics
+  // ("Workers Observability Read" in the API's group list). Turning the logs
+  // on or off is a script setting, covered by Workers Scripts. Not in the
+  // template page's table: `workers_observability` is the key public
+  // template links use for the group (NuxtHub's token link, for one), and
+  // the label rule above gives the same.
+  {
+    key: "workers_observability",
+    type: "read",
+    label: "Workers Observability",
+    onlyFor: SPEND_PROTECTION_FEATURE,
+  },
 ] as const satisfies readonly PermissionGroup[];
 
 /** The token name the dashboard form is prefilled with. */
@@ -256,12 +288,18 @@ export const TOKEN_NAME = "Appflare";
  * it stands for ("Workers Scripts"), so a sign-in that lacks one is
  * described in the same words as a token that does.
  */
-export const MANAGER_SCOPE_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
-  TOKEN_PERMISSION_GROUPS.flatMap((group) => {
+export const MANAGER_SCOPE_LABELS: Readonly<Record<string, string>> = Object.fromEntries([
+  ...TOKEN_PERMISSION_GROUPS.flatMap((group) => {
     const scope = (MANAGER_OAUTH_SCOPE_BY_GROUP as Record<string, string | null>)[group.key];
     return scope === null || scope === undefined ? [] : [[scope, group.label]];
   }),
-);
+  // Scopes only a sign-in asks for have no token group: named as the
+  // install page names them.
+  ...MANAGER_OAUTH_ONLY_GROUPS.map((group) => [
+    MANAGER_OAUTH_SCOPE_BY_GROUP[group],
+    MANAGER_SCOPE_REASONS[group].label,
+  ]),
+]);
 
 /** The groups every install needs, and the ones only an optional feature uses. */
 export function splitPermissionGroups(

@@ -2,10 +2,58 @@ import { describe, expect, it } from "vitest";
 import type { CapabilityProbe } from "./capabilities";
 import {
   MANAGER_OAUTH_API_SCOPES,
+  MANAGER_OAUTH_ONLY_GROUPS,
   MANAGER_OAUTH_SCOPE_BY_GROUP,
   MANAGER_OAUTH_SCOPES_BY_PROBE,
+  missingManagerScopes,
+  missingSpendProtectionScopes,
+  SPEND_PROTECTION_OAUTH_SCOPES,
   signInCanProbe,
 } from "./oauth-scopes";
+
+describe("OAuth scopes of usage and spend protection", () => {
+  const NEW_SCOPES = [
+    "account-analytics.read",
+    "notifications.write",
+    "notifications.read",
+    "workers-observability.read",
+  ];
+
+  it("asks every sign-in for analytics, Cloudflare's alerts and Workers Logs", () => {
+    for (const scope of NEW_SCOPES) expect(MANAGER_OAUTH_API_SCOPES).toContain(scope);
+  });
+
+  it("counts for usage only the scopes it reads with, which a token can carry too", () => {
+    expect([...SPEND_PROTECTION_OAUTH_SCOPES]).toEqual([
+      "account-analytics.read",
+      "workers-observability.read",
+    ]);
+    const tokenless = MANAGER_OAUTH_ONLY_GROUPS.map((g) => MANAGER_OAUTH_SCOPE_BY_GROUP[g]);
+    expect(tokenless.sort()).toEqual(["notifications.read", "notifications.write"]);
+    for (const scope of SPEND_PROTECTION_OAUTH_SCOPES) expect(tokenless).not.toContain(scope);
+  });
+
+  it("names the ones a grant made before they were asked for lacks", () => {
+    const older = MANAGER_OAUTH_API_SCOPES.filter((s) => !NEW_SCOPES.includes(s));
+    expect(missingSpendProtectionScopes(older)).toEqual([
+      "account-analytics.read",
+      "workers-observability.read",
+    ]);
+    // The manager's own check lists all four, so its reconnect prompt names them.
+    expect(missingManagerScopes(older)).toEqual(NEW_SCOPES);
+    // Without the notification scopes, usage still works.
+    expect(
+      missingSpendProtectionScopes([
+        ...older,
+        "account-analytics.read",
+        "workers-observability.read",
+      ]),
+    ).toEqual([]);
+    expect(missingSpendProtectionScopes([...older, "account-analytics.read"])).toEqual([
+      "workers-observability.read",
+    ]);
+  });
+});
 
 /**
  * Every capability probe a manager connected with Cloudflare sign-in runs
