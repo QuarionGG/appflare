@@ -386,6 +386,23 @@ describe("the rows' words", () => {
       "Restoring the database of Links did not finish",
     );
     expect(at({ kind: "reconfigure" })).toBe("Saving the settings of Links did not finish");
+    expect(at({ kind: "pause" })).toBe("Pausing Links did not finish");
+    expect(at({ kind: "resume" })).toBe("Resuming Links did not finish");
+  });
+
+  it("says what a failed pause or resume leaves", () => {
+    const line = (kind: string) =>
+      attentionCopy({
+        kind: "failed-job",
+        label: "Links",
+        job: job({ id: "j", installId: "a", kind }),
+      } as Parameters<typeof attentionCopy>[0]).description;
+    expect(line("pause")).toBe(
+      "It may still be running and using Cloudflare. The log shows the step that failed and why.",
+    );
+    expect(line("resume")).toBe(
+      "It stays paused; resume it again to carry on. The log shows the step that failed and why.",
+    );
   });
 
   it("names no Worker, and gives every row a title and a line", () => {

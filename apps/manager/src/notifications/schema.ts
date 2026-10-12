@@ -12,7 +12,7 @@ import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlit
  *   became available, a job ended, ...). `dedupe_key` makes each one happen
  *   once: per install and version, per health episode, per job, per change
  *   of an external domain's state, per unusual-usage episode, per usage
- *   alert and period, per pause.
+ *   alert and period, per pause, per pause job that failed.
  * - `notification_deliveries`: one row per event and channel, the outbox the
  *   delivery unit works through, with retries. A channel hears about each
  *   event at most once.
@@ -35,6 +35,7 @@ export const NOTIFICATION_EVENTS = [
   "usage_limit_near",
   "app_paused",
   "app_resumed",
+  "app_pause_failed",
   "budget_reached",
   "manager_update_available",
   "domain_active",

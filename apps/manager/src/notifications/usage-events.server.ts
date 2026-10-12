@@ -21,7 +21,7 @@ import { selfNotificationUnits } from "./units";
  * Each event happens once, by its dedupe key: an unusual-usage episode by
  * when it began, a usage alert per rule and period, a free daily limit per
  * app and UTC day, the monthly budget per month, a pause and its resume per
- * pause. Emitting the same event again is a no-op, so a retried step or an
+ * pause, a pause that failed per pause job. Emitting the same event again is a no-op, so a retried step or an
  * overlapping check never sends twice.
  *
  * Callers pass ids and numbers; this module names the app as messages do and
@@ -97,6 +97,19 @@ export type UsageEvent =
       capSetAsideUntil: number | null;
     })
   | (Base & {
+      type: "app_pause_failed";
+      installId: string;
+      /** The pause the job worked on; null when it failed before opening one. */
+      pauseId: string | null;
+      /** The pause job: one message per pause job that failed. */
+      jobId: string;
+      /** `auto` (a trigger), or the user id of who asked for the pause. */
+      pausedBy: string;
+      cause: PauseCause;
+      /** What could not be put back, in words; empty when the app runs as before. */
+      left: string[];
+    })
+  | (Base & {
       type: "budget_reached";
       budget: number;
       projected: number;
@@ -149,6 +162,9 @@ export function usageEventKey(event: UsageEvent, at: number): string {
       return `app_paused:${event.pauseId}`;
     case "app_resumed":
       return `app_resumed:${event.pauseId}`;
+    case "app_pause_failed":
+      // A pause carried on by another job can fail again: each failed job is news.
+      return `app_pause_failed:${event.pauseId ?? "none"}:${event.jobId}`;
     case "budget_reached":
       return `budget_reached:${event.monthStart}`;
   }
@@ -269,6 +285,15 @@ async function factsOf(
         pauseId: event.pauseId,
         by: await personName(db, event.resumedBy),
         capSetAsideUntil: event.capSetAsideUntil,
+      };
+    case "app_pause_failed":
+      return {
+        type: "app_pause_failed",
+        app,
+        jobId: event.jobId,
+        by: await personName(db, event.pausedBy),
+        cause: event.cause,
+        left: event.left,
       };
   }
 }

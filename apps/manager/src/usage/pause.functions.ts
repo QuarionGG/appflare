@@ -1,6 +1,8 @@
+import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireRole } from "../server/auth.server";
+import { PauseActionError, startPause, startResume } from "./pause.server";
 
 /**
  * Pause and Resume an app from Home and its Usage tab. Admin only. Each
@@ -23,20 +25,40 @@ export interface PauseJobStarted {
   jobId: string;
 }
 
-const NOT_AVAILABLE = "Pausing and resuming apps is not available in this version yet.";
+/** A refusal reads as the sentence it carries; anything else as it is. */
+async function asUserError<T>(start: () => Promise<T>): Promise<T> {
+  try {
+    return await start();
+  } catch (error) {
+    if (error instanceof PauseActionError) throw new Error(error.message);
+    throw error;
+  }
+}
 
 export const pauseAppFn = createServerFn({ method: "POST" })
   .validator(pauseAppInput)
-  .handler(async (): Promise<PauseJobStarted> => {
-    await requireRole("admin");
-    // TODO: start the pause job; the pause and resume jobs are not part of this version yet.
-    throw new Error(NOT_AVAILABLE);
+  .handler(async ({ data }): Promise<PauseJobStarted> => {
+    const session = await requireRole("admin");
+    return asUserError(() =>
+      startPause(
+        { DB: env.DB, JOBS: env.JOBS },
+        { installId: data.installId, reason: "manual", by: session.user.id },
+      ),
+    );
   });
 
 export const resumeAppFn = createServerFn({ method: "POST" })
   .validator(resumeAppInput)
-  .handler(async (): Promise<PauseJobStarted> => {
-    await requireRole("admin");
-    // TODO: start the resume job; the pause and resume jobs are not part of this version yet.
-    throw new Error(NOT_AVAILABLE);
+  .handler(async ({ data }): Promise<PauseJobStarted> => {
+    const session = await requireRole("admin");
+    return asUserError(() =>
+      startResume(
+        { DB: env.DB, JOBS: env.JOBS },
+        {
+          installId: data.installId,
+          by: session.user.id,
+          untilCapResets: data.untilCapResets === true,
+        },
+      ),
+    );
   });

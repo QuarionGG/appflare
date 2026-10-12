@@ -282,6 +282,40 @@ const cases: Array<[string, NotificationFacts, string, string[], string]> = [
     USAGE,
   ],
   [
+    "an automatic pause that failed and was undone",
+    {
+      type: "app_pause_failed",
+      app,
+      jobId: "jp1",
+      by: null,
+      cause: { reason: "cap", amount: 5, period: "day" },
+      left: [],
+    },
+    "Pausing Service status failed",
+    [
+      "Appflare tried to pause Service status, and the pause did not finish. It passed its $5.00 daily cap.",
+      "It runs as before, so it keeps using Cloudflare. The job log says where the pause stopped; pause it again from Home or its Usage tab.",
+    ],
+    `${M}/jobs/jp1`,
+  ],
+  [
+    "a pause that failed and could not put everything back",
+    {
+      type: "app_pause_failed",
+      app,
+      jobId: "jp2",
+      by: "Ada Lovelace",
+      cause: { reason: "manual" },
+      left: ['Worker "status-api"', 'queue "status-events"'],
+    },
+    "Pausing Service status failed",
+    [
+      "Ada Lovelace tried to pause Service status, and the pause did not finish.",
+      'Appflare could not put back Worker "status-api", queue "status-events", so it shows as paused but may partly run. Resume it from Home or its Usage tab to put the rest back.',
+    ],
+    `${M}/jobs/jp2`,
+  ],
+  [
     "the monthly budget reached",
     {
       type: "budget_reached",
@@ -312,6 +346,7 @@ describe("spend protection messages", () => {
         "usage_limit_near",
         "app_paused",
         "app_resumed",
+        "app_pause_failed",
         "budget_reached",
       ]),
     );

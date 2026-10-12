@@ -1,0 +1,7 @@
+---
+"@appflare/manager": minor
+---
+
+Admins can pause an app, and spend protection can pause one on its own, so it stops using Cloudflare within seconds. Each of the app's Workers serves a stand-in that answers every request with a 503 "This app is paused by its owner" page, puts Durable Object alarms off by an hour, closes hibernating WebSockets, does nothing on cron triggers, and keeps every binding and secret. The delivery of the app's queues is paused (messages wait in the queue), its container applications run no instances, and its running Workflow instances are paused. The pause records what it changed, and Resume puts exactly that back: each Worker serves the version it served before, containers, queues and Workflow instances carry on. Resume can also set the app's spending cap aside until its period resets. A pause that fails puts back what it had changed, and notification channels hear about it with the new "Pausing an app failed" event (existing channels get it too), since the app may still be using Cloudflare. Pausing and resuming are jobs with their own log, and they appear in the app's activity; Home names a failed one as "Pausing <app> did not finish" or "Resuming <app> did not finish".
+
+While an app is paused, updates, rollbacks, settings changes and Install again are refused with "Resume the app first", and its health check is skipped, so its paused page never reads as an app that is down. Uninstalling a paused app works as before.

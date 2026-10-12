@@ -41,6 +41,7 @@ export const EVENT_LABELS: Record<NotificationEvent, string> = {
   usage_limit_near: "Free daily limit running out",
   app_paused: "App paused",
   app_resumed: "App resumed",
+  app_pause_failed: "Pausing an app failed",
   budget_reached: "Monthly budget reached",
   manager_update_available: "Appflare update available",
   domain_active: "Domain active",
@@ -65,6 +66,8 @@ export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
   app_paused: "When an app is paused, by someone or by Appflare, and why.",
   app_resumed:
     "When an app is resumed by Appflare, or by someone other than the person who paused it.",
+  app_pause_failed:
+    "When pausing an app does not finish, by someone or by Appflare: the app may still be running and using Cloudflare.",
   budget_reached:
     "Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps.",
   manager_update_available: "Once per release, when a newer Appflare release is published.",

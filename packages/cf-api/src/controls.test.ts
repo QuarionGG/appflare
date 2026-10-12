@@ -125,6 +125,21 @@ describe("workflow instances", () => {
     expect(fake.calls[1]?.query.get("cursor")).toBe("AQAA-next");
   });
 
+  it("listInstances with a limit reads no page once that many are in", async () => {
+    const { fake, client } = make((req) => {
+      const page = Number(req.query.get("cursor") ?? "0");
+      return {
+        result: [0, 1, 2].map((n) => ({ id: `p${page}-${n}`, status: "queued" })),
+        result_info: { count: 3, cursor: String(page + 1), per_page: 100 },
+      };
+    });
+    const instances = await client.workflows.listInstances("jobs", { status: "queued", limit: 4 });
+    expect(instances.map((i) => i.id)).toEqual(["p0-0", "p0-1", "p0-2", "p1-0"]);
+    expect(fake.calls).toHaveLength(2);
+    expect(await client.workflows.listInstances("jobs", { limit: 0 })).toEqual([]);
+    expect(fake.calls).toHaveLength(2);
+  });
+
   it("listInstances leaves the status out when none is asked for", async () => {
     const { fake, client } = make({ result: [], result_info: { count: 0, per_page: 100 } });
     expect(await client.workflows.listInstances("jobs")).toEqual([]);

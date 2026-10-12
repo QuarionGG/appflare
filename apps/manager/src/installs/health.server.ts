@@ -10,6 +10,7 @@ import {
   probeHealthThroughAccess,
   settleHealthProbe,
 } from "../jobs/install/health";
+import { pausedRefusal } from "../usage/pause-guard.server";
 import { readAppBaseUrl } from "./app-address.server";
 
 /**
@@ -76,6 +77,10 @@ export async function checkInstallHealthCore(
   if (row === undefined) throw new HealthCheckError("There is no such install.");
   if (row.status !== "installed") {
     throw new HealthCheckError(`Only an installed app can be checked; this one is ${row.status}.`);
+  }
+  // A paused app answers with its paused page on purpose: no check, no "not responding".
+  if ((await pausedRefusal(deps.db, input.installId)) !== null) {
+    throw new HealthCheckError("This app is paused; it is checked again once it is resumed.");
   }
   const settings = await readSettings(orm, [SETTING.accountSubdomain]);
   const base = await readAppBaseUrl(

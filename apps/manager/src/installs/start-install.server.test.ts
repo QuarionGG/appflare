@@ -13,6 +13,7 @@ import type { InstallJobParams } from "../jobs/install";
 import type { UninstallJobParams } from "../jobs/uninstall";
 import type { BuildCleanupTarget } from "../jobs/uninstall-builds";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
+import { PAUSED_REFUSAL } from "../usage/pause-guard.server";
 import type { StartInstallInput } from "./install-input";
 import { resolveInstallInput, StartInstallError, startInstallCore } from "./start-install.server";
 
@@ -1138,6 +1139,19 @@ describe("startInstallCore, installing a failed install again", () => {
       "A job of this install is running.",
     );
     expect(await status("old")).toBe("failed");
+  });
+
+  it("refuses an install that is paused until it is resumed", async () => {
+    await seedFailed();
+    await env.DB.prepare(
+      "INSERT INTO app_pauses (id, install_id, paused_at, paused_by, reason) VALUES ('p1', 'old', 1, 'u1', 'manual')",
+    ).run();
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input({ replaces: "old" }))).rejects.toThrow(
+      PAUSED_REFUSAL,
+    );
+    expect(h.all).toEqual([]);
   });
 
   it("without `replaces`, a failed install that left things still blocks its Worker name", async () => {

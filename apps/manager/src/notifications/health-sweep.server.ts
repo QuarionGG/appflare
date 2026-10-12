@@ -32,11 +32,16 @@ export interface HealthSweepReport {
   unhealthyIds: string[];
 }
 
-/** Installed apps to probe, least recently checked first. */
+/**
+ * Installed apps to probe, least recently checked first. A paused app is
+ * left out: it answers with its paused page on purpose, and would only take
+ * a place another app's check needs.
+ */
 export async function installsToCheck(db: D1Database, limit: number): Promise<string[]> {
   const { results } = await db
     .prepare(
-      `SELECT id FROM installs WHERE status = 'installed'
+      `SELECT id FROM installs i WHERE status = 'installed'
+         AND NOT EXISTS (SELECT 1 FROM app_pauses p WHERE p.install_id = i.id AND p.resumed_at IS NULL)
        ORDER BY coalesce(health_checked_at, 0), id LIMIT ?1`,
     )
     .bind(limit)

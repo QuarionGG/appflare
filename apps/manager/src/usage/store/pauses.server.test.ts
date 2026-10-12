@@ -88,6 +88,17 @@ describe("pauses", () => {
     expect((await listPauses(db(), "a")).map((p) => p.id)).toEqual([next.pause.id, first.pause.id]);
   });
 
+  it("closes a pause Appflare undid on its own, by no one", async () => {
+    await openPause(db(), { installId: "a", pausedBy: "auto", reason: "loop", pausedAt: NOW });
+    const closed = await closePause(db(), "a", { resumedBy: null, resumedAt: later(1) });
+    expect(closed).toMatchObject({
+      resumedBy: null,
+      resumedAt: later(1).getTime(),
+      resumeJobId: null,
+    });
+    expect(await findOpenPause(db(), "a")).toBeNull();
+  });
+
   it("stores each Worker's version as JSON, refuses a bad value, and reads a broken one as unknown", async () => {
     const { pause } = await openPause(db(), {
       installId: "a",

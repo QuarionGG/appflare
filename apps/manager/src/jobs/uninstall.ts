@@ -53,6 +53,7 @@ import {
 } from "./install/pipelines";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL, unrecordedNote } from "./install/resources";
+import { resumeKeptQueuesPhase } from "./pause/phases";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
@@ -730,6 +731,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     }
 
     await deleteDataResourcesPhase(steps, started.targets, "uninstall");
+    // A paused app's kept queues deliver again before its pause closes.
+    await resumeKeptQueuesPhase(steps, env.DB, params.installId);
 
     // The install's builds in the sandbox Worker's bucket (every version
     // no other install uses; ./uninstall-builds.ts).

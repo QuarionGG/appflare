@@ -164,6 +164,20 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     capSetAsideUntil: epochMs.nullable(),
   }),
   z.object({
+    type: z.literal("app_pause_failed"),
+    app: appRef,
+    /** The pause job that failed. */
+    jobId: z.string().min(1),
+    /** Who asked for the pause; null when Appflare did. */
+    by: actor,
+    cause: pauseCauseSchema,
+    /**
+     * What the job could not put back after it failed, in words (`Worker
+     * "cut"`); empty when everything is back and the app runs as before.
+     */
+    left: z.array(z.string().min(1)),
+  }),
+  z.object({
     type: z.literal("budget_reached"),
     /** The budget, including the $5 plan. */
     budget: z.number().positive(),
@@ -311,6 +325,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
     case "usage_limit_near":
     case "app_paused":
     case "app_resumed":
+    case "app_pause_failed":
     case "budget_reached":
       return usageMessage(facts, managerUrl);
     case "manager_update_available":
@@ -391,6 +406,7 @@ type UsageFacts = Extract<
       | "usage_limit_near"
       | "app_paused"
       | "app_resumed"
+      | "app_pause_failed"
       | "budget_reached";
   }
 >;
@@ -493,6 +509,21 @@ function usageMessage(facts: UsageFacts, managerUrl: string | null): Message {
         ],
         url: usageUrl(facts.app.installId),
       };
+    case "app_pause_failed": {
+      const { instance } = facts.app;
+      const why = pauseCauseSentence(facts.cause);
+      const who = facts.by ?? "Appflare";
+      return {
+        title: `Pausing ${instance} failed`,
+        lines: [
+          `${who} tried to pause ${instance}, and the pause did not finish.${why === null ? "" : ` ${why}`}`,
+          facts.left.length === 0
+            ? "It runs as before, so it keeps using Cloudflare. The job log says where the pause stopped; pause it again from Home or its Usage tab."
+            : `Appflare could not put back ${facts.left.join(", ")}, so it shows as paused but may partly run. Resume it from Home or its Usage tab to put the rest back.`,
+        ],
+        url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
+      };
+    }
     case "budget_reached":
       return {
         title: "Monthly budget reached",

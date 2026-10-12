@@ -324,6 +324,7 @@ const USAGE_EVENTS: readonly NotificationEvent[] = [
   "usage_limit_near",
   "app_paused",
   "app_resumed",
+  "app_pause_failed",
   "budget_reached",
 ];
 

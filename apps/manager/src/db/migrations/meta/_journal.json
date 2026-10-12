@@ -78,6 +78,13 @@
       "when": 1791814958899,
       "tag": "0010_notification_usage_events",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791819210696,
+      "tag": "0011_notification_pause_failed_event",
+      "breakpoints": true
     }
   ]
 }

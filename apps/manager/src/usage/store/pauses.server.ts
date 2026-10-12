@@ -189,12 +189,14 @@ export async function listPauses(db: Database, installId: string, limit = 50): P
 
 /**
  * Closes the install's open pause on resume and returns it as closed; null
- * when it had none open (already resumed).
+ * when it had none open (already resumed). `resumedBy` is the user id of who
+ * resumed it, or null when Appflare closed it on its own (a pause that
+ * failed and put back everything it had changed).
  */
 export async function closePause(
   db: Database,
   installId: string,
-  by: { resumedBy: string; resumedAt?: Date; resumeJobId?: string },
+  by: { resumedBy: string | null; resumedAt?: Date; resumeJobId?: string },
 ): Promise<AppPause | null> {
   const [row] = await db
     .update(app_pauses)

@@ -112,6 +112,9 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
  * review; installing or updating from the build is a job of its own.
  * `move_address` moves Appflare to a custom domain of the account (or from
  * one to another): it waits for the new address to answer, then switches.
+ * `pause` makes an installed app's Workers serve a stand-in and stops its
+ * containers, queue deliveries and Workflow instances, recording all of it on
+ * the app's pause (`app_pauses`); `resume` puts back what the pause recorded.
  */
 export const JOB_KINDS = [
   "install",
@@ -126,6 +129,8 @@ export const JOB_KINDS = [
   "self_rollback",
   "source_build",
   "move_address",
+  "pause",
+  "resume",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 

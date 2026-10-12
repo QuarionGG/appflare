@@ -31,6 +31,10 @@ export function failedJobTitle(
       return `Rolling back ${label} did not finish`;
     case "reconfigure":
       return `Saving the settings of ${label} did not finish`;
+    case "pause":
+      return `Pausing ${label} did not finish`;
+    case "resume":
+      return `Resuming ${label} did not finish`;
     default:
       return `A change to ${label} did not finish`;
   }
@@ -43,6 +47,10 @@ function failedJobLine(job: FailedJob): string {
     case "reconfigure":
     case "rollback":
       return "The app keeps running as it was. The log shows the step that failed and why.";
+    case "pause":
+      return "It may still be running and using Cloudflare. The log shows the step that failed and why.";
+    case "resume":
+      return "It stays paused; resume it again to carry on. The log shows the step that failed and why.";
     default:
       return "The log shows the step that failed and why.";
   }

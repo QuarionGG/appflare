@@ -69,13 +69,15 @@ export function createWorkflows(http: HttpApi) {
      * `GET /workflows/{workflow_name}/instances[?status=]`: every instance
      * (with `status`, only those in it), following the list's cursor
      * (`result_info.cursor`, absent on the last page) as wrangler
-     * does.
+     * does. With `limit`, at most that many: no page is read once they are in.
      */
     async listInstances(
       name: string,
-      opts: { status?: WorkflowInstanceStatus } = {},
+      opts: { status?: WorkflowInstanceStatus; limit?: number } = {},
     ): Promise<WorkflowInstance[]> {
       const all: WorkflowInstance[] = [];
+      const limit = opts.limit ?? Number.POSITIVE_INFINITY;
+      if (limit <= 0) return all;
       let cursor: string | undefined;
       // Defensive cap: 1,000 pages is 100,000 instances.
       for (let page = 0; page < 1000; page++) {
@@ -83,9 +85,9 @@ export function createWorkflows(http: HttpApi) {
           query: { status: opts.status, per_page: WORKFLOW_INSTANCES_PER_PAGE, cursor },
         });
         const rows = Array.isArray(envelope.result) ? (envelope.result as WorkflowInstance[]) : [];
-        all.push(...rows);
+        all.push(...rows.slice(0, limit - all.length));
         cursor = envelope.result_info?.cursor;
-        if (!cursor || rows.length === 0) break;
+        if (!cursor || rows.length === 0 || all.length >= limit) break;
       }
       return all;
     },

@@ -65,6 +65,7 @@ function plainCause(error: string | null): string | null {
 /** What stays as it was after a job of this kind failed; null when nothing needs saying. */
 function whatStays(job: FailedJobView): string | null {
   if (job.install !== null) {
+    if (job.kind === "resume") return "The app stays paused; resume it again to carry on.";
     return job.kind === "update" || job.kind === "reconfigure" || job.kind === "rollback"
       ? "The app keeps running as it was."
       : null;
