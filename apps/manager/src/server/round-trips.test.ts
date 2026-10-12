@@ -19,6 +19,7 @@ import { ACC } from "../test/fake-account";
 import { fakeCloudflare } from "../test/fake-cloudflare";
 import { probeRoundTrips, type RoundTrips } from "../test/round-trips";
 import { cacheIndex, INSTALL_ID, seedInstall } from "../test/seed-install";
+import { readHomeUsage } from "../usage/home.server";
 import { readSpendOverview, writeSpendOverviewSnapshot } from "../usage/overview.server";
 import { createAlertRule } from "../usage/store/alert-rules.server";
 import { openPause } from "../usage/store/pauses.server";
@@ -243,6 +244,43 @@ describe("round trips of the signed-in pages", () => {
     const usageReads = p.ops.filter((o) => /from "?usage_(hourly|daily)"?/.test(o.label));
     expect(usageReads.length).toBeGreaterThan(0);
     for (const read of usageReads) expect(read.label).toMatch(/"?(hour|day)"? >= \?/);
+  });
+
+  it("Home's usage: one round beside the layout's, the charts' series in one batch", async () => {
+    const hour = Math.floor(Date.now() / 3_600_000) * 3_600;
+    await env.DB.prepare(
+      `INSERT INTO usage_hourly (install_id, product, hour, value) VALUES (?1, 'workers_requests', ?2, 40)`,
+    )
+      .bind(INSTALL_ID, hour)
+      .run();
+    await writeSpendOverviewSnapshot(env.DB);
+    const session = await sessionLoader("copy")();
+    const p = start();
+    const [layout, usage] = await Promise.all([
+      readLayoutData(session),
+      readHomeUsage(env.DB, env.KV),
+    ]);
+    expect(layout.apps).toHaveLength(1);
+    expect(usage.apps.map((a) => a.installId)).toEqual([INSTALL_ID]);
+    expect(usage.series.map((s) => s.hours.at(-1))).toEqual([40]);
+    report("home with usage", p);
+    // The layout's own rounds, nothing after them.
+    expect(p.waves()).toBeLessThanOrEqual(2);
+    // Days, today's hours and install times in one batch, no statement of its own on a usage table.
+    expect(p.ops.filter((o) => o.kind === "d1-batch" && o.statements === 3)).toHaveLength(1);
+    expect(p.ops.filter((o) => /usage_(hourly|daily)/.test(o.label))).toEqual([]);
+    expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
+    p.clear();
+    await readHomeUsage(env.DB, env.KV);
+    report("home usage alone", p);
+    // One round; on Workers Free without the watcher's whole history, a
+    // second for the parts it keeps instead (KV only).
+    expect(p.waves()).toBeLessThanOrEqual(2);
+    expect(
+      p.ops
+        .filter((o) => o.depth > 1)
+        .every((o) => o.label.startsWith("get usage:watcher-history:part:")),
+    ).toBe(true);
   });
 
   it("an app's catalog page: two rounds, and the account's Workers listed once a minute", async () => {

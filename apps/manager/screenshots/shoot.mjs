@@ -227,6 +227,8 @@ const shots = [
     name: "home-dashboard",
     path: "/",
     expected: "Needs attention",
+    // Usage sits between "Needs attention" and the cards.
+    viewportHeight: 2000,
     cropBottomSelector: "#your-apps",
   },
   {

@@ -25,6 +25,7 @@ import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
 import emdashManifest from "./emdash-manifest.json";
 import formAppsJson from "./form-apps.json";
+import { homeUsageFixture } from "./home-usage";
 
 // Parsed as the manager reads them, so a fixture in an outdated shape fails
 // here instead of rendering a page the manager would never show.
@@ -958,6 +959,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       workers: [{ workerName: "formzero", on: true }],
       problem: null,
     }),
+    getHomeUsage: () => homeUsageFixture(variant),
     setSpendDefaults: () => ({
       ...spendFixture().defaults,
       ...(args[0] as { data?: object } | undefined)?.data,

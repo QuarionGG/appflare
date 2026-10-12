@@ -360,6 +360,52 @@ export async function loadHistory(
   return { bounds, series, source };
 }
 
+/** A history kept in KV, as a page reads it: see {@link readCachedHistory}. */
+export interface CachedHistory {
+  /** Start of the first hour it does not hold (unix seconds); the page reads those from D1. */
+  cutoff: number;
+  /** The installs it holds; null for every install. */
+  installIds: readonly string[] | null;
+  series: StoredSeries[];
+}
+
+/**
+ * A history as a page may read it: from KV only, as the watcher left it,
+ * neither written back nor read from D1, so a page costs one KV read. Null
+ * when there is none, or it is of another mode or month, or more than a day
+ * behind (the watcher brings it up to date each hour).
+ */
+export async function readCachedHistory(
+  kv: KVNamespace | undefined,
+  now: number,
+  spec: Pick<HistorySpec, "key" | "mode">,
+): Promise<CachedHistory | null> {
+  if (kv === undefined) return null;
+  try {
+    const text = await kv.get(spec.key, "text");
+    const cached = text === null ? null : readHistoryText(text);
+    if (cached === null) return null;
+    const bounds = historyBounds(now);
+    const { header } = cached;
+    if (
+      header.mode !== spec.mode ||
+      header.bounds.monthFrom !== bounds.monthFrom ||
+      header.bounds.cutoff > bounds.cutoff ||
+      bounds.cutoff - header.bounds.cutoff > UPDATE_HOURS * 3_600
+    ) {
+      return null;
+    }
+    return { cutoff: header.bounds.cutoff, installIds: header.installIds, series: cached.series() };
+  } catch {
+    return null;
+  }
+}
+
+/** The oldest cut-off a history {@link readCachedHistory} returns may have at `now` (unix seconds). */
+export function oldestCachedCutoff(now: number): number {
+  return historyBounds(now).cutoff - UPDATE_HOURS * 3_600;
+}
+
 /**
  * Each install's usage for the math (hours in epoch ms): the history's
  * series, with the recent hours (all at or after its cut-off, oldest first)

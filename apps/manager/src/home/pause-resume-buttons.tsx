@@ -34,11 +34,14 @@ export function PauseAppButton({
   installId,
   label,
   size = "base",
+  text = "Pause app",
 }: {
   installId: string;
   /** What Home calls the app. */
   label: string;
   size?: "sm" | "base";
+  /** The button's words: "Pause app" in a row, "Pause" on an app's card. */
+  text?: string;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -47,8 +50,14 @@ export function PauseAppButton({
     <ConfirmDialog
       size="sm"
       trigger={(props) => (
-        <Button {...props} size={size} variant="destructive" icon={<PauseIcon />}>
-          Pause app
+        <Button
+          {...props}
+          size={size}
+          variant="destructive"
+          icon={<PauseIcon />}
+          aria-label={`Pause ${label}`}
+        >
+          {text}
         </Button>
       )}
       title={`Pause ${label}`}
@@ -82,13 +91,17 @@ export function ResumeAppButton({
   label,
   stillPastCap,
   size = "base",
+  prominent = true,
 }: {
   installId: string;
   label: string;
   /** Set while the app is still past its cap: Resume then asks first. */
   stillPastCap: StillPastCap | null;
   size?: "sm" | "base";
+  /** Filled, as a row's main action; outlined beside a card's own Open. */
+  prominent?: boolean;
 }) {
+  const variant = prominent ? "primary" : "secondary";
   const router = useRouter();
   const toasts = useKumoToastManager();
   const [pending, setPending] = useState(false);
@@ -110,8 +123,9 @@ export function ResumeAppButton({
       <BusyButton
         pending={pending}
         size={size}
-        variant="primary"
+        variant={variant}
         icon={<PlayIcon />}
+        aria-label={`Resume ${label}`}
         onClick={async () => {
           setPending(true);
           try {
@@ -137,7 +151,13 @@ export function ResumeAppButton({
       size="sm"
       destructive={false}
       trigger={(props) => (
-        <Button {...props} size={size} variant="primary" icon={<PlayIcon />}>
+        <Button
+          {...props}
+          size={size}
+          variant={variant}
+          icon={<PlayIcon />}
+          aria-label={`Resume ${label}`}
+        >
           Resume
         </Button>
       )}
