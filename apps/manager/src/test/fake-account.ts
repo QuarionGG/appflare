@@ -93,6 +93,13 @@ export interface FakeAccount {
   queues: Array<{ queue_id: string; queue_name: string }>;
   /** Worker consumers per queue id, as their last create or update body left them. */
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
+  /**
+   * The account's container applications, each backing a Durable Object
+   * namespace; null on Workers Free, where Cloudflare refuses Containers.
+   */
+  containerApps: Array<{ id: string; name: string; namespaceId: string }> | null;
+  /** What `GET /workers/durable_objects/namespaces` lists. */
+  doNamespaces: Array<{ id: string; script: string; class: string }>;
   /** The sandbox Worker's version at 100% (`GET /workers/scripts/appflare-sandbox/deployments`). */
   sandboxDeployed: string;
   /** Answers of custom domain hosts, in order per host (the last one repeats). */
@@ -166,6 +173,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     versionPatches: [],
     queues: [],
     consumers: {},
+    containerApps: null,
+    doNamespaces: [],
     sandboxDeployed: SANDBOX_DEPLOYED_VERSION,
     versionSecrets: {},
     versionBindings: {},
@@ -370,6 +379,34 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       case "GET /queues":
         return ok(state.queues);
+      case "GET /containers/applications":
+        if (state.containerApps === null) {
+          // Cloudflare's answer on Workers Free, as the dev account gets it.
+          return Response.json(
+            {
+              success: false,
+              result: null,
+              messages: [],
+              errors: [
+                {
+                  code: 1000,
+                  message:
+                    "Unauthorized: You do not have access to Cloudflare Containers. Deploying containers requires the Workers Paid plan.",
+                },
+              ],
+            },
+            { status: 401 },
+          );
+        }
+        return ok(
+          state.containerApps.map((a) => ({
+            id: a.id,
+            name: a.name,
+            durable_objects: { namespace_id: a.namespaceId },
+          })),
+        );
+      case "GET /workers/durable_objects/namespaces":
+        return ok(state.doNamespaces, { result_info: { page: 1, total_pages: 1 } });
       case "POST /queues": {
         const { queue_name } = (await request.json()) as { queue_name: string };
         const queue = { queue_id: `q-new-${state.queues.length + 1}`, queue_name };
@@ -426,6 +463,37 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       };
       list.push(consumer);
       return ok(consumer);
+    }
+    const queueDelete = /^DELETE \/queues\/([^/]+)$/.exec(key);
+    if (queueDelete?.[1] !== undefined) {
+      const id = queueDelete[1];
+      const queue = state.queues.find((q) => q.queue_id === id);
+      if (queue === undefined) return fail(404, "queue not found");
+      // As Cloudflare does while a Worker still reads the queue.
+      if ((state.consumers[id] ?? []).some((c) => (c.type ?? "worker") === "worker")) {
+        return Response.json(
+          {
+            success: false,
+            result: null,
+            messages: [],
+            errors: [
+              {
+                code: 11005,
+                message: `Cannot delete queue '${queue.queue_name}' that is still referenced by a binding in a Worker.`,
+              },
+            ],
+          },
+          { status: 400 },
+        );
+      }
+      state.queues = state.queues.filter((q) => q.queue_id !== id);
+      return ok(null);
+    }
+    const containerApp = /^DELETE \/containers\/applications\/([^/]+)$/.exec(key);
+    if (containerApp?.[1] !== undefined) {
+      const before = state.containerApps?.length ?? 0;
+      state.containerApps = (state.containerApps ?? []).filter((a) => a.id !== containerApp[1]);
+      return state.containerApps.length < before ? ok(null) : fail(404, "application not found");
     }
     const consumer = /^(PUT|DELETE) \/queues\/([^/]+)\/consumers\/([^/]+)$/.exec(key);
     if (consumer?.[2] !== undefined && consumer[3] !== undefined) {

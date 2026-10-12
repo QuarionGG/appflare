@@ -18,6 +18,16 @@ import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { recordProtectedInstall } from "../test/protected-install";
+import { countActivity, recordActivity } from "../usage/store/activity.server";
+import {
+  createAlertRule,
+  listAlertRules,
+  recordAlertFiring,
+} from "../usage/store/alert-rules.server";
+import { writeAppSpendSettings } from "../usage/store/app-settings.server";
+import { findOpenPause, listPauses, openPause } from "../usage/store/pauses.server";
+import { recordHourlyUsage } from "../usage/store/series.server";
+import { initialUsageState, writeUsageStates } from "../usage/store/usage-state.server";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
 import {
@@ -68,7 +78,27 @@ interface World {
   /** When set, the bucket listing never runs dry: every page holds fresh keys. */
   endless?: boolean;
   /** Worker consumers per queue id. */
-  consumers: Map<string, Array<{ consumer_id: string; script_name?: string; service?: string }>>;
+  consumers: Map<
+    string,
+    Array<{
+      consumer_id: string;
+      /** `worker` when absent; an HTTP pull consumer names no Worker. */
+      type?: string;
+      script?: string;
+      script_name?: string;
+      service?: string;
+    }>
+  >;
+  /** Queue names by id, for the listing; an id without one is its own name. */
+  queueNames?: Map<string, string>;
+  /**
+   * The account's container applications by id, each backing a Durable
+   * Object namespace; `"refused"` when the token cannot read Containers.
+   * Absent: an account on Workers Free, which Cloudflare refuses Containers.
+   */
+  containers?: Map<string, { name: string; namespaceId: string }> | "refused";
+  /** Durable Object namespaces; each is listed only while its Worker exists. */
+  doNamespaces?: Array<{ id: string; script: string; class: string }>;
   /** Zone objects of wildcard domains: `<zone>/routes/<id>` and `<zone>/dns_records/<id>`. */
   zoneObjects: Set<string>;
 }
@@ -95,9 +125,17 @@ function fakeWorld(over: Partial<World> = {}) {
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
-  const fail = (status: number, message: string) =>
-    Response.json({ success: false, errors: [{ code: 10000, message }] }, { status });
+  const fail = (status: number, message: string, code = 10000) =>
+    Response.json({ success: false, errors: [{ code, message }] }, { status });
   const gone = () => fail(404, "not found");
+  /** Whether a queue still delivers to the Worker (the API names it in any of three fields). */
+  const consumes = (script: string) =>
+    [...world.consumers.values()].some((list) =>
+      list.some((c) => (c.script ?? c.script_name ?? c.service) === script),
+    );
+  /** Whether a Worker still reads the queue. */
+  const read = (queueId: string) =>
+    (world.consumers.get(queueId) ?? []).some((c) => (c.type ?? "worker") === "worker");
 
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
@@ -122,7 +160,57 @@ function fakeWorld(over: Partial<World> = {}) {
     let m = /^DELETE \/workers\/domains\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.domains.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/workers\/scripts\/([^/]+)$/.exec(key);
-    if (m?.[1]) return world.scripts.delete(m[1]) ? ok(null) : gone();
+    if (m?.[1]) {
+      // As Cloudflare does, even with `?force=true`.
+      if (world.scripts.has(m[1]) && consumes(m[1])) {
+        return fail(
+          403,
+          "Cannot delete this Worker as it is a consumer for a Queue. Remove it from the Queue's consumers first, then retry.",
+          10064,
+        );
+      }
+      return world.scripts.delete(m[1]) ? ok(null) : gone();
+    }
+    if (key === "GET /queues") {
+      return ok(
+        [...world.queues].map((id) => ({
+          queue_id: id,
+          queue_name: world.queueNames?.get(id) ?? id,
+          consumers: (world.consumers.get(id) ?? []).map((c) => ({ type: "worker", ...c })),
+        })),
+        { result_info: { page: 1, total_pages: 1 } },
+      );
+    }
+    if (key === "GET /containers/applications") {
+      if (world.containers === undefined) {
+        return fail(
+          401,
+          "Unauthorized: You do not have access to Cloudflare Containers. Deploying containers requires the Workers Paid plan.",
+          1000,
+        );
+      }
+      if (world.containers === "refused") return fail(403, "Authentication error");
+      return ok(
+        [...world.containers].map(([id, a]) => ({
+          id,
+          name: a.name,
+          durable_objects: { namespace_id: a.namespaceId },
+        })),
+      );
+    }
+    m = /^DELETE \/containers\/applications\/([^/]+)$/.exec(key);
+    if (m?.[1]) {
+      if (world.containers === undefined || world.containers === "refused") return fail(403, "no");
+      return world.containers.delete(m[1]) ? ok(null) : gone();
+    }
+    if (key === "GET /workers/durable_objects/namespaces") {
+      return ok(
+        (world.doNamespaces ?? [])
+          .filter((ns) => world.scripts.has(ns.script))
+          .map((ns) => ({ ...ns, name: `${ns.script}_${ns.class}` })),
+        { result_info: { page: 1, total_pages: 1 } },
+      );
+    }
     m = /^DELETE \/workflows\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.workflows.delete(m[1]) ? ok({ status: "ok" }) : gone();
     m = /^DELETE \/storage\/kv\/namespaces\/([^/]+)$/.exec(key);
@@ -145,7 +233,17 @@ function fakeWorld(over: Partial<World> = {}) {
       return world.zoneObjects.delete(object) ? ok({ id: m[3] }) : gone();
     }
     m = /^DELETE \/queues\/([^/]+)$/.exec(key);
-    if (m?.[1]) return world.queues.delete(m[1]) ? ok(null) : gone();
+    if (m?.[1]) {
+      // As Cloudflare does while a Worker still reads the queue.
+      if (world.queues.has(m[1]) && read(m[1])) {
+        return fail(
+          400,
+          `Cannot delete queue '${world.queueNames?.get(m[1]) ?? m[1]}' that is still referenced by a binding in a Worker.`,
+          11005,
+        );
+      }
+      return world.queues.delete(m[1]) ? ok(null) : gone();
+    }
     m = /^DELETE \/vectorize\/v2\/indexes\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.vectorize.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/hyperdrive\/configs\/([^/]+)$/.exec(key);
@@ -255,6 +353,9 @@ async function seedInstall(
 }
 
 const ALL_DATA = ["kv", "d1", "r2", "queue", "vec"];
+
+/** The steps that look for what would outlive the Workers, right before they are deleted. */
+const CHECKS = ["check queues for consumers", "check container applications"];
 
 /**
  * Records every data resource of install `i1`, and a Hyperdrive
@@ -615,9 +716,10 @@ describe("uninstall job: wildcard domains", () => {
 
     expect(r.error).toBeNull();
     expect(r.install?.status).toBe("uninstalled");
-    expect(r.step.names.slice(0, 3)).toEqual([
+    expect(r.step.names.slice(0, 5)).toEqual([
       "start",
       "remove wildcard domain tunnels.example.com",
+      ...CHECKS,
       "delete Worker cut",
     ]);
     const calls = fake.world.calls.filter((c) => c.startsWith("DELETE /client/v4/zones/"));
@@ -671,10 +773,11 @@ describe("uninstall job: custom domains", () => {
     expect(r.error).toBeNull();
     expect(r.params.deleteResources).toEqual([]);
     expect(r.install?.status).toBe("uninstalled");
-    expect(r.step.names.slice(0, 4)).toEqual([
+    expect(r.step.names.slice(0, 6)).toEqual([
       "start",
       "remove custom domain cut.example.com",
       "remove custom domain www.example.com",
+      ...CHECKS,
       "delete Worker cut",
     ]);
     const calls = fake.world.calls;
@@ -773,17 +876,12 @@ describe("uninstall job: queue consumers", () => {
   }
   const world = () =>
     fakeWorld({
-      queues: new Set(["q-1", "q-jobs", "q-dlq"]),
+      queues: new Set(["q-1", "q-jobs", "q-dlq", "q-theirs"]),
       consumers: new Map([
         ["q-jobs", [{ consumer_id: "c-jobs", script_name: "cut" }]],
-        [
-          "q-dlq",
-          [
-            { consumer_id: "c-other", script_name: "someone-else" },
-            // The API may name the Worker `service` instead of `script_name`.
-            { consumer_id: "c-dlq", service: "cut" },
-          ],
-        ],
+        // The API may name the Worker `service` instead of `script_name`.
+        ["q-dlq", [{ consumer_id: "c-dlq", service: "cut" }]],
+        ["q-theirs", [{ consumer_id: "c-other", script_name: "someone-else" }]],
       ]),
     });
 
@@ -797,10 +895,11 @@ describe("uninstall job: queue consumers", () => {
     );
     expect(r.error).toBeNull();
     expect(r.install?.status).toBe("uninstalled");
-    expect(r.step.names.slice(0, 4)).toEqual([
+    expect(r.step.names.slice(0, 6)).toEqual([
       "start",
       "remove consumer of queue cut-jobs",
       "remove consumer of queue cut-jobs-dlq",
+      ...CHECKS,
       "delete Worker cut",
     ]);
     const calls = fake.world.calls;
@@ -808,10 +907,11 @@ describe("uninstall job: queue consumers", () => {
     expect(calls.indexOf("DELETE /queues/q-jobs/consumers/c-jobs")).toBeLessThan(worker);
     // No id recorded: found by the Worker's name, leaving another Worker's consumer alone.
     expect(calls.indexOf("DELETE /queues/q-dlq/consumers/c-dlq")).toBeLessThan(worker);
-    expect(fake.world.consumers.get("q-dlq")).toEqual([
+    expect(fake.world.consumers.get("q-theirs")).toEqual([
       { consumer_id: "c-other", script_name: "someone-else" },
     ]);
-    expect(calls).toContain("DELETE /queues/q-jobs");
+    // Cloudflare deletes a queue only once no Worker reads it.
+    expect(fake.world.queues).toEqual(new Set(["q-theirs"]));
     expect(r.state("i1:queue_consumer:JOBS")).toBe("deleted");
     expect(r.state("i1:queue_consumer:jobs-dlq")).toBe("deleted");
     expect(r.state("i1:queue:jobs-dlq")).toBe("deleted");
@@ -1040,6 +1140,7 @@ describe("uninstall job", () => {
     }
     expect(r.step.names).toEqual([
       "start",
+      ...CHECKS,
       "delete Worker cut",
       // Deleting a Worker leaves its Workflows, so each goes by name right after it.
       "delete Workflow cut-jobs",
@@ -1149,7 +1250,7 @@ describe("uninstall job", () => {
     const fake = fakeWorld();
     const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
     expect(r.error).toBeNull();
-    expect(r.step.names[1]).toBe("delete Worker cut");
+    expect(r.step.names.slice(1, 4)).toEqual([...CHECKS, "delete Worker cut"]);
     expect(fake.world.calls).toContain("DELETE /workers/scripts/cut?force=true");
     expect(fake.world.scripts).toEqual(new Set(["appflare"]));
   });
@@ -1734,11 +1835,12 @@ describe("uninstall job: external domains", () => {
     const r = await uninstall({ installId: "i1", deleteResources: [] }, withSaas(saas));
 
     expect(r.error).toBeNull();
-    expect(r.step.names.slice(0, 5)).toEqual([
+    expect(r.step.names.slice(0, 7)).toEqual([
       "start",
       "remove external domain a.customer.test",
       "remove external domain b.customer.test",
       "remove gateway binding APP_I1",
+      ...CHECKS,
       "delete Worker cut",
     ]);
     expect(saas.world.hostnames).toEqual([]);
@@ -1788,8 +1890,9 @@ describe("uninstall job, an app of several Workers", () => {
     expect(fake.world.scripts).toEqual(new Set(["appflare"]));
     expect(r.state("i1:worker:cut-jobs")).toBe("deleted");
     expect(r.state("i1:subdomain:cut-jobs")).toBe("deleted");
-    expect(r.step.names.slice(0, 3)).toEqual([
+    expect(r.step.names.slice(0, 5)).toEqual([
       "start",
+      ...CHECKS,
       "delete Worker cut-jobs",
       "delete Worker cut",
     ]);
@@ -1886,5 +1989,351 @@ describe("uninstall job, an app of several Workers", () => {
     expect(r.error).toBeNull();
     expect(r.state("i1:worker:cut-jobs")).toBe("deleted");
     expect(r.logs.some((l) => l.message === 'Worker "cut-jobs" was already gone.')).toBe(true);
+  });
+});
+
+describe("uninstall job: what outlives the Worker", () => {
+  /** The account's container applications: one behind the app's Counter, one of another Worker's. */
+  const containerWorld = (over: Partial<World> = {}) =>
+    fakeWorld({
+      scripts: new Set(["appflare", "cut", "other"]),
+      doNamespaces: [
+        { id: "ns-counter", script: "cut", class: "Counter" },
+        { id: "ns-other", script: "other", class: "Box" },
+      ],
+      containers: new Map([
+        ["ca-1", { name: "cut-counter", namespaceId: "ns-counter" }],
+        ["ca-2", { name: "other-box", namespaceId: "ns-other" }],
+      ]),
+      ...over,
+    });
+
+  it("removes a queue consumer the install never recorded before the Worker, on any queue", async () => {
+    await seedInstall();
+    const fake = fakeWorld({
+      queues: new Set(["q-1", "q-elsewhere", "q-theirs"]),
+      queueNames: new Map([
+        ["q-1", "cut-events"],
+        ["q-elsewhere", "shared-feed"],
+        ["q-theirs", "theirs"],
+      ]),
+      consumers: new Map([
+        ["q-1", [{ consumer_id: "c-1", script: "cut" }]],
+        ["q-elsewhere", [{ consumer_id: "c-2", script_name: "cut" }]],
+        ["q-theirs", [{ consumer_id: "c-3", script: "someone-else" }]],
+      ]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names.slice(0, 6)).toEqual([
+      "start",
+      "check queues for consumers",
+      "remove consumer of queue cut-events from cut",
+      "remove consumer of queue shared-feed from cut",
+      "check container applications",
+      "delete Worker cut",
+    ]);
+    const calls = fake.world.calls;
+    const worker = calls.indexOf("DELETE /workers/scripts/cut?force=true");
+    expect(calls.indexOf("DELETE /queues/q-1/consumers/c-1")).toBeLessThan(worker);
+    expect(calls.indexOf("DELETE /queues/q-elsewhere/consumers/c-2")).toBeLessThan(worker);
+    expect(calls.indexOf("DELETE /queues/q-1")).toBeGreaterThan(worker);
+    // The Worker and its queue are gone; another Worker's consumer and queues are not touched.
+    expect(fake.world.scripts).toEqual(new Set(["appflare"]));
+    expect(fake.world.queues).toEqual(new Set(["q-elsewhere", "q-theirs"]));
+    expect(fake.world.consumers.get("q-theirs")).toEqual([
+      { consumer_id: "c-3", script: "someone-else" },
+    ]);
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).toContain(
+      'Queues that still deliver to the app\'s Workers: "cut-events" to "cut", "shared-feed" to "cut".',
+    );
+    expect(messages).toContain('Worker "cut" no longer consumes the queue "shared-feed".');
+  });
+
+  it("asks a queue listed without its consumers for them", async () => {
+    await seedInstall();
+    const fake = fakeWorld({
+      consumers: new Map([["q-1", [{ consumer_id: "c-1", script: "cut" }]]]),
+    });
+    const r = await uninstall(
+      { installId: "i1", deleteResources: [] },
+      {
+        world: fake.world,
+        fetch: async (input, init) => {
+          const res = await fake.fetch(input, init);
+          if (!new URL(input).pathname.endsWith("/queues")) return res;
+          const body = (await res.json()) as { result: Array<Record<string, unknown>> };
+          for (const q of body.result) delete q.consumers;
+          return Response.json(body);
+        },
+      },
+    );
+    expect(r.error).toBeNull();
+    // One request per step, so a job spread over invocations spreads these too.
+    expect(r.step.names.slice(1, 4)).toEqual([
+      "check queues for consumers",
+      "check consumers of queue q-1",
+      "remove consumer of queue q-1 from cut",
+    ]);
+    expect(fake.world.calls).toContain("GET /queues/q-1/consumers");
+    expect(fake.world.calls).toContain("DELETE /queues/q-1/consumers/c-1");
+    expect(fake.world.scripts).toEqual(new Set(["appflare"]));
+  });
+
+  it("deletes the app's container applications before the Worker, and only the app's", async () => {
+    await seedInstall();
+    const fake = containerWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names.slice(0, 5)).toEqual([
+      "start",
+      "check queues for consumers",
+      "check container applications",
+      "delete container application cut-counter",
+      "delete Worker cut",
+    ]);
+    const calls = fake.world.calls;
+    expect(calls.indexOf("DELETE /containers/applications/ca-1")).toBeLessThan(
+      calls.indexOf("DELETE /workers/scripts/cut?force=true"),
+    );
+    expect(calls).not.toContain("DELETE /containers/applications/ca-2");
+    expect(fake.world.containers).toEqual(
+      new Map([["ca-2", { name: "other-box", namespaceId: "ns-other" }]]),
+    );
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).toContain("Container applications of the app: cut-counter.");
+    expect(messages).toContain(
+      'Deleted the container application "cut-counter"; its instances stop with it.',
+    );
+  });
+
+  it("finds the container applications of every Worker of an app of several Workers", async () => {
+    await seedInstall();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut-jobs', 'i1', 'worker', NULL, 'cut-jobs', 'cut-jobs', 1)`,
+    ).run();
+    const fake = containerWorld({
+      scripts: new Set(["appflare", "cut", "cut-jobs", "other"]),
+      doNamespaces: [{ id: "ns-runner", script: "cut-jobs", class: "Runner" }],
+      containers: new Map([["ca-9", { name: "cut-jobs-runner", namespaceId: "ns-runner" }]]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(fake.world.containers).toEqual(new Map());
+    expect(fake.world.calls.indexOf("DELETE /containers/applications/ca-9")).toBeLessThan(
+      fake.world.calls.indexOf("DELETE /workers/scripts/cut-jobs?force=true"),
+    );
+  });
+
+  it("counts a container application that is already gone as deleted", async () => {
+    await seedInstall();
+    const fake = containerWorld({
+      failOnce: new Map([["DELETE /containers/applications/ca-1", 404]]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.logs.map((l) => l.message)).toContain(
+      'The container application "cut-counter" was already gone.',
+    );
+  });
+
+  it("makes one call for each when the app has neither, on Workers Free", async () => {
+    await seedInstall();
+    const fake = fakeWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(
+      fake.world.calls.filter((c) => /^GET \/(queues|containers|workers\/durable)/.test(c)),
+    ).toEqual(["GET /queues?page=1&per_page=100", "GET /containers/applications"]);
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).toContain("No queue delivers its messages to the app's Workers any more.");
+    expect(messages).toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+    expect(r.logs.filter((l) => l.level === "warn")).toEqual([]);
+  });
+
+  it("reads no namespaces on Workers Paid when the account has no container application", async () => {
+    await seedInstall();
+    const fake = fakeWorld({ containers: new Map() });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(fake.world.calls.some((c) => c.startsWith("GET /workers/durable_objects"))).toBe(false);
+    expect(r.logs.map((l) => l.message)).toContain("No container application runs for the app.");
+  });
+
+  it("warns, without failing, when the token cannot read Containers on Workers Paid", async () => {
+    await seedInstall();
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    const fake = containerWorld({ containers: "refused" });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    const warnings = r.logs.filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(
+      /^Appflare's API token cannot read Containers \(Account > Containers\), so it could not check whether a container application runs behind the app's Durable Objects \(Counter\)\./,
+    );
+  });
+
+  it("never fails on Workers Free when the Containers API errs, and retries it on Workers Paid", async () => {
+    await seedInstall();
+    const free = fakeWorld({ failOnce: new Map([["GET /containers/applications", 500]]) });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, free);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual([
+      "Cloudflare answered 500 when asked for the account's container applications. Containers run only on Workers Paid, which this account is not on as far as Appflare knows; if Workers > Containers in the Cloudflare dashboard lists one for this app, delete it there.",
+    ]);
+
+    await env.DB.prepare("UPDATE installs SET status = 'installed' WHERE id = 'i1'").run();
+    await env.DB.prepare("UPDATE resources SET deleted_at = NULL, retained_at = NULL").run();
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    const paid = containerWorld({ failOnce: new Map([["GET /containers/applications", 500]]) });
+    const p = await uninstall({ installId: "i1", deleteResources: [] }, paid);
+    expect(p.error).toBeNull();
+    expect(p.step.retried["check container applications"]).toBe(2);
+    expect(paid.world.containers).toEqual(
+      new Map([["ca-2", { name: "other-box", namespaceId: "ns-other" }]]),
+    );
+  });
+
+  it("only notes a token that cannot read Containers on Workers Free, where none runs", async () => {
+    await seedInstall();
+    const fake = containerWorld({ containers: "refused" });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.logs.filter((l) => l.level === "warn")).toEqual([]);
+    expect(fake.world.calls.some((c) => c.startsWith("GET /workers/durable_objects"))).toBe(false);
+  });
+
+  it("stops at a Worker that cannot be deleted yet, and a retry repeats nothing it removed", async () => {
+    await seedInstall();
+    const fake = containerWorld({
+      consumers: new Map([["q-1", [{ consumer_id: "c-1", script: "cut" }]]]),
+      failOnce: new Map([["DELETE /workers/scripts/cut", 403]]),
+    });
+    const first = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+    expect(first.error).toBeInstanceOf(Error);
+    expect(first.job?.error).toMatch(/^delete Worker cut: /);
+    expect(first.install?.status).toBe("uninstalling");
+    expect(first.state("worker")).toBe("live");
+    // What was removed stays removed.
+    expect(fake.world.consumers.get("q-1")).toEqual([]);
+    expect(fake.world.containers).toEqual(
+      new Map([["ca-2", { name: "other-box", namespaceId: "ns-other" }]]),
+    );
+
+    const second = await uninstall({ installId: "i1", retry: true }, fake);
+    expect(second.error).toBeNull();
+    expect(second.install?.status).toBe("uninstalled");
+    expect(second.step.names.slice(0, 4)).toEqual(["start", ...CHECKS, "delete Worker cut"]);
+    const calls = fake.world.calls;
+    expect(calls.filter((c) => c === "DELETE /queues/q-1/consumers/c-1")).toHaveLength(1);
+    expect(calls.filter((c) => c === "DELETE /containers/applications/ca-1")).toHaveLength(1);
+    expect(fake.world.scripts).toEqual(new Set(["appflare", "other"]));
+    expect(fake.world.queues).toEqual(new Set());
+  });
+
+  it("stops before the Worker when Cloudflare refuses to remove a consumer, and a retry removes it", async () => {
+    await seedInstall();
+    const fake = fakeWorld({
+      consumers: new Map([["q-1", [{ consumer_id: "c-1", script: "cut" }]]]),
+      failOnce: new Map([["DELETE /queues/q-1/consumers/c-1", 403]]),
+    });
+    const first = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+    expect(first.job?.error).toMatch(/^remove consumer of queue q-1 from cut: /);
+    expect(fake.world.scripts.has("cut")).toBe(true);
+    expect(fake.world.calls).not.toContain("DELETE /workers/scripts/cut?force=true");
+
+    const second = await uninstall({ installId: "i1", retry: true }, fake);
+    expect(second.error).toBeNull();
+    expect(second.install?.status).toBe("uninstalled");
+    expect(fake.world.consumers.get("q-1")).toEqual([]);
+    expect(fake.world.scripts).toEqual(new Set(["appflare"]));
+  });
+});
+
+describe("uninstall job: spend protection", () => {
+  const HOUR = Math.floor(NOW / 3_600_000) * 3600 - 3600;
+
+  /** Everything spend protection keeps about an install. */
+  async function seedSpend(installId: string) {
+    const db = createDb(env.DB);
+    await writeAppSpendSettings(db, installId, { autoPause: "on" }, { userId: "u1" });
+    const rule = await createAlertRule(
+      db,
+      installId,
+      { kind: "spent", unit: "usd", amount: 5, period: "day" },
+      { userId: "u1" },
+    );
+    await recordAlertFiring(db, { ruleId: rule.id, periodStart: HOUR, value: 6 });
+    await writeUsageStates(db, [{ ...initialUsageState(installId), loopChecks: 1 }], new Date(NOW));
+    await openPause(db, { installId, pausedBy: "auto", reason: "cap" });
+    await recordHourlyUsage(db, [{ installId, product: "requests", hour: HOUR, value: 3 }], {
+      now: new Date(NOW),
+    });
+    await recordActivity(db, {
+      installId,
+      kind: "observability_changed",
+      facts: { enabled: true },
+    });
+  }
+
+  const count = async (table: string, installId: string) =>
+    (
+      await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE install_id = ?1`)
+        .bind(installId)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+
+  it("forgets the app's settings, rules and state once it is gone, and keeps its usage", async () => {
+    await seedInstall();
+    await seedSpend("i1");
+    await seedSpend("i2");
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fakeWorld());
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+
+    const db = createDb(env.DB);
+    expect(await count("app_spend_settings", "i1")).toBe(0);
+    expect(await listAlertRules(db, "i1")).toEqual([]);
+    expect(await count("app_usage_state", "i1")).toBe(0);
+    expect(await findOpenPause(db, "i1")).toBeNull();
+    const [pause] = await listPauses(db, "i1");
+    expect(pause).toMatchObject({ resumedAt: NOW, resumedBy: null });
+    // Its usage and activity stay, for this month's bill.
+    expect(await count("usage_hourly", "i1")).toBe(1);
+    expect(await count("usage_daily", "i1")).toBe(1);
+    expect(await countActivity(db, { installId: "i1" })).toBe(1);
+    // Another app keeps everything, its alert's firing included.
+    expect(await count("app_spend_settings", "i2")).toBe(1);
+    expect((await listAlertRules(db, "i2"))[0]?.lastFiring).not.toBeNull();
+    expect(await count("app_usage_state", "i2")).toBe(1);
+    expect(await findOpenPause(db, "i2")).not.toBeNull();
+  });
+
+  it("keeps the app's spend settings while an uninstall that stopped can still be retried", async () => {
+    await seedInstall();
+    await seedSpend("i1");
+    const fake = fakeWorld({ failOnce: new Map([["DELETE /d1/database/d1-1", 403]]) });
+    const first = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+    expect(first.job?.status).toBe("failed");
+    expect(await count("app_spend_settings", "i1")).toBe(1);
+    expect(await findOpenPause(createDb(env.DB), "i1")).not.toBeNull();
+
+    const second = await uninstall({ installId: "i1", retry: true }, fake);
+    expect(second.error).toBeNull();
+    expect(await count("app_spend_settings", "i1")).toBe(0);
+    expect(await count("app_usage_state", "i1")).toBe(0);
+    expect(await count("usage_hourly", "i1")).toBe(1);
   });
 });

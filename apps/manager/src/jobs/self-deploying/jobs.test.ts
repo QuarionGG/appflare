@@ -34,6 +34,7 @@ import {
   publishedCatalog,
 } from "../../test/fake-sandbox";
 import { type FakeStep, fakeStep } from "../../test/fake-step";
+import { writeAppSpendSettings } from "../../usage/store/app-settings.server";
 import { type InstallJobParams, runInstall } from "../install";
 import { type ReconfigureJobParams, runReconfigure } from "../reconfigure";
 import type { JobEnv } from "../run-job";
@@ -733,6 +734,7 @@ describe("uninstalling a self-deploying app", () => {
   it("runs the destroy command, then removes the token and secrets from the sandbox Worker", async () => {
     const s = setup();
     await install(s);
+    await writeAppSpendSettings(createDb(env.DB), "id1", { autoPause: "on" }, { userId: "u1" });
     const r = await uninstall(s);
     expect(r.error).toBeNull();
     expect(r.params).toMatchObject({ selfDeploying: true, deleteResources: [] });
@@ -753,6 +755,101 @@ describe("uninstalling a self-deploying app", () => {
     ).first<{ n: number }>();
     expect(left?.n).toBe(0);
     expect((await installRow("id1"))?.status).toBe("uninstalled");
+    // The app's spend protection goes with it.
+    const spend = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM app_spend_settings WHERE install_id = 'id1'",
+    ).first<{ n: number }>();
+    expect(spend?.n).toBe(0);
+  });
+
+  /** A container application behind the app's Durable Object, and a queue it consumes. */
+  function leaveRunning(s: Setup) {
+    const state = s.w.account.state;
+    state.containerApps = [
+      { id: "ca-1", name: "cut-box", namespaceId: "ns-box" },
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ];
+    state.doNamespaces = [
+      { id: "ns-box", script: MAIN, class: "Box" },
+      { id: "ns-theirs", script: "someone-else", class: "Box" },
+    ];
+    state.queues = [{ queue_id: "q-1", queue_name: "cut-jobs" }];
+    state.consumers = { "q-1": [{ consumer_id: "c-1", type: "worker", script_name: JOBS }] };
+  }
+
+  it("records what may outlive the destroy, and deletes what the destroy left behind", async () => {
+    const s = setup();
+    await install(s);
+    leaveRunning(s);
+    const step = fakeStep();
+    const r = await uninstall(s, step);
+    expect(r.error).toBeNull();
+    const names = step.names;
+    const destroy = names.indexOf("destroy in sandbox");
+    // Found before the destroy, while the Workers and their namespaces exist.
+    for (const found of [
+      "check queues for consumers",
+      "check consumers of queue cut-jobs",
+      "check container applications",
+    ]) {
+      expect(names.indexOf(found)).toBeGreaterThan(-1);
+      expect(names.indexOf(found)).toBeLessThan(destroy);
+    }
+    expect(names.indexOf(`remove consumer of queue cut-jobs from ${JOBS}`)).toBeGreaterThan(
+      destroy,
+    );
+    expect(names.indexOf("delete container application cut-box")).toBeGreaterThan(destroy);
+    const state = s.w.account.state;
+    expect(state.containerApps).toEqual([
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ]);
+    expect(state.consumers["q-1"]).toEqual([]);
+    const warnings = (await logsOf("x1")).filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toEqual([
+      `The installer's destroy command left the queue "cut-jobs" delivering to Worker "${JOBS}"; removed that consumer.`,
+      `The installer's destroy command left the container application "cut-box" running; deleted it, and its instances stop with it.`,
+    ]);
+    expect((await installRow("id1"))?.status).toBe("uninstalled");
+  });
+
+  it("has nothing left to delete when the destroy removed them", async () => {
+    const s = setup({
+      sandbox: {
+        onDestroy: () => {
+          const state = s.w.account.state;
+          state.containerApps = (state.containerApps ?? []).filter((a) => a.id !== "ca-1");
+          state.consumers["q-1"] = [];
+        },
+      },
+    });
+    await install(s);
+    leaveRunning(s);
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const logs = await logsOf("x1");
+    expect(logs.filter((l) => l.level === "warn")).toEqual([]);
+    expect(logs.map((l) => l.message)).toEqual(
+      expect.arrayContaining([
+        `The installer's destroy command removed the consumer of the queue "cut-jobs".`,
+        `The installer's destroy command deleted the container application "cut-box".`,
+      ]),
+    );
+    expect(s.w.account.state.containerApps).toEqual([
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ]);
+  });
+
+  it("looks no further on Workers Free, where Cloudflare refuses Containers", async () => {
+    const s = setup();
+    await install(s);
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const calls = s.w.account.state.calls;
+    expect(calls.some((c) => c.includes("/containers/applications"))).toBe(true);
+    expect(calls.some((c) => c.includes("/workers/durable_objects/namespaces"))).toBe(false);
+    expect((await logsOf("x1")).map((l) => l.message)).toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
   });
 
   it("deletes and logs each secret once when its step runs again after it finished", async () => {

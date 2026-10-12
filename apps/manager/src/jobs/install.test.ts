@@ -636,6 +636,13 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       return ok({ schedules: (state.otherCrons[schedules[1]] ?? []).map((cron) => ({ cron })) });
     }
     if (key === "GET /queues") return ok(state.queues);
+    if (key === "GET /containers/applications") {
+      // Cloudflare's answer on Workers Free: an uninstall finds no container application.
+      return Response.json(
+        { success: false, errors: [{ code: 1000, message: "requires the Workers Paid plan" }] },
+        { status: 401 },
+      );
+    }
     if (key === "POST /queues") {
       const { queue_name } = (await request.json()) as { queue_name: string };
       const queue = { queue_id: `q-${state.queues.length + 1}`, queue_name };
