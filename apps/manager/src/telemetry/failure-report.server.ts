@@ -164,7 +164,7 @@ function reportedPlan(settings: ReportSettings): "free" | "paid" | "unset" {
   return resolved.source === "default" ? "unset" : resolved.plan;
 }
 
-/** Usage data is off for this manager: by the switch, or by a Worker variable. */
+/** The anonymous report is off for this manager: by the switch, or by a Worker variable. */
 function usageDataOff(env: FailureReportEnv, settings: ReportSettings): boolean {
   return lockOf(env) !== null || settings.telemetry === "off";
 }

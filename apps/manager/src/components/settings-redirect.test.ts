@@ -10,7 +10,8 @@ import { redirectMovedSettings } from "./settings-redirect";
 /**
  * The settings routes' redirects in a router of the manager's shape (the
  * real tree only builds under TanStack Start's Vite plugin): `/settings`,
- * the old Appflare updates page and Your account send old addresses on,
+ * the old Appflare updates page, Your account and the anonymous report's
+ * earlier address send old addresses on,
  * with the anchor of the section they named.
  */
 
@@ -36,6 +37,8 @@ function tree() {
       page("/settings/building"),
       page("/settings/updates"),
       page("/settings/notifications"),
+      page("/settings/usage-data", true),
+      page("/settings/anonymous-report"),
     ]),
   ]);
   return { routeTree, loaded };
@@ -69,6 +72,10 @@ describe("old settings addresses", () => {
     ["/settings/account#github-access", "/settings/building#github-access"],
     ["/settings/account#checklist-sandbox", "/settings/account#capability-sandbox"],
     ["/settings/account#checklist", "/settings/account#capabilities"],
+    ["/settings#usage-data", "/settings/anonymous-report"],
+    ["/settings/usage-data", "/settings/anonymous-report"],
+    ["/settings/usage-data/", "/settings/anonymous-report"],
+    ["/settings/usage-data#usage-data", "/settings/anonymous-report#anonymous-report"],
   ])("%s opens %s", async (from, to) => {
     const { at, loaded } = await arrive(from);
     expect(at).toBe(to);
@@ -83,6 +90,8 @@ describe("old settings addresses", () => {
       "/settings/account#capabilities",
       "/settings/account#capability-token-permissions",
       "/settings/building#github-access",
+      "/settings/anonymous-report",
+      "/settings/anonymous-report#anonymous-report",
     ]) {
       expect((await arrive(href)).at).toBe(href);
     }

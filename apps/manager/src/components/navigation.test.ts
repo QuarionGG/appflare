@@ -42,7 +42,7 @@ describe("SETTINGS_PAGE_LIST", () => {
       ["Notifications", "/settings/notifications"],
       ["Catalogs", "/settings/catalogs"],
       ["Removed apps", "/settings/removed-apps"],
-      ["Usage data", "/settings/usage-data"],
+      ["Anonymous report", "/settings/anonymous-report"],
     ]);
   });
 });
@@ -80,7 +80,7 @@ describe("settingsRedirect", () => {
     expect(settingsRedirect("/settings", "danger-zone")).toBe("/settings/account#danger-zone");
     expect(settingsRedirect("/settings", "appflare-updates")).toBe("/settings/updates#appflare");
     expect(settingsRedirect("/settings", "notifications")).toBe("/settings/notifications");
-    expect(settingsRedirect("/settings", "usage-data")).toBe("/settings/usage-data");
+    expect(settingsRedirect("/settings", "usage-data")).toBe("/settings/anonymous-report");
     expect(settingsRedirect("/settings", "unknown")).toBe("/settings/account");
   });
 
@@ -92,6 +92,18 @@ describe("settingsRedirect", () => {
     expect(settingsRedirect("/settings/appflare-updates", "versions")).toBe(
       "/settings/updates#versions",
     );
+  });
+
+  it("sends the anonymous report's earlier address to its page, at the section it named", () => {
+    expect(settingsRedirect("/settings/usage-data", "")).toBe("/settings/anonymous-report");
+    expect(settingsRedirect("/settings/usage-data/", "")).toBe("/settings/anonymous-report");
+    expect(settingsRedirect("/settings/usage-data", "usage-data")).toBe(
+      "/settings/anonymous-report#anonymous-report",
+    );
+    expect(settingsRedirect("/settings/usage-data", "#usage-data")).toBe(
+      "/settings/anonymous-report#anonymous-report",
+    );
+    expect(settingsRedirect("/settings/usage-data", "unknown")).toBe("/settings/anonymous-report");
   });
 
   it("sends the sections that left the account page to Building apps, and old row anchors on", () => {
@@ -123,6 +135,8 @@ describe("settingsRedirect", () => {
     expect(settingsRedirect("/settings/account", "capabilities")).toBeNull();
     expect(settingsRedirect("/settings/building", "sandbox")).toBeNull();
     expect(settingsRedirect("/settings/updates", "versions")).toBeNull();
+    expect(settingsRedirect("/settings/anonymous-report", "")).toBeNull();
+    expect(settingsRedirect("/settings/anonymous-report", "anonymous-report")).toBeNull();
     expect(settingsRedirect("/catalog", "")).toBeNull();
   });
 });

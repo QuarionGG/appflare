@@ -20,7 +20,7 @@ export const getTelemetryStatus = createServerFn({ method: "GET" }).handler(
   },
 );
 
-/** Settings, Usage data: the switch. */
+/** Settings, Anonymous report: the switch. */
 export const setTelemetry = createServerFn({ method: "POST" })
   .validator(setTelemetryInput)
   .handler(async ({ data }): Promise<TelemetryStatus> => {
@@ -28,7 +28,7 @@ export const setTelemetry = createServerFn({ method: "POST" })
     return setTelemetryEnabled(env, data.enabled);
   });
 
-/** Settings, Usage data, Preview: the next heartbeat as it would be sent, as JSON. */
+/** Settings, Anonymous report, Preview: the next heartbeat as it would be sent, as JSON. */
 export const previewTelemetry = createServerFn({ method: "GET" }).handler(
   async (): Promise<string> => {
     await requireSession();

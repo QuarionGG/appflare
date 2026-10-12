@@ -553,6 +553,7 @@ function accessView(id: string): InstallAccessView {
     publicPaths: ["/s/*"],
     pendingPublicPaths: [],
     syncFailedAt: null,
+    takenAddresses: [],
     usesAccessValues: false,
     users: 3,
     repair: null,

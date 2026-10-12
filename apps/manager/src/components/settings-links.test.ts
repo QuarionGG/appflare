@@ -36,7 +36,10 @@ describe("settingsLink", () => {
     expect(settingsLink("domains", "external-domains")).toBe("/settings/domains#external-domains");
     expect(settingsLink("notifications", "channels")).toBe("/settings/notifications#channels");
     expect(settingsLink("removedApps")).toBe("/settings/removed-apps");
-    expect(settingsLink("usageData")).toBe("/settings/usage-data");
+    expect(settingsLink("usageData")).toBe("/settings/anonymous-report");
+    expect(settingsLink("usageData", "anonymous-report")).toBe(
+      "/settings/anonymous-report#anonymous-report",
+    );
   });
 
   it("lists the pages in the order the settings menu shows them", () => {
@@ -49,7 +52,7 @@ describe("settingsLink", () => {
       "/settings/notifications",
       "/settings/catalogs",
       "/settings/removed-apps",
-      "/settings/usage-data",
+      "/settings/anonymous-report",
     ]);
     expect(Object.keys(SETTINGS_SECTIONS.account.sections)).toEqual([
       "connection",

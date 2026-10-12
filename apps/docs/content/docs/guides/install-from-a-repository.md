@@ -215,5 +215,5 @@ is deployed by a build, so a failed one leaves nothing to clean up but its log;
 
 ## What is sent
 
-Usage data records that a build, install or update of this kind ran and how it ended,
-never the repository, its name, or its version. See [Telemetry](/telemetry/).
+The [anonymous report](/telemetry/) records that a build, install or update of this
+kind ran and how it ended, never the repository, its name, or its version.

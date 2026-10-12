@@ -330,15 +330,15 @@ no redirects followed, so a signed body never reaches a host nobody named. If
 decrypted: the channels show **Credentials unreadable** and send nothing until an
 admin enters the credentials again.
 
-## Usage data
+## Anonymous report
 
 Besides the Cloudflare API, the catalog site and releases on GitHub, your own apps
-for health checks, and the notification channels you add, the manager sends anonymous usage data (a daily report and
+for health checks, and the notification channels you add, the manager sends an anonymous report (once a day, and
 the outcome of each job) to PostHog's EU region, from its Worker and never from your
 browser. It holds counts, versions and error categories, never your account, emails,
 domains, secrets or tokens. It is on by
 default and starts with the first scheduled run after setup. No banner in the app
-announces it: **Settings > Usage data** and these docs disclose it, and nothing waits for
-an answer. One switch there turns it off; see [Usage data](/telemetry/) for
+announces it: **Settings > Anonymous report** and these docs disclose it, and nothing waits for
+an answer. One switch there turns it off; see [Anonymous report](/telemetry/) for
 exactly what is sent and every way to turn it off. The installer keeps wrangler's
 own usage metrics and error reports off for the commands it runs.

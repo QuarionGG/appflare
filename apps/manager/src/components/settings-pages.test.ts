@@ -380,12 +380,12 @@ describe("UsageDataSettingsView", () => {
         isAdmin: true,
       }),
     );
-    expectPattern(html, ["usage-data"], ["Preview"]);
+    expectPattern(html, ["anonymous-report"], ["Preview"]);
     expect(html).toContain('role="switch"');
-    expect(text(html)).not.toContain("never sends usage data");
+    expect(text(html)).not.toContain("never sends the anonymous report");
   });
 
-  it("says a pre-release never sends usage data, whatever the switch says", () => {
+  it("says a pre-release never sends the anonymous report, whatever the switch says", () => {
     const html = render(
       createElement(UsageDataSettingsView, {
         telemetry: { state: "on", lockedBy: null, devBuild: false, preRelease: true },
@@ -393,7 +393,7 @@ describe("UsageDataSettingsView", () => {
       }),
     );
     expect(text(html)).toContain(
-      "This is a pre-release of Appflare, which never sends usage data, whatever this switch says. Released versions do.",
+      "This is a pre-release of Appflare, which never sends the anonymous report, whatever this switch says. Released versions do.",
     );
   });
 });

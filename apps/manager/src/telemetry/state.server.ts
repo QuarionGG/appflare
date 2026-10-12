@@ -121,7 +121,7 @@ async function choiceRows(
   return rows;
 }
 
-/** Settings, Usage data: refused while a Worker variable turns usage data off. */
+/** Settings, Anonymous report: refused while a Worker variable turns usage data off. */
 export async function setTelemetryEnabled(
   env: TelemetryEnv,
   enabled: boolean,
@@ -130,7 +130,7 @@ export async function setTelemetryEnabled(
   const lock = lockOf(env);
   if (lock !== null) {
     throw new TelemetryLockedError(
-      `Usage data is turned off by the ${lock} variable on this Worker. Remove the variable to change it here.`,
+      `The anonymous report is turned off by the ${lock} variable on this Worker. Remove the variable to change it here.`,
     );
   }
   await writeSettings(createDb(env.DB), await choiceRows(env, enabled, now), now);

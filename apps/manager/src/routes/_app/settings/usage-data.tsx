@@ -1,17 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SETTINGS_PAGES } from "../../../components/navigation";
-import { UsageDataSettingsView } from "../../../components/settings-pages";
-import { getTelemetryStatus } from "../../../telemetry/telemetry.functions";
+import { redirectMovedSettings } from "../../../components/settings-redirect";
 
-/** `/settings/usage-data`: the anonymous daily report, its switch, and a preview of it. */
+/**
+ * `/settings/usage-data`, the anonymous report's page under its earlier
+ * name: it opens the Anonymous report page, and the anchor it carried
+ * (`#usage-data`) opens the same section there.
+ */
 export const Route = createFileRoute("/_app/settings/usage-data")({
-  staticData: { title: SETTINGS_PAGES.usageData.label },
-  loader: () => getTelemetryStatus(),
-  component: UsageDataPage,
+  beforeLoad: ({ location }) => redirectMovedSettings(location),
 });
-
-function UsageDataPage() {
-  const telemetry = Route.useLoaderData();
-  const { viewer } = Route.useRouteContext();
-  return <UsageDataSettingsView telemetry={telemetry} isAdmin={viewer.role === "admin"} />;
-}

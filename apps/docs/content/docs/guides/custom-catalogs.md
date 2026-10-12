@@ -94,9 +94,9 @@ updates and checks come from that catalog, and its key verifies them.
 [Uninstall](/guides/uninstall/) those apps first, or turn the catalog off
 instead.
 
-## Usage data
+## Anonymous report
 
-If [usage data](/telemetry/) is on, it counts how many custom catalogs the manager
+If the [anonymous report](/telemetry/) is on, it counts how many custom catalogs the manager
 has and how many installs come from them. It never includes their URLs, labels, or
 the names of their apps.
 

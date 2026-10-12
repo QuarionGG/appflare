@@ -25,6 +25,7 @@ import { Route as AppJobsIndexRouteImport } from './routes/_app/jobs/index'
 import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsAccountRouteImport } from './routes/_app/settings/account'
+import { Route as AppSettingsAnonymousReportRouteImport } from './routes/_app/settings/anonymous-report'
 import { Route as AppSettingsAppflareUpdatesRouteImport } from './routes/_app/settings/appflare-updates'
 import { Route as AppSettingsBuildingRouteImport } from './routes/_app/settings/building'
 import { Route as AppSettingsCatalogsRouteImport } from './routes/_app/settings/catalogs'
@@ -122,6 +123,12 @@ const AppSettingsAccountRoute = AppSettingsAccountRouteImport.update({
   path: '/settings/account',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsAnonymousReportRoute =
+  AppSettingsAnonymousReportRouteImport.update({
+    id: '/settings/anonymous-report',
+    path: '/settings/anonymous-report',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppSettingsAppflareUpdatesRoute =
   AppSettingsAppflareUpdatesRouteImport.update({
     id: '/settings/appflare-updates',
@@ -226,6 +233,7 @@ export interface FileRoutesByFullPath {
   '/install/$slug': typeof AppInstallSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
+  '/settings/anonymous-report': typeof AppSettingsAnonymousReportRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/settings/building': typeof AppSettingsBuildingRoute
   '/settings/catalogs': typeof AppSettingsCatalogsRoute
@@ -260,6 +268,7 @@ export interface FileRoutesByTo {
   '/install/$slug': typeof AppInstallSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
+  '/settings/anonymous-report': typeof AppSettingsAnonymousReportRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/settings/building': typeof AppSettingsBuildingRoute
   '/settings/catalogs': typeof AppSettingsCatalogsRoute
@@ -296,6 +305,7 @@ export interface FileRoutesById {
   '/_app/install/$slug': typeof AppInstallSlugRoute
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
   '/_app/settings/account': typeof AppSettingsAccountRoute
+  '/_app/settings/anonymous-report': typeof AppSettingsAnonymousReportRoute
   '/_app/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/_app/settings/building': typeof AppSettingsBuildingRoute
   '/_app/settings/catalogs': typeof AppSettingsCatalogsRoute
@@ -332,6 +342,7 @@ export interface FileRouteTypes {
     | '/install/$slug'
     | '/jobs/$jobId'
     | '/settings/account'
+    | '/settings/anonymous-report'
     | '/settings/appflare-updates'
     | '/settings/building'
     | '/settings/catalogs'
@@ -366,6 +377,7 @@ export interface FileRouteTypes {
     | '/install/$slug'
     | '/jobs/$jobId'
     | '/settings/account'
+    | '/settings/anonymous-report'
     | '/settings/appflare-updates'
     | '/settings/building'
     | '/settings/catalogs'
@@ -401,6 +413,7 @@ export interface FileRouteTypes {
     | '/_app/install/$slug'
     | '/_app/jobs/$jobId'
     | '/_app/settings/account'
+    | '/_app/settings/anonymous-report'
     | '/_app/settings/appflare-updates'
     | '/_app/settings/building'
     | '/_app/settings/catalogs'
@@ -553,6 +566,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsAccountRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/anonymous-report': {
+      id: '/_app/settings/anonymous-report'
+      path: '/settings/anonymous-report'
+      fullPath: '/settings/anonymous-report'
+      preLoaderRoute: typeof AppSettingsAnonymousReportRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/appflare-updates': {
       id: '/_app/settings/appflare-updates'
       path: '/settings/appflare-updates'
@@ -682,6 +702,7 @@ interface AppRouteChildren {
   AppInstallSlugRoute: typeof AppInstallSlugRoute
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
   AppSettingsAccountRoute: typeof AppSettingsAccountRoute
+  AppSettingsAnonymousReportRoute: typeof AppSettingsAnonymousReportRoute
   AppSettingsAppflareUpdatesRoute: typeof AppSettingsAppflareUpdatesRoute
   AppSettingsBuildingRoute: typeof AppSettingsBuildingRoute
   AppSettingsCatalogsRoute: typeof AppSettingsCatalogsRoute
@@ -705,6 +726,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppInstallSlugRoute: AppInstallSlugRoute,
   AppJobsJobIdRoute: AppJobsJobIdRoute,
   AppSettingsAccountRoute: AppSettingsAccountRoute,
+  AppSettingsAnonymousReportRoute: AppSettingsAnonymousReportRoute,
   AppSettingsAppflareUpdatesRoute: AppSettingsAppflareUpdatesRoute,
   AppSettingsBuildingRoute: AppSettingsBuildingRoute,
   AppSettingsCatalogsRoute: AppSettingsCatalogsRoute,
