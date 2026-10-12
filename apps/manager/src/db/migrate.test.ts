@@ -14,6 +14,9 @@ import journal from "./migrations/meta/_journal.json";
 
 const EXPECTED_TABLES = [
   "account",
+  "app_pauses",
+  "app_spend_settings",
+  "app_usage_state",
   "catalog_revisions",
   "catalogs",
   "cloudflare_grant",
@@ -34,6 +37,11 @@ const EXPECTED_TABLES = [
   "settings",
   "snapshots",
   "source_builds",
+  "usage_activity",
+  "usage_alert_firings",
+  "usage_alert_rules",
+  "usage_daily",
+  "usage_hourly",
   "user",
   "verification",
 ];

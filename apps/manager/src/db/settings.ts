@@ -199,6 +199,22 @@ export const SETTING = {
    * the binding answers.
    */
   sandboxWorkerDeleted: "sandbox_worker_deleted",
+  /**
+   * The account's spend protection defaults (usage/store/defaults.server.ts),
+   * each absent until an admin changes it. `spend_auto_pause` is `on` or
+   * `off` (absent: off), whether apps that follow the account pause on
+   * their own. `spend_loop` is JSON `{ on, level }`, the loop trigger
+   * (absent: on, standard); `spend_cap` JSON `{ on, amount, period }`, the
+   * spending cap trigger (absent: on, $10 a month); `spend_budget` JSON
+   * `{ on, amount }`, the monthly budget including the $5 plan (absent:
+   * off, $50); `spend_unusual_factor` the unusual-usage alert's N× normal,
+   * `0` for off (absent: 20).
+   */
+  spendAutoPause: "spend_auto_pause",
+  spendLoop: "spend_loop",
+  spendCap: "spend_cap",
+  spendBudget: "spend_budget",
+  spendUnusualFactor: "spend_unusual_factor",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

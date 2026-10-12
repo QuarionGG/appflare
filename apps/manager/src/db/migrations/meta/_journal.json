@@ -64,6 +64,13 @@
       "when": 1791718868489,
       "tag": "0008_access_hostnames_resync",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791811296734,
+      "tag": "0009_spend_protection",
+      "breakpoints": true
     }
   ]
 }
