@@ -215,6 +215,15 @@ export const SETTING = {
   spendCap: "spend_cap",
   spendBudget: "spend_budget",
   spendUnusualFactor: "spend_unusual_factor",
+  /**
+   * JSON: the numbers spend protection shows, computed from the usage
+   * series (usage/overview.server.ts): each app's spend per period, burn,
+   * loop checks and share of the overage, the month's bill, and when they
+   * were computed. Written by the spend watcher every tick, and by a page
+   * that finds it missing or older than 15 minutes, so pages need not read
+   * the hourly series.
+   */
+  spendOverview: "spend_overview",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

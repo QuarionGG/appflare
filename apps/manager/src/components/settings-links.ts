@@ -14,6 +14,7 @@ export const SETTINGS_SECTIONS = {
     sections: {
       connection: "Cloudflare connection",
       capabilities: "What this account can run",
+      "spend-protection": "Spend protection",
       "danger-zone": "Danger zone",
     },
   },

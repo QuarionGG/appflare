@@ -19,6 +19,7 @@ import { ACC } from "../test/fake-account";
 import { fakeCloudflare } from "../test/fake-cloudflare";
 import { probeRoundTrips, type RoundTrips } from "../test/round-trips";
 import { cacheIndex, INSTALL_ID, seedInstall } from "../test/seed-install";
+import { readSpendOverview, writeSpendOverviewSnapshot } from "../usage/overview.server";
 import { openPause } from "../usage/store/pauses.server";
 import { initialUsageState, writeUsageStates } from "../usage/store/usage-state.server";
 import { readGate } from "./gate.server";
@@ -187,6 +188,25 @@ describe("round trips of the signed-in pages", () => {
     report("layout with spend protection rows", p);
     expect(p.waves()).toBeLessThanOrEqual(3);
     expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
+  });
+
+  it("Your account's spend protection: one round beside the session check, no usage rows while the stored numbers are fresh", async () => {
+    await writeSpendOverviewSnapshot(env.DB);
+    const p = start();
+    const [session, data] = await Promise.all([sessionLoader("copy")(), readSpendOverview(env.DB)]);
+    expect(session.user.role).toBe("admin");
+    expect(data.overview.apps.map((a) => a.installId)).toEqual([INSTALL_ID]);
+    report("spend protection", p);
+    expect(p.waves()).toBeLessThanOrEqual(1);
+    expect(p.ops.filter((o) => /usage_(hourly|daily)/.test(o.label))).toEqual([]);
+    expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
+    // Without stored numbers (before the watcher ever ran) the page computes them once.
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'spend_overview'").run();
+    p.clear();
+    await readSpendOverview(env.DB);
+    report("spend protection, numbers computed", p);
+    expect(p.waves()).toBeLessThanOrEqual(3);
+    expect(p.ops.filter((o) => o.label.includes("usage_hourly")).length).toBeGreaterThan(0);
   });
 
   it("an app's catalog page: two rounds, and the account's Workers listed once a minute", async () => {

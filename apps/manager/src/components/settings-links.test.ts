@@ -24,6 +24,7 @@ describe("settingsLink", () => {
     expect(settingsLink("account", "capability-token-permissions")).toBe(
       "/settings/account#capability-token-permissions",
     );
+    expect(settingsLink("account", "spend-protection")).toBe("/settings/account#spend-protection");
     expect(settingsLink("account", "danger-zone")).toBe("/settings/account#danger-zone");
     expect(settingsLink("building", "sandbox")).toBe("/settings/building#sandbox");
     expect(settingsLink("building", "github-access")).toBe("/settings/building#github-access");
@@ -57,6 +58,7 @@ describe("settingsLink", () => {
     expect(Object.keys(SETTINGS_SECTIONS.account.sections)).toEqual([
       "connection",
       "capabilities",
+      "spend-protection",
       "danger-zone",
     ]);
     expect(Object.keys(SETTINGS_SECTIONS.updates.sections)).toEqual([

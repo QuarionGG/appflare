@@ -20,6 +20,7 @@ import type { PasswordRecoverySettings } from "../server/recovery.functions";
 import type { SandboxCardState } from "../server/sandbox.functions";
 import type { TokenStatus } from "../server/token.functions";
 import type { UserRow } from "../server/users.functions";
+import { spendData } from "../test/spend-fixture";
 import type { AddressView } from "./manager-address-section";
 import { visibleSettingsPages } from "./navigation";
 import { SettingsNavigationContext } from "./settings-menu";
@@ -122,6 +123,8 @@ const capabilities = capabilitiesView(undefined, {
   zeroTrust: { state: "none" },
 });
 
+const spend = spendData();
+
 const capabilityRowsData: CapabilityRowsData = {
   view: capabilities,
   sandbox: "off",
@@ -148,18 +151,19 @@ const sandboxStatus: SandboxCardState = {
 describe("AccountSettingsView", () => {
   const owner = { role: "admin", isOwner: true } as const;
 
-  it("shows the connection and what the account can run, then the danger zone last for the owner", () => {
+  it("shows the connection, what the account can run and spend protection, then the danger zone last for the owner", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities: capabilityRowsData,
+        spend,
         danger: { authSecretRotatedAt: null },
         viewer: owner,
       }),
     );
     expectPattern(
       html,
-      ["connection", "capabilities", "danger-zone"],
+      ["connection", "capabilities", "spend-protection", "danger-zone"],
       ["Change how Appflare connects", "Check again", "Rotate auth secret", "Remove Appflare"],
     );
     expect(html).toMatch(/<h1[^>]*>Your account<\/h1>/);
@@ -176,6 +180,7 @@ describe("AccountSettingsView", () => {
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities: capabilityRowsData,
+        spend,
         danger: null,
         viewer: { role: "member", isOwner: false },
         managerUrl: "https://appflare.acme.workers.dev",
@@ -187,7 +192,7 @@ describe("AccountSettingsView", () => {
     expect(html).not.toContain("appflare.dev/my/");
     expect(text(html)).not.toContain(tokenStatus.accountId ?? "no account id");
     // Still one primary action at most, and no extra section.
-    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+    expect(sectionIds(html)).toEqual(["connection", "capabilities", "spend-protection"]);
   });
 
   it("says in plain words when the Cloudflare authorization needs reconnecting", () => {
@@ -214,6 +219,7 @@ describe("AccountSettingsView", () => {
         createElement(AccountSettingsView, {
           tokenStatus: needsReconnect,
           capabilities: capabilityRowsData,
+          spend,
           danger: null,
           viewer: { role: "admin", isOwner: false },
         }),
@@ -235,6 +241,7 @@ describe("AccountSettingsView", () => {
         createElement(AccountSettingsView, {
           tokenStatus: needsReconnect,
           capabilities: capabilityRowsData,
+          spend,
           danger: null,
           viewer: { role: "member", isOwner: false },
         }),
@@ -244,16 +251,32 @@ describe("AccountSettingsView", () => {
     expect(forMember).not.toContain("Reconnect Cloudflare");
   });
 
+  it("still shows the connection when spend protection could not be read", () => {
+    const html = render(
+      createElement(AccountSettingsView, {
+        tokenStatus,
+        capabilities: capabilityRowsData,
+        spend: null,
+        danger: null,
+        viewer: { role: "admin", isOwner: false },
+      }),
+    );
+    expect(sectionIds(html)).toEqual(["connection", "capabilities", "spend-protection"]);
+    expect(text(html)).toContain("Change how Appflare connects");
+    expect(text(html)).toContain("Spend protection could not be read just now.");
+  });
+
   it("shows no danger zone to admins who are not the owner", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities: capabilityRowsData,
+        spend,
         danger: null,
         viewer: { role: "admin", isOwner: false },
       }),
     );
-    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+    expect(sectionIds(html)).toEqual(["connection", "capabilities", "spend-protection"]);
     expect(text(html)).not.toContain("Remove Appflare");
     expect(text(html)).not.toContain("Rotate auth secret");
   });
@@ -263,11 +286,12 @@ describe("AccountSettingsView", () => {
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities: capabilityRowsData,
+        spend,
         danger: null,
         viewer: { role: "member", isOwner: false },
       }),
     );
-    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+    expect(sectionIds(html)).toEqual(["connection", "capabilities", "spend-protection"]);
     expect(text(html)).not.toContain("Change how Appflare connects");
     expect(count(html, ">Check again<")).toBe(0);
   });

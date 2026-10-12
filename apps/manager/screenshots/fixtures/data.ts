@@ -15,7 +15,9 @@ import { accountAttentionRows } from "../../src/home/account-attention";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
+import { loopingApp, spendApp, spendData } from "../../src/test/spend-fixture";
 import type { UsageAttention } from "../../src/usage/attention";
+import type { SpendProtectionData } from "../../src/usage/spend-defaults.functions";
 import catalogIndexJson from "./catalog.json";
 import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
@@ -503,6 +505,55 @@ function accountRowsFixture() {
 }
 
 /**
+ * Settings, Your account, Spend protection: a calm Workers Paid account with
+ * the defaults; or (`?fixture=spend-busy`) auto-pause and a $50 budget on,
+ * Service status looping past the budget, Short links never paused for it and
+ * Journal on triggers of its own, which a member sees the same
+ * (`spend-member`); everything off (`spend-off`); or the Free plan
+ * (`spend-free`, with R2 past its free amount).
+ */
+function spendFixture(): SpendProtectionData {
+  const appsNamed = (over: Record<string, Parameters<typeof spendApp>[2]> = {}) =>
+    apps.map((app) =>
+      app.id === "install-statusbeam" && (variant === "spend-busy" || variant === "spend-member")
+        ? loopingApp(app.id, app.label ?? app.name, over[app.id])
+        : spendApp(app.id, app.label ?? app.name, over[app.id]),
+    );
+  switch (variant) {
+    case "spend-busy":
+    case "spend-member":
+      return spendData({
+        defaults: { autoPause: true, budget: { on: true, amount: 50 } },
+        overview: {
+          bill: { now: 18.4, projected: 66.45 },
+          budgetPick: "install-statusbeam",
+          apps: appsNamed({
+            "install-cut": { budgetExempt: true },
+            "install-emdash": { followsAccountTriggers: false },
+          }),
+        },
+      });
+    case "spend-off":
+      return spendData({
+        defaults: {
+          autoPause: false,
+          loop: { on: false, level: "standard" },
+          cap: { on: false, amount: 10, period: "month" },
+          budget: { on: false, amount: 50 },
+          unusualFactor: 0,
+        },
+        overview: { apps: appsNamed() },
+      });
+    case "spend-free":
+      return spendData({
+        overview: { plan: "free", bill: { now: 0.42, projected: 1.3 }, apps: appsNamed() },
+      });
+    default:
+      return spendData({ overview: { apps: appsNamed() } });
+  }
+}
+
+/**
  * Home's spend protection rows: none, but for Service status using far more
  * than usual (`?fixture=usage-runaway`), the same on the Free plan, where it
  * used up a free daily limit (`usage-capped`), Short links about to use up
@@ -740,8 +791,9 @@ export function fixture(name: string, args: unknown[]): unknown {
         id: "user-ada",
         name: "Ada Lovelace",
         email: "ada@example.com",
-        role: "admin",
-        isOwner: true,
+        // A member's view of the settings (`?fixture=spend-member`).
+        role: variant === "spend-member" ? "member" : "admin",
+        isOwner: variant !== "spend-member",
       },
       accountId: view.accountId,
     }),
@@ -867,6 +919,11 @@ export function fixture(name: string, args: unknown[]): unknown {
     }),
     startCloudflareReconnect: () => ({ url: "#", origin: "https://appflare.example.com" }),
     getDangerZoneState: () => ({ canRemove: false, reason: null }),
+    getSpendProtection: () => spendFixture(),
+    setSpendDefaults: () => ({
+      ...spendFixture().defaults,
+      ...(args[0] as { data?: object } | undefined)?.data,
+    }),
     getSandboxStatus: () => ({
       connected: true,
       info: { sandboxVersion: "0.1.0", image: "appflare/sandbox:0.1.0" },
