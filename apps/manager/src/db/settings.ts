@@ -41,6 +41,19 @@ export const SETTING = {
    */
   managerVersionHistory: "manager_version_history",
   /**
+   * JSON `{ "<version>": ["<cron>", ...] }`: the cron schedule each Appflare
+   * version ran with, recorded by each version itself
+   * (jobs/self-update/schedule.ts), so a rollback can set the schedule of
+   * the version it goes back to.
+   */
+  managerCrons: "manager_crons",
+  /**
+   * The Workers version id (or, without the version binding, the release)
+   * that last made sure the Worker runs its own cron schedule; a rollback
+   * clears it.
+   */
+  managerScheduleVersion: "manager_schedule_version",
+  /**
    * Cloudflare Access protection, all set together when it is turned on and
    * all removed when it is turned off. `access_aud` and `access_team_domain`
    * are what every request's `Cf-Access-Jwt-Assertion` is checked against.
@@ -224,6 +237,14 @@ export const SETTING = {
    * the hourly series.
    */
   spendOverview: "spend_overview",
+  /**
+   * JSON: the spend watcher's last check (usage/watcher-status.ts): when it
+   * ran and whether it could read usage. `needs_access` means the
+   * Cloudflare connection lacks the analytics permission (an older OAuth
+   * grant, or an API token without "Account Analytics"): pages show
+   * "Reconnect to see usage" until a check succeeds again.
+   */
+  spendWatch: "spend_watch",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

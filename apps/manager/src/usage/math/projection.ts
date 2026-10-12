@@ -70,6 +70,14 @@ export function percentile95(values: readonly number[]): number {
 export const MIN_ACTIVE_HOURS = 3;
 
 /**
+ * Normal hours already worked out, by series object and the hour of `now`
+ * (the window moves by the hour, so every check within an hour shares it);
+ * a weak map keeps each only as long as its series. A series must not
+ * change after it is measured.
+ */
+const normals = new WeakMap<Series, { hour: number; normal: number | null }>();
+
+/**
  * The app's usual busy hour: the 95th percentile of its active hours (hours
  * with any use) over the 7 days before the last day. The last day is left out
  * so a loop that started yesterday does not become the normal it is measured
@@ -78,7 +86,16 @@ export const MIN_ACTIVE_HOURS = 3;
  * Null when the window has fewer than 3 active hours: no normal yet.
  */
 export function normalHour(series: Series, now: number): number | null {
-  const end = hourStart(now) - DAY_MS;
+  const current = hourStart(now);
+  const known = normals.get(series);
+  if (known !== undefined && known.hour === current) return known.normal;
+  const normal = computeNormalHour(series, current);
+  normals.set(series, { hour: current, normal });
+  return normal;
+}
+
+function computeNormalHour(series: Series, current: number): number | null {
+  const end = current - DAY_MS;
   const start = end - NORMAL_DAYS * DAY_MS;
   const hours = new Map<number, number>();
   for (const { hour, value } of series) {

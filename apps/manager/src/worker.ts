@@ -32,10 +32,12 @@ import { scheduledSourceBuildExpiry } from "./installs/source-builds-expiry.serv
 import { workflowRepairLog, workflowRepairNeeded } from "./installs/workflow-repair.server";
 import { jobCreator } from "./jobs/create-job.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
+import { ensureOwnSchedule, ownScheduleLog } from "./jobs/self-update/schedule";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { createNotificationUnits, selfNotificationUnits } from "./notifications/units";
 import { runningVersion } from "./server/build-version";
 import { reportTelemetry } from "./telemetry/report.server";
+import { runScheduled, scheduledSpendWatch } from "./usage/watcher-unit";
 
 /**
  * The manager's Worker entry (custom entry so it can export more than
@@ -207,7 +209,11 @@ export default {
   },
 
   /**
-   * Cron: refresh every enabled catalog's index into KV, then check the manager's own
+   * Cron, every five minutes (usage/watcher-unit.ts): first the spend
+   * watcher (usage/watcher.server.ts) as a SELF unit with its own subrequest
+   * budget (in place without the binding), which never fails the run; then,
+   * on the runs scheduled at minute 0 and 30 only, the work below.
+   * Refresh every enabled catalog's index into KV, then check the manager's own
    * release feed. Update-available (for apps and for Appflare) is computed
    * at read time from those caches. Once a day, and whenever an older
    * version ran them, it also re-reads the account's capabilities
@@ -228,146 +234,162 @@ export default {
    * custom domain still serves it, the move to a pending address once that
    * serves (domains/pending-address.server.ts).
    */
-  async scheduled(_controller, env) {
+  async scheduled(controller, env) {
     if ((await migrated(env)) !== null) return;
-    // Every enabled catalog: one conditional fetch each (the official one also reads its stats).
-    try {
-      for (const line of await refreshEnabledCatalogs(env)) {
-        if (line.ok) console.log(`catalog ${line.id} refreshed: ${line.apps} app(s)`);
-        else console.error(`catalog ${line.id} refresh failed`, { error: line.error });
-      }
-    } catch (error) {
-      console.error("catalog refresh failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    try {
-      const latest = await refreshManagerReleases(env);
-      console.log(`release feed checked: newest Appflare release ${latest?.version ?? "none"}`);
-    } catch (error) {
-      if (!(error instanceof ManagerReleasesError)) throw error;
-      console.error("release feed check failed", { error: error.message });
-    }
-    // Account capabilities (R2, Containers, Workers plan, ...): once a UTC day,
-    // and again when an older version stored them; one read call each.
-    try {
-      const capabilities = await refreshCapabilitiesIfStale(env, createDb(env.DB), {
-        version: runningVersion(env),
-      });
-      if (capabilities === "checked") console.log("account capabilities checked");
-    } catch (error) {
-      console.error("account capability check failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Apps protected with Cloudflare Access (access/upkeep-run.server.ts), in
-    // three parts, in this order: newer catalog revisions of their releases
-    // (which mark apps whose public paths changed), service tokens and the
-    // users policy, then Access applications due a sync and the check that
-    // they still exist. Each a SELF unit with its own invocation and
-    // subrequest budget (in place without the binding); nothing at all while
-    // no app has an Access record; never fails the run.
-    try {
-      if (await accessUpkeepNeeded(env.DB)) {
-        const units = selfNotificationUnits(env);
-        for (const part of ACCESS_UPKEEP_PARTS) {
-          const result =
-            units === undefined
-              ? { ok: true as const, value: await ACCESS_UPKEEP_IN_PLACE[part](env) }
-              : await units[part]({});
-          if (result.ok) logAccessUpkeep(result.value);
-          else console.error(`access: upkeep (${part}) failed`, { error: result.error });
-        }
-      }
-    } catch (error) {
-      console.error("access: upkeep of protected apps failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Workflows of installed apps that do not exist in Cloudflare (managers up
-    // to 0.2.0 recorded them without creating them): created while any is
-    // left, then at most once a day, as a SELF unit with its own budget (in
-    // place without the binding); never fails the run.
-    try {
-      if (await workflowRepairNeeded(env.DB)) {
-        const units = selfNotificationUnits(env) ?? createNotificationUnits(env);
-        const result = await units.repairWorkflows({});
-        if (!result.ok) console.error("workflow repair failed", { error: result.error });
-        else {
-          const line = workflowRepairLog(result.value);
-          if (line !== null) console.log(line);
-        }
-      }
-    } catch (error) {
-      console.error("workflow repair failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Automatic updates, from the caches refreshed above (auto-update/cron.server.ts).
-    try {
-      for (const line of scheduledUpdatesLog(await runScheduledUpdates(env))) console.log(line);
-    } catch (error) {
-      console.error("automatic updates failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Anonymous usage data, after the caches above are fresh; never fails the run.
-    const usage = await reportTelemetry(env);
-    if (usage.status === "failed") console.warn("usage data not sent", { reason: usage.reason });
-    else if (usage.status === "sent" && usage.events > 0) {
-      console.log(`usage data sent: ${usage.events} event(s)`);
-    }
-    // External domains: record their state and emit "Domain active" or
-    // "Domain failed" for the delivery below; never fails the run.
-    await scheduledExternalDomainCheck(env);
-    // Appflare's pending address (installed for a domain that did not serve
-    // yet): moved there once it serves; one read when none; never fails the run.
-    await lookAtPendingAddress(env);
-    // Appflare's address: when its custom domain no longer serves it, back to
-    // workers.dev, with a notification delivered just below; never fails the run.
-    try {
-      const address = await reconcileManagerAddress({
-        db: env.DB,
-        api: () => getCfClient(env),
-        invalidateAccessGate: () => accessGate.invalidate(),
-      });
-      if (address.status === "lost") {
-        console.warn(`address: ${address.hostname} no longer serves Appflare; back at workers.dev`);
-      }
-    } catch (error) {
-      console.error("address check failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Notification channels: conditions, missed job ends, deliveries; never fails the run.
-    await scheduledNotifications(env);
-    // Builds for review nobody used for a week: thrown away with their files
-    // in the sandbox Worker's bucket, a few per run, as a SELF unit with its
-    // own budget (in place without the binding); one read when none is due;
-    // never fails the run.
-    await scheduledSourceBuildExpiry(env);
-    // A recovery code secret that can no longer be used is deleted; never fails the run.
-    try {
-      const cleanup = await cleanUpRecoverySecret({
-        d1: env.DB,
-        secret: env.RECOVERY_CODE_HASH,
-        since: versionCreatedAt(env.CF_VERSION_METADATA),
-        now: new Date(),
-        api: () => getCfClient(env),
-        workflows: env.JOBS,
-      });
-      if (cleanup.outcome === "deleted") {
-        console.log(`recovery code secret deleted (${cleanup.reason})`);
-      } else if (cleanup.outcome === "skipped") {
-        console.log(`recovery code secret kept for now: ${cleanup.reason}`);
-      }
-    } catch (error) {
-      console.error("recovery code secret cleanup failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // A manager installed from the browser tells the installer that setup is
-    // done, until it has answered; one read otherwise; never fails the run.
-    await completeInstallation(env);
+    // Cron triggers belong to the Worker, not to a version: once per version,
+    // the Worker's schedule becomes this build's (an update from a version
+    // with another schedule runs here on the old one); never fails the run.
+    const schedule = ownScheduleLog(await ensureOwnSchedule(env));
+    if (schedule !== null) console.log(schedule);
+    await runScheduled(controller.scheduledTime, {
+      watch: (options) => scheduledSpendWatch(env, options),
+      halfHourly: () => halfHourlyWork(env),
+    });
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * The scheduled work of the runs at minute 0 and 30 (see `scheduled` above),
+ * in its order.
+ */
+async function halfHourlyWork(env: Env): Promise<void> {
+  // Every enabled catalog: one conditional fetch each (the official one also reads its stats).
+  try {
+    for (const line of await refreshEnabledCatalogs(env)) {
+      if (line.ok) console.log(`catalog ${line.id} refreshed: ${line.apps} app(s)`);
+      else console.error(`catalog ${line.id} refresh failed`, { error: line.error });
+    }
+  } catch (error) {
+    console.error("catalog refresh failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    const latest = await refreshManagerReleases(env);
+    console.log(`release feed checked: newest Appflare release ${latest?.version ?? "none"}`);
+  } catch (error) {
+    if (!(error instanceof ManagerReleasesError)) throw error;
+    console.error("release feed check failed", { error: error.message });
+  }
+  // Account capabilities (R2, Containers, Workers plan, ...): once a UTC day,
+  // and again when an older version stored them; one read call each.
+  try {
+    const capabilities = await refreshCapabilitiesIfStale(env, createDb(env.DB), {
+      version: runningVersion(env),
+    });
+    if (capabilities === "checked") console.log("account capabilities checked");
+  } catch (error) {
+    console.error("account capability check failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // Apps protected with Cloudflare Access (access/upkeep-run.server.ts), in
+  // three parts, in this order: newer catalog revisions of their releases
+  // (which mark apps whose public paths changed), service tokens and the
+  // users policy, then Access applications due a sync and the check that
+  // they still exist. Each a SELF unit with its own invocation and
+  // subrequest budget (in place without the binding); nothing at all while
+  // no app has an Access record; never fails the run.
+  try {
+    if (await accessUpkeepNeeded(env.DB)) {
+      const units = selfNotificationUnits(env);
+      for (const part of ACCESS_UPKEEP_PARTS) {
+        const result =
+          units === undefined
+            ? { ok: true as const, value: await ACCESS_UPKEEP_IN_PLACE[part](env) }
+            : await units[part]({});
+        if (result.ok) logAccessUpkeep(result.value);
+        else console.error(`access: upkeep (${part}) failed`, { error: result.error });
+      }
+    }
+  } catch (error) {
+    console.error("access: upkeep of protected apps failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // Workflows of installed apps that do not exist in Cloudflare (managers up
+  // to 0.2.0 recorded them without creating them): created while any is
+  // left, then at most once a day, as a SELF unit with its own budget (in
+  // place without the binding); never fails the run.
+  try {
+    if (await workflowRepairNeeded(env.DB)) {
+      const units = selfNotificationUnits(env) ?? createNotificationUnits(env);
+      const result = await units.repairWorkflows({});
+      if (!result.ok) console.error("workflow repair failed", { error: result.error });
+      else {
+        const line = workflowRepairLog(result.value);
+        if (line !== null) console.log(line);
+      }
+    }
+  } catch (error) {
+    console.error("workflow repair failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // Automatic updates, from the caches refreshed above (auto-update/cron.server.ts).
+  try {
+    for (const line of scheduledUpdatesLog(await runScheduledUpdates(env))) console.log(line);
+  } catch (error) {
+    console.error("automatic updates failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // Anonymous usage data, after the caches above are fresh; never fails the run.
+  const usage = await reportTelemetry(env);
+  if (usage.status === "failed") console.warn("usage data not sent", { reason: usage.reason });
+  else if (usage.status === "sent" && usage.events > 0) {
+    console.log(`usage data sent: ${usage.events} event(s)`);
+  }
+  // External domains: record their state and emit "Domain active" or
+  // "Domain failed" for the delivery below; never fails the run.
+  await scheduledExternalDomainCheck(env);
+  // Appflare's pending address (installed for a domain that did not serve
+  // yet): moved there once it serves; one read when none; never fails the run.
+  await lookAtPendingAddress(env);
+  // Appflare's address: when its custom domain no longer serves it, back to
+  // workers.dev, with a notification delivered just below; never fails the run.
+  try {
+    const address = await reconcileManagerAddress({
+      db: env.DB,
+      api: () => getCfClient(env),
+      invalidateAccessGate: () => accessGate.invalidate(),
+    });
+    if (address.status === "lost") {
+      console.warn(`address: ${address.hostname} no longer serves Appflare; back at workers.dev`);
+    }
+  } catch (error) {
+    console.error("address check failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // Notification channels: conditions, missed job ends, deliveries; never fails the run.
+  await scheduledNotifications(env);
+  // Builds for review nobody used for a week: thrown away with their files
+  // in the sandbox Worker's bucket, a few per run, as a SELF unit with its
+  // own budget (in place without the binding); one read when none is due;
+  // never fails the run.
+  await scheduledSourceBuildExpiry(env);
+  // A recovery code secret that can no longer be used is deleted; never fails the run.
+  try {
+    const cleanup = await cleanUpRecoverySecret({
+      d1: env.DB,
+      secret: env.RECOVERY_CODE_HASH,
+      since: versionCreatedAt(env.CF_VERSION_METADATA),
+      now: new Date(),
+      api: () => getCfClient(env),
+      workflows: env.JOBS,
+    });
+    if (cleanup.outcome === "deleted") {
+      console.log(`recovery code secret deleted (${cleanup.reason})`);
+    } else if (cleanup.outcome === "skipped") {
+      console.log(`recovery code secret kept for now: ${cleanup.reason}`);
+    }
+  } catch (error) {
+    console.error("recovery code secret cleanup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // A manager installed from the browser tells the installer that setup is
+  // done, until it has answered; one read otherwise; never fails the run.
+  await completeInstallation(env);
+}

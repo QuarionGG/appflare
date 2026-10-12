@@ -113,3 +113,20 @@ describe("normalHour", () => {
     expect(normalHour(hourly(30 * 24, 0), NOW)).toBeNull();
   });
 });
+
+describe("normalHour (remembered)", () => {
+  const series = () => hourly(10 * 24, (ago) => 100 + (ago % 9) * 10);
+
+  it("answers again within the hour with what it worked out", () => {
+    const s = series();
+    const first = normalHour(s, NOW);
+    expect(normalHour(s, NOW + 60_000)).toBe(first);
+    expect(first).toBe(normalHour(series(), NOW));
+  });
+
+  it("works it out again in the next hour", () => {
+    const s = series();
+    normalHour(s, NOW);
+    expect(normalHour(s, NOW + 3_600_000)).toBe(normalHour(series(), NOW + 3_600_000));
+  });
+});

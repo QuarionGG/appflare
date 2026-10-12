@@ -9,6 +9,8 @@ import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
+import type { ShardUnitResult } from "../../usage/watcher-shard.server";
+import { createSpendWatcherUnits, type SpendWatcherResult } from "../../usage/watcher-unit";
 import type { CronTriggerScan } from "../install/cron-limit";
 import type {
   ProtectInstallUnitResult,
@@ -154,5 +156,15 @@ export class JobUnits extends WorkerEntrypoint<Env> {
   // The scheduled expiry of builds for review nobody used.
   expireSourceBuilds(input: unknown): Promise<NotificationUnitResult<ExpiredSourceBuilds>> {
     return createNotificationUnits(this.env).expireSourceBuilds(input);
+  }
+
+  // The spend watcher's check (src/usage/watcher-unit.ts), every scheduled run.
+  watchSpend(input: unknown): Promise<SpendWatcherResult> {
+    return createSpendWatcherUnits(this.env).watchSpend(input);
+  }
+
+  // A part of a spend watcher check on Workers Free (src/usage/watcher-shard.server.ts).
+  spendShard(input: unknown): Promise<ShardUnitResult> {
+    return createSpendWatcherUnits(this.env).spendShard(input);
   }
 }

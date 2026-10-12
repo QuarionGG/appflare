@@ -74,8 +74,11 @@
   "version_metadata": {
     "binding": "CF_VERSION_METADATA"
   },
+  // One cron (the Workers Free plan allows three per account): the spend
+  // watcher runs on every run, the rest of the scheduled work on the runs at
+  // minute 0 and 30 (src/usage/watcher-unit.ts).
   "triggers": {
-    "crons": ["*/30 * * * *"]
+    "crons": ["*/5 * * * *"]
   },
   "vars": {
     // Local fallback only. vite.config.ts overrides it from the APPFLARE_VERSION
