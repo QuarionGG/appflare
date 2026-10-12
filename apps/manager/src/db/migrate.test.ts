@@ -270,3 +270,54 @@ describe("ensure", () => {
     expect(await settingValue(env.DB, MIGRATION_LOCK_KEY)).toBeNull();
   });
 });
+
+describe("0010_notification_usage_events", () => {
+  const USAGE = [
+    "usage_unusual",
+    "usage_alert",
+    "usage_limit_near",
+    "app_paused",
+    "app_resumed",
+    "budget_reached",
+  ];
+
+  async function eventsOf(id: string): Promise<unknown> {
+    const row = await env.DB.prepare("SELECT events_json FROM notification_channels WHERE id = ?1")
+      .bind(id)
+      .first<{ events_json: string }>();
+    try {
+      return JSON.parse(row?.events_json ?? "null");
+    } catch {
+      return row?.events_json;
+    }
+  }
+
+  it("gives every existing channel the spend protection events, once each", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0010_notification_usage_events");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    for (const [id, events] of [
+      ["updates", '["update_available","health_failing"]'],
+      ["none", "[]"],
+      ["some", '["app_paused","update_failed"]'],
+      ["broken", "not json"],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
+         VALUES (?1, 'slack', ?1, 'Slack', 'v1.x.y', ?2, 1, 1)`,
+      )
+        .bind(id, events)
+        .run();
+    }
+    await createMigrator(migrations).ensure(env.DB);
+    expect(await eventsOf("updates")).toEqual(["update_available", "health_failing", ...USAGE]);
+    expect(await eventsOf("none")).toEqual(USAGE);
+    // Already there: kept where it was, not added twice.
+    expect(await eventsOf("some")).toEqual([
+      "app_paused",
+      "update_failed",
+      ...USAGE.filter((e) => e !== "app_paused"),
+    ]);
+    expect(await eventsOf("broken")).toBe("not json");
+  });
+});

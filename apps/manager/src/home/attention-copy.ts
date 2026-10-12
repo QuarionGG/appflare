@@ -1,4 +1,5 @@
 import { RECONNECT_COPY } from "../cloudflare/connection-view";
+import { type ClockFormat, usageAttentionCopy } from "../usage/attention";
 import type { AttentionItem, FailedJob } from "./attention";
 
 /**
@@ -47,8 +48,23 @@ function failedJobLine(job: FailedJob): string {
   }
 }
 
-export function attentionCopy(item: AttentionItem): { title: string; description: string } {
+const shortTime = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+
+/** A clock time in the reader's time zone ("2:05 PM"). */
+export function readerClock(epochMs: number): string {
+  return shortTime.format(new Date(epochMs));
+}
+
+export function attentionCopy(
+  item: AttentionItem,
+  /** How a spend protection row says a time; the reader's clock by default. */
+  clock: ClockFormat = readerClock,
+): { title: string; description: string } {
   switch (item.kind) {
+    case "usage": {
+      const { title, description } = usageAttentionCopy(item.usage, item.label, clock);
+      return { title, description };
+    }
     case "connection":
       return { title: RECONNECT_COPY.title, description: RECONNECT_COPY.description };
     case "failed-job":

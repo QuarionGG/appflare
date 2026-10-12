@@ -14,6 +14,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../installs/health.functions", () => ({ checkInstallHealth: vi.fn() }));
 vi.mock("../installs/update-all.functions", () => ({ startAllUpdates: vi.fn() }));
 vi.mock("../deploy-button/deploy-copy.functions", () => ({ dismissDeployCopy: vi.fn() }));
+vi.mock("../usage/pause.functions", () => ({ pauseAppFn: vi.fn(), resumeAppFn: vi.fn() }));
 
 const { HomeView } = await import("./home-view");
 

@@ -6,6 +6,7 @@ import {
   appLink,
   appPlace,
   appSectionTab,
+  appTabLink,
 } from "./app-links";
 import { isMessageLinkPath } from "./internal-path";
 import { messageSegments } from "./message-links";
@@ -42,6 +43,19 @@ describe("appLink", () => {
     for (const id of Object.keys(APP_SECTIONS) as AppSectionId[]) {
       expect(isMessageLinkPath(appLink("01J9ZQ7K3M", id)), id).toBe(true);
     }
+  });
+});
+
+describe("appTabLink", () => {
+  it("opens one tab of the app's page, and the page itself for Overview", () => {
+    expect(appTabLink("01J9ZQ7K3M", "usage")).toBe("/apps/01J9ZQ7K3M?tab=usage");
+    expect(appTabLink("01J9ZQ7K3M", "jobs")).toBe("/apps/01J9ZQ7K3M?tab=jobs");
+    expect(appTabLink("01J9ZQ7K3M", "overview")).toBe("/apps/01J9ZQ7K3M");
+    expect(appTabLink("a/b", "usage")).toBe("/apps/a%2Fb?tab=usage");
+  });
+
+  it("puts Usage right after Overview", () => {
+    expect(APP_TABS.slice(0, 2)).toEqual(["overview", "usage"]);
   });
 });
 

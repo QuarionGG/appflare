@@ -15,6 +15,7 @@ import { accountAttentionRows } from "../../src/home/account-attention";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
 import type { StartUpdateResult } from "../../src/installs/versions.server";
+import type { UsageAttention } from "../../src/usage/attention";
 import catalogIndexJson from "./catalog.json";
 import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
@@ -501,6 +502,77 @@ function accountRowsFixture() {
     : [];
 }
 
+/**
+ * Home's spend protection rows: none, but for Service status using far more
+ * than usual (`?fixture=usage-runaway`), the same on the Free plan, where it
+ * used up a free daily limit (`usage-capped`), Short links about to use up
+ * the day's free requests (`usage-limit`), and Service status paused past its
+ * cap (`usage-paused`). Times are relative to when the page loads.
+ */
+function usageFixture(): UsageAttention[] {
+  const at = Date.now();
+  const hour = 3_600_000;
+  switch (variant) {
+    case "usage-runaway":
+      return [
+        {
+          kind: "unusual",
+          installId: "install-statusbeam",
+          plan: "paid",
+          since: at - 1.5 * hour,
+          product: "do_requests",
+          perHour: 2_880_000,
+          times: 3000,
+          burnPerHour: 3.2,
+          spentToday: 4.85,
+          freeShare: null,
+          sentTo: ["Telegram", "Slack"],
+        },
+      ];
+    case "usage-capped":
+      return [
+        {
+          kind: "limit-used-up",
+          installId: "install-statusbeam",
+          product: "do_requests",
+          limit: 100_000,
+          appShare: 0.97,
+          loopSince: at - 1.5 * hour,
+        },
+      ];
+    case "usage-limit":
+      return [
+        {
+          kind: "limit-near",
+          installId: "install-cut",
+          product: "workers_requests",
+          limit: 100_000,
+          runsOutAt: at + 5.5 * hour,
+          appShare: 0.64,
+        },
+      ];
+    case "usage-paused":
+      return [
+        {
+          kind: "paused",
+          installId: "install-statusbeam",
+          pausedAt: at - 0.75 * hour,
+          pausedBy: null,
+          cause: { reason: "cap", amount: 2, period: "day", spent: 2.04 },
+          loopSince: at - 1.5 * hour,
+          stillPastCap: {
+            amount: 2,
+            period: "day",
+            spent: 2.04,
+            resetsAt: Math.ceil(at / (24 * hour)) * 24 * hour,
+          },
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
 const installSettings: InstallSettings = {
   slug: "cut",
   kind: "artifact",
@@ -684,6 +756,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       deployCopy: null,
       downgrade: null,
       reconnectNeeded: connection.state === "needs_reconnect",
+      usage: usageFixture(),
     }),
     listCatalog: () => ({
       apps: catalogApps,

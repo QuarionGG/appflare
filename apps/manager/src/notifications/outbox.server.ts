@@ -312,18 +312,39 @@ export async function settleAttempt(
   return settled;
 }
 
-/** Deletes job events (and their deliveries) that are settled and older than the retention. */
+/**
+ * Spend protection's events are kept past the longest period they dedupe (a
+ * month): an alert or the budget re-checked on the month's last day must
+ * still find the event its first day made.
+ */
+export const USAGE_EVENT_RETENTION_MS = 45 * 86_400_000;
+const USAGE_EVENTS: readonly NotificationEvent[] = [
+  "usage_unusual",
+  "usage_alert",
+  "usage_limit_near",
+  "app_paused",
+  "app_resumed",
+  "budget_reached",
+];
+
+/**
+ * Deletes settled job events (and their deliveries) older than their
+ * retention, and settled spend protection events older than theirs.
+ */
 export async function pruneOutbox(db: D1Database, now: number): Promise<void> {
-  const old = `SELECT id FROM notification_events
-    WHERE dedupe_key LIKE 'job:%' AND occurred_at < ?1
-      AND NOT EXISTS (SELECT 1 FROM notification_deliveries d
+  const settled = `AND NOT EXISTS (SELECT 1 FROM notification_deliveries d
         WHERE d.event_id = notification_events.id AND d.status IN ('pending', 'sending'))`;
+  const old = `SELECT id FROM notification_events
+    WHERE ((dedupe_key LIKE 'job:%' AND occurred_at < ?1)
+       OR (type IN (SELECT value FROM json_each(?3)) AND occurred_at < ?2))
+      ${settled}`;
+  const bind = [
+    now - JOB_EVENT_RETENTION_MS,
+    now - USAGE_EVENT_RETENTION_MS,
+    JSON.stringify(USAGE_EVENTS),
+  ];
   await db.batch([
-    db
-      .prepare(`DELETE FROM notification_deliveries WHERE event_id IN (${old})`)
-      .bind(now - JOB_EVENT_RETENTION_MS),
-    db
-      .prepare(`DELETE FROM notification_events WHERE id IN (${old})`)
-      .bind(now - JOB_EVENT_RETENTION_MS),
+    db.prepare(`DELETE FROM notification_deliveries WHERE event_id IN (${old})`).bind(...bind),
+    db.prepare(`DELETE FROM notification_events WHERE id IN (${old})`).bind(...bind),
   ]);
 }

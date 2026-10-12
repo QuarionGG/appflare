@@ -71,6 +71,13 @@
       "when": 1791811296734,
       "tag": "0009_spend_protection",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791814958899,
+      "tag": "0010_notification_usage_events",
+      "breakpoints": true
     }
   ]
 }

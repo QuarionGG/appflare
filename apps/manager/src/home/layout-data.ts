@@ -1,6 +1,7 @@
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
 import type { InstallRow } from "../installs/installs.functions";
 import type { ManagerStatus } from "../installs/pending-updates";
+import type { UsageAttention } from "../usage/attention";
 import type { AccountAttentionRow, Downgrade, FailedJob } from "./attention";
 
 /**
@@ -32,4 +33,6 @@ export interface LayoutData {
   downgrade: Downgrade | null;
   /** Appflare's connection to Cloudflare needs reconnecting; everyone is told. */
   reconnectNeeded: boolean;
+  /** Spend protection's rows: unusual usage, used-up and nearly used-up free limits, paused apps. */
+  usage: UsageAttention[];
 }

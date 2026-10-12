@@ -190,6 +190,7 @@ function InstallPage() {
         />
       </div>
       {tab === "overview" && <OverviewTab install={install} isAdmin={isAdmin} />}
+      {/* TODO: the Usage tab's content (usage by product, chart, spend protection, recent activity) is not built yet, so the tab shows nothing. */}
       {tab === "settings" && (
         <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
       )}
