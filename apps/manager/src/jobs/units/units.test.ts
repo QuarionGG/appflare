@@ -1,10 +1,15 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { CloudflareApiError } from "@appflare/cf-api";
+import {
+  CloudflareApiError,
+  type ScriptMetadata,
+  type WorkerObservability,
+} from "@appflare/cf-api";
 import { workerUploadCost, workerUploadProblem } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { buildArtifactFixture, ZIP_URL } from "../../test/artifact-fixture";
 import { ACC, fakeAccount, NEW_VERSION, TOKEN } from "../../test/fake-account";
 import { redirectingArtifactHost } from "../../test/redirecting-host";
+import { LOGS_OFF, LOGS_ON } from "../../test/workers-logs";
 import { toStepError } from "../errors";
 import { StepLog } from "../step-log";
 import { failureError, settleUnit } from "./result";
@@ -48,6 +53,90 @@ function uploadInput(
   };
 }
 
+describe("uploadWorker: the Worker's Workers Logs setting", () => {
+  /** A Worker `cut` that exists, with this setting. */
+  async function existing(observability: WorkerObservability | null) {
+    const w = await world();
+    w.account.state.observability.cut = observability;
+    return { ...w, units: createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch }) };
+  }
+  const manifestOn: ScriptMetadata = {
+    main_module: "worker.js",
+    bindings: [],
+    observability: { enabled: true },
+  };
+  const without: ScriptMetadata = { main_module: "worker.js", bindings: [] };
+
+  for (const target of ["version", "script"] as const) {
+    it(`sends the setting a Worker has, on or off, whatever the app's own says (${target})`, async () => {
+      for (const [setting, given] of [
+        [LOGS_ON, without],
+        [LOGS_OFF, manifestOn],
+      ] as const) {
+        const w = await existing(setting);
+        const result = await w.units.uploadWorker(
+          uploadInput(w.fixture, { metadata: given, target }),
+        );
+        expect(result.ok).toBe(true);
+        expect(w.account.state.versions[0]?.metadata.observability).toEqual(setting);
+        // Read just before the upload.
+        expect(w.account.state.calls.slice(0, 1)).toEqual([
+          "GET /workers/scripts/cut/script-settings",
+        ]);
+        expect(w.account.state.observability.cut).toEqual(setting);
+      }
+    });
+  }
+
+  it("sends none for a Worker that never had the setting, so it keeps none", async () => {
+    const w = await existing(null);
+    const result = await w.units.uploadWorker(
+      uploadInput(w.fixture, { metadata: manifestOn, target: "script" }),
+    );
+    expect(result.ok).toBe(true);
+    expect(w.account.state.versions[0]?.metadata).not.toHaveProperty("observability");
+    expect(w.account.state.observability.cut).toBeNull();
+  });
+
+  it("gives a Worker that does not exist yet the app's own setting", async () => {
+    const w = await world();
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
+    const result = await units.uploadWorker(
+      uploadInput(w.fixture, { metadata: manifestOn, target: "script" }),
+    );
+    expect(result.ok).toBe(true);
+    expect(w.account.state.versions[0]?.metadata.observability).toEqual({ enabled: true });
+    expect(w.account.state.observability.cut).toEqual({ enabled: true });
+  });
+
+  it("uploads nothing and reads no module when the setting cannot be read", async () => {
+    for (const [status, kind] of [
+      [500, "retried"],
+      [403, "final"],
+    ] as const) {
+      const w = await existing(LOGS_ON);
+      w.account.state.failOnce.set("GET /workers/scripts/cut/script-settings", status);
+      const result = await w.units.uploadWorker(uploadInput(w.fixture, { target: "script" }));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.failure).toMatchObject({
+        kind: "cloudflare",
+        status,
+        subject:
+          "Appflare could not read whether Workers Logs are on for cut, and deploying it without that setting would turn them off, so nothing was deployed",
+      });
+      const error = toStepError(failureError(result.failure));
+      expect(error instanceof NonRetryableError).toBe(kind === "final");
+      expect(error.message).toContain(
+        "Appflare could not read whether Workers Logs are on for cut",
+      );
+      expect(w.account.state.versions).toEqual([]);
+      expect(w.requests.filter((r) => r.startsWith("https://artifacts.test"))).toEqual([]);
+      expect(w.account.state.observability.cut).toEqual(LOGS_ON);
+    }
+  });
+});
+
 describe("uploadWorker", () => {
   it("reads the modules through the release redirect once and uploads them in one request", async () => {
     const w = await world();
@@ -56,10 +145,11 @@ describe("uploadWorker", () => {
     expect(result).toMatchObject({
       ok: true,
       value: { versionId: NEW_VERSION, scriptId: null, modules: 1 },
-      // The redirect, the range from storage, the upload.
-      subrequests: 3,
+      // The Workers Logs setting, the redirect, the range from storage, the upload.
+      subrequests: 4,
     });
     expect(result.log.requests).toEqual([
+      `GET /accounts/${ACC}/workers/scripts/cut/script-settings -> 404`,
       `POST /accounts/${ACC}/workers/scripts/cut/versions -> 200`,
     ]);
     expect(w.account.state.versions[0]?.modules).toEqual(["worker.js"]);
@@ -78,8 +168,8 @@ describe("uploadWorker", () => {
     expect(workerUploadProblem(modules)).toBeNull();
     const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
     const result = await units.uploadWorker(uploadInput(w.fixture));
-    // What the call made: the planned reads, then the upload.
-    expect(result).toMatchObject({ ok: true, value: { modules: 600 }, subrequests: 3 });
+    // What the call made: the Workers Logs setting, the planned reads, then the upload.
+    expect(result).toMatchObject({ ok: true, value: { modules: 600 }, subrequests: 4 });
     expect(w.account.state.versions[0]?.modules).toHaveLength(600);
   });
 
@@ -134,11 +224,11 @@ describe("uploadWorker", () => {
           target,
         }),
       );
-      // The upload; a script upload then reads the deployment it made.
+      // The Workers Logs setting and the upload; a script upload then reads the deployment it made.
       expect(result).toMatchObject({
         ok: true,
         value: { modules: 0 },
-        subrequests: target === "version" ? 1 : 2,
+        subrequests: target === "version" ? 2 : 3,
       });
     }
     // Nothing is read from the artifact; each upload is its metadata alone.
@@ -153,6 +243,23 @@ describe("uploadWorker", () => {
       },
       { assets, compatibility_date: "2024-12-30", compatibility_flags: ["nodejs_compat"] },
     ]);
+  });
+
+  it("sends a Worker of static assets only its Workers Logs setting too", async () => {
+    const w = await world({ assetsOnly: true, assets: [{ route: "/index.html", content: "hi" }] });
+    w.account.state.observability.cut = LOGS_ON;
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
+    const assets = { jwt: "completion-jwt", config: {} };
+    const result = await units.uploadWorker(
+      uploadInput(w.fixture, {
+        modules: [],
+        metadata: { assets, observability: { enabled: false } },
+        target: "script",
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(w.account.state.versions[0]?.metadata).toEqual({ assets, observability: LOGS_ON });
+    expect(w.account.state.observability.cut).toEqual(LOGS_ON);
   });
 
   it("refuses an upload without modules that carries anything needing code", async () => {

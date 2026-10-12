@@ -15,6 +15,11 @@ import { requireConnection } from "../../cloudflare/connection.server";
 import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
+import {
+  keepWorkersLogsPhase,
+  readWorkersLogsPhase,
+  type WorkersLogsBefore,
+} from "../../usage/observability-keep";
 import { forgetInstallSpendStatements } from "../../usage/store/forget.server";
 import type { InstallJobParams } from "../install";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
@@ -315,6 +320,8 @@ export async function runSelfDeployingUpdate(
   const { step, env } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
+  /** Workers Logs before the installer ran: put back after it, also when the job fails. */
+  let logsBefore: WorkersLogsBefore | null = null;
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -432,6 +439,8 @@ export async function runSelfDeployingUpdate(
       mode: replacing ? "fresh" : "required",
     });
 
+    // The installer deploys with the app's own configuration: Workers Logs as they are now.
+    logsBefore = await readWorkersLogsPhase(steps, workers);
     steps.current = "prepare installer";
     const request = installerRequest({
       action: "deploy",
@@ -466,6 +475,7 @@ export async function runSelfDeployingUpdate(
       return {};
     });
     await recordDiscoveredPhase(steps, params.installId, deployed.resources, started.recorded);
+    const restore = await keepWorkersLogsPhase(steps, logsBefore);
 
     const health = await checkAppHealthPhase(
       ctx,
@@ -492,6 +502,7 @@ export async function runSelfDeployingUpdate(
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
       ]);
+      for (const advice of restore) log.warn(advice);
       log.info(
         `Updated ${started.slug} from ${started.fromVersion} to ${params.version} (health: ${healthLabel(health)}).`,
       );
@@ -500,6 +511,8 @@ export async function runSelfDeployingUpdate(
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
+    // The installer may have replaced a Worker before the failure.
+    const restore = logsBefore === null ? [] : await keepWorkersLogsPhase(steps, logsBefore);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -517,6 +530,7 @@ export async function runSelfDeployingUpdate(
           ? "Update failed while the installer ran: it may have changed part of the app. Run the update again to finish it; a self-deploying app cannot be rolled back."
           : `Update failed at "${failedAt}", before the installer ran; nothing changed.`,
       );
+      for (const advice of restore) log.warn(advice);
       await log.flush(env.DB, params.jobId);
       return {};
     });

@@ -23,6 +23,7 @@ import { DANGLING_SANDBOX } from "../test/fake-sandbox-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
+import { LOGS_OFF, LOGS_ON } from "../test/workers-logs";
 import { reconcileJobs } from "./reconcile.server";
 import type { JobEnv } from "./run-job";
 import { runSelfUpdate, type SelfUpdateJobParams } from "./self-update";
@@ -113,6 +114,8 @@ async function selfUpdate(opts: {
     bindings: RUNNING_BINDINGS,
     bookmarks: { "d1-manager": "00000042-bookmark" },
     previews: [{ status: 404, body: "error code: 1042" }, healthy(TO)],
+    // Installed with the release's own setting.
+    observability: { [WORKER]: LOGS_ON },
     ...opts.world,
   });
   const github = fakeGithub(release, [githubRelease(FROM), githubRelease(TO)]);
@@ -254,7 +257,8 @@ describe("self_update job", () => {
       compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
       keep_bindings: ["secret_text"],
       assets: { jwt: "completion-jwt", config: { not_found_handling: "single-page-application" } },
-      observability: { enabled: true },
+      // The Worker's own Workers Logs setting, read from Cloudflare.
+      observability: LOGS_ON,
       annotations: { "workers/tag": TO },
     });
     expect(uploaded?.metadata.bindings).toEqual([
@@ -315,6 +319,28 @@ describe("self_update job", () => {
     const text = JSON.stringify(r.logs);
     expect(text).not.toContain(TOKEN);
     expect(text).not.toContain(GITHUB_TOKEN);
+  });
+
+  it("keeps Workers Logs off when an admin turned them off, whatever the release says", async () => {
+    const r = await selfUpdate({ world: { observability: { [WORKER]: LOGS_OFF } } });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fake.state.versions[0]?.metadata.observability).toEqual(LOGS_OFF);
+    expect(r.fake.state.observability[WORKER]).toEqual(LOGS_OFF);
+  });
+
+  it("fails before uploading when Cloudflare does not say whether Workers Logs are on", async () => {
+    const r = await selfUpdate({
+      world: {
+        failOnce: new Map([[`GET /workers/scripts/${WORKER}/script-settings`, 403]]),
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain(
+      `upload Worker version: Appflare could not read whether Workers Logs are on for ${WORKER}, and deploying it without that setting would turn them off, so nothing was deployed`,
+    );
+    expect(r.fake.state.versions).toEqual([]);
+    expect(r.fake.state.calls).not.toContain(`POST /workers/scripts/${WORKER}/versions`);
   });
 
   it("updates a manager without the SELF binding by running the units itself, and adds SELF", async () => {

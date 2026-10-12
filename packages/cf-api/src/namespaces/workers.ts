@@ -7,6 +7,7 @@ import type {
   ScriptSettings,
   ScriptUploadResult,
   SubdomainResult,
+  WorkerObservability,
   WorkerSchedule,
   WorkerScript,
   WorkerSecret,
@@ -95,6 +96,19 @@ export function createWorkers(http: HttpApi) {
     setObservability(name: string, enabled: boolean): Promise<ScriptSettings> {
       return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/script-settings`), {
         json: { observability: { enabled } },
+      });
+    },
+
+    /**
+     * Puts back a Worker's whole Workers Observability block, as
+     * `getScriptSettings` read it (sampling rates, logs and traces
+     * included): `PATCH /workers/scripts/{name}/script-settings` with
+     * `{ observability: block }` alone, as JSON, so no other setting can
+     * change. Like {@link setObservability}, it creates no new version.
+     */
+    setObservabilitySettings(name: string, block: WorkerObservability): Promise<ScriptSettings> {
+      return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/script-settings`), {
+        json: { observability: block },
       });
     },
 

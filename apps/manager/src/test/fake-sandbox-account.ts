@@ -47,6 +47,11 @@ export interface SandboxWorkerState {
   migrationTag: string | null;
   versionId: string;
   metadata: Record<string, unknown>;
+  /**
+   * Its Workers Logs setting (`GET .../script-settings`): what the last full
+   * upload sent, null (or absent) without.
+   */
+  observability?: Record<string, unknown> | null;
 }
 
 export interface FakeContainerApp {
@@ -260,6 +265,7 @@ export function fakeSandboxAccount(
           versionId,
           metadata,
           migrationTag: migrations?.new_tag ?? current,
+          observability: (metadata.observability as Record<string, unknown> | undefined) ?? null,
         };
         if (state.lostUploadReplies > 0) {
           state.lostUploadReplies -= 1;
@@ -290,6 +296,10 @@ export function fakeSandboxAccount(
         manager.state.bindings = dangle(manager.state.bindings);
         return ok(null);
       }
+      case `GET /workers/scripts/${SANDBOX}/script-settings`:
+        return state.worker === null
+          ? fail(404, 10007, "This Worker does not exist on your account.")
+          : ok({ logpush: false, observability: state.worker.observability ?? null });
       case `GET /workers/scripts/${SANDBOX}/bindings`:
         return state.worker === null ? fail(404, 10007, "no such Worker") : ok(sandboxBindings());
       case `POST /workers/scripts/${SANDBOX}/subdomain`:

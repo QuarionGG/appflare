@@ -168,6 +168,12 @@ interface FakeState {
   serving: Record<string, string>;
   /** Versions secret puts deployed so far, across Workers. */
   secretVersions: number;
+  /**
+   * Each Worker's Workers Logs setting (`GET .../script-settings`), as a full
+   * upload left it (what it sent, null without); a Worker not in `scripts`
+   * does not exist (404).
+   */
+  observability: Record<string, unknown>;
   /** `GET .../deployments` answers 403, as for a token that may not read them. */
   deploymentsRefused?: boolean;
   /** The account's Access objects: `/access/*` calls go to this fake. */
@@ -240,6 +246,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     others: {},
     serving: {},
     secretVersions: 0,
+    observability: {},
     ...over,
   };
   /** A secret put deploys a new version of the Worker, as Cloudflare does. */
@@ -376,6 +383,19 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         { status: 403 },
       );
     }
+    const settings = /^GET \/workers\/scripts\/([^/]+)\/script-settings$/.exec(key);
+    if (settings?.[1] !== undefined) {
+      if (!state.scripts.includes(settings[1])) {
+        return Response.json(
+          {
+            success: false,
+            errors: [{ code: 10007, message: "This Worker does not exist on your account." }],
+          },
+          { status: 404 },
+        );
+      }
+      return ok({ logpush: false, observability: state.observability[settings[1]] ?? null });
+    }
     const otherScript =
       /^(?:PUT|POST) \/workers\/scripts\/(cut-[a-z0-9-]+)(?:\/(secrets|schedules|subdomain|assets-upload-session))?$/.exec(
         key,
@@ -394,6 +414,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
           }
           const form = await request.formData();
           w.metadata = JSON.parse(String(form.get("metadata")));
+          state.observability[name] = w.metadata?.observability ?? null;
           state.scripts.push(name);
           state.serving[name] = UPLOADED_VERSION;
           return ok({ id: name, deployment_id: VERSION_HEX, tag: `tag-${name}` });
@@ -544,6 +565,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         const form = await request.formData();
         state.metadata = JSON.parse(String(form.get("metadata")));
         state.modules = [...form.keys()].filter((k) => k !== "metadata");
+        state.observability.cut = state.metadata?.observability ?? null;
         state.scripts.push("cut");
         state.serving.cut = UPLOADED_VERSION;
         return ok({ id: "cut", deployment_id: VERSION_HEX, tag: "tag-cut" });
@@ -1039,7 +1061,7 @@ describe("install job", () => {
     expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([
       ["countCronTriggers", 2], // the Worker list, the manager's schedule
       ["uploadAssetPart", 2], // one range for both files, one upload
-      ["uploadWorker", 2], // one range for the module, one upload
+      ["uploadWorker", 3], // the Workers Logs setting, one range for the module, one upload
       // The table, the list, one range for both files, one query per file.
       ["applyD1Migrations", 5],
     ]);
@@ -2904,6 +2926,24 @@ describe("install job", () => {
     expect(r.fake.state.calls).toEqual([]);
   });
 
+  for (const observability of [{ enabled: true }, { enabled: false }]) {
+    it(`gives the new Worker the app's own Workers Logs setting (${observability.enabled ? "on" : "off"})`, async () => {
+      const r = await install({
+        tweak: (m) => {
+          m.worker.observability = observability;
+        },
+      });
+      expect(r.job?.error ?? null).toBeNull();
+      // Read first: the Worker does not exist yet.
+      const calls = r.fake.state.calls;
+      expect(calls.indexOf("PUT /workers/scripts/cut") - 1).toBe(
+        calls.indexOf("GET /workers/scripts/cut/script-settings"),
+      );
+      expect(r.fake.state.metadata?.observability).toEqual(observability);
+      expect(r.fake.state.observability.cut).toEqual(observability);
+    });
+  }
+
   it("refuses an artifact whose modules take more ranges than one upload may read, before creating anything", async () => {
     const r = await install({
       tweak: (m) => {
@@ -2918,7 +2958,7 @@ describe("install job", () => {
     });
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toBe(
-      "preflight checks: This app version needs 43 subrequests to read its 42 Worker modules (42 Range requests to the release zip and the redirect), but one upload may make at most 42 of the free plan's 50 per invocation. Pack it again with the current packer, which writes a Worker's modules next to each other in the zip.",
+      "preflight checks: This app version needs 43 subrequests to read its 42 Worker modules (42 Range requests to the release zip and the redirect), but one upload may make at most 41 of the free plan's 50 per invocation. Pack it again with the current packer, which writes a Worker's modules next to each other in the zip.",
     );
     expect(r.installRow?.status).toBe("failed");
     expect(r.resources).toEqual([]);

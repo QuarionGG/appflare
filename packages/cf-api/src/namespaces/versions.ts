@@ -76,7 +76,8 @@ export function createVersions(http: HttpApi) {
      * fields are inherited. `env` adds or replaces single bindings by name,
      * the shape wrangler 4 sends for `versions secret put`
      * (`patchLatestWorkerVersionWithSecrets`). Without `deploy` the new
-     * version serves no traffic until a deployment promotes it.
+     * version serves no traffic until a deployment promotes it. It and its
+     * deployment leave Workers Observability as it was (seen live, 2026-10-12).
      */
     patchLatestVersion(name: string, patch: LatestVersionPatch): Promise<PatchedVersion> {
       return http.result("PATCH", http.acct(`/workers/workers/${enc(name)}/versions/latest`), {

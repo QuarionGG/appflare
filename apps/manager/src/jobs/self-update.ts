@@ -297,6 +297,8 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
           "workers/tag": params.version,
         },
       };
+      // Replaced by Appflare's own current Workers Logs setting by the upload
+      // unit (`withCarriedObservability`), so an update never changes it.
       if (manifest.worker.observability) {
         metadata.observability = manifest.worker.observability as VersionMetadata["observability"];
       }

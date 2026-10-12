@@ -1,4 +1,4 @@
-import type { WorkflowPutBody } from "@appflare/cf-api";
+import type { WorkerObservability, WorkflowPutBody } from "@appflare/cf-api";
 import type { ArtifactFixture } from "./artifact-fixture";
 
 /**
@@ -121,6 +121,14 @@ export interface FakeAccount {
   lifecycle: Record<string, unknown[]>;
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500 (a lost answer). */
   failAfter: Set<string>;
+  /**
+   * Each Worker's Workers Logs setting (`GET .../script-settings`), as
+   * Cloudflare keeps it: a full upload of `worker` sets its own to the
+   * `observability` it sent (null without), a version upload leaves it, and
+   * `PATCH .../script-settings` sets it. A Worker not listed answers null
+   * once it exists (`worker` deployed, or one of `otherScripts`), else 404.
+   */
+  observability: Record<string, WorkerObservability | null>;
 }
 
 /** The rule Cloudflare gives every new R2 bucket. */
@@ -184,6 +192,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     metadataIndexes: {},
     lifecycle: {},
     failAfter: new Set(),
+    observability: {},
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -327,12 +336,16 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
           id: `dep-${state.deployments.length + 1}`,
           versions: [{ version_id: id, percentage: 100 }],
         });
+        // Not part of a version: a full upload sets it to what it sent.
+        state.observability[state.worker] =
+          (metadata.observability as WorkerObservability | undefined) ?? null;
         return ok({ id: state.worker, deployment_id: id.replace(/-/g, "") });
       }
       case `DELETE ${script}`:
         // The Worker and its deployments go; uploading it again starts over.
         state.deployments = [];
         state.versions = [];
+        delete state.observability[state.worker];
         return ok(null);
       case `POST ${script}/subdomain`:
         state.subdomainCalls.push(await request.json());
@@ -526,6 +539,50 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         ...(secrets ?? []).map((name) => ({ type: "secret_text", name })),
       ];
       return ok({ id, resources: { bindings } });
+    }
+    const scriptSettings = /^(GET|PATCH) \/workers\/scripts\/([^/]+)\/script-settings$/.exec(key);
+    if (scriptSettings?.[2] !== undefined) {
+      const name = scriptSettings[2];
+      const exists =
+        Object.hasOwn(state.observability, name) ||
+        (name === state.worker && state.deployments.length > 0) ||
+        state.otherScripts.includes(name);
+      if (!exists) {
+        return Response.json(
+          {
+            success: false,
+            errors: [{ code: 10007, message: "This Worker does not exist on your account." }],
+          },
+          { status: 404 },
+        );
+      }
+      if (scriptSettings[1] === "PATCH") {
+        const body = (await request.json()) as { observability: WorkerObservability };
+        const sent = body.observability;
+        // As Cloudflare answers it: off, no block; `{ enabled: true }` alone, the
+        // whole block with its logs on; a whole block, as it was sent.
+        state.observability[name] = !sent.enabled
+          ? null
+          : Object.keys(sent).length > 1
+            ? sent
+            : {
+                enabled: true,
+                head_sampling_rate: 1,
+                logs: {
+                  enabled: true,
+                  head_sampling_rate: 1,
+                  persist: true,
+                  invocation_logs: true,
+                },
+                traces: { enabled: false, persist: true, head_sampling_rate: 1 },
+              };
+      }
+      return ok({
+        logpush: false,
+        observability: state.observability[name] ?? null,
+        tags: null,
+        tail_consumers: null,
+      });
     }
     const schedules = /^GET \/workers\/scripts\/([^/]+)\/schedules$/.exec(key);
     if (schedules?.[1] !== undefined) {

@@ -52,14 +52,15 @@ export const ARTIFACT_FETCH_SUBREQUESTS = 2;
 
 /**
  * Subrequests the invocation that uploads a Worker makes besides fetching
- * modules: the upload itself and one follow-up read (2), the step's D1 writes
- * (log flush and job row updates, 3), and the work every invocation repeats
- * outside steps (the database migration check and reading the manifest back
- * from KV, 3).
+ * modules: the read of the Worker's Workers Logs setting, which the upload
+ * sends back, the upload itself and one follow-up read (3), the step's D1
+ * writes (log flush and job row updates, 3), and the work every invocation
+ * repeats outside steps (the database migration check and reading the
+ * manifest back from KV, 3).
  */
-export const WORKER_UPLOAD_OVERHEAD_SUBREQUESTS = 8;
+export const WORKER_UPLOAD_OVERHEAD_SUBREQUESTS = 9;
 
-/** Subrequests one upload may spend reading its modules: 42. */
+/** Subrequests one upload may spend reading its modules: 41. */
 export const MAX_WORKER_UPLOAD_SUBREQUESTS =
   FREE_PLAN_SUBREQUESTS - WORKER_UPLOAD_OVERHEAD_SUBREQUESTS;
 

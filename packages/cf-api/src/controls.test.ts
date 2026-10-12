@@ -43,6 +43,24 @@ describe("script settings", () => {
     await client.workers.setObservability("cut", false);
     expect(await fake.last().request.json()).toEqual({ observability: { enabled: false } });
   });
+
+  it("setObservabilitySettings -> PATCH with { observability: <the whole block> } and nothing else", async () => {
+    const block = {
+      enabled: true,
+      head_sampling_rate: 0.1,
+      logs: { enabled: false, invocation_logs: true, head_sampling_rate: 1 },
+      traces: { enabled: true, persist: true, head_sampling_rate: 0.5 },
+    };
+    const { fake, client } = make({ result: { observability: block } });
+    expect((await client.workers.setObservabilitySettings("my app", block)).observability).toEqual(
+      block,
+    );
+    const call = fake.last();
+    expect(call.method).toBe("PATCH");
+    expect(call.url).toBe(`${A}/workers/scripts/my%20app/script-settings`);
+    expect(call.headers.get("content-type")).toBe("application/json");
+    expect(await call.request.json()).toEqual({ observability: block });
+  });
 });
 
 describe("containers max_instances", () => {

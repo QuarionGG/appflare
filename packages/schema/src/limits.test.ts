@@ -28,7 +28,7 @@ describe("the upload budget", () => {
     expect(MAX_WORKER_UPLOAD_SUBREQUESTS + WORKER_UPLOAD_OVERHEAD_SUBREQUESTS).toBe(
       FREE_PLAN_SUBREQUESTS,
     );
-    expect(MAX_WORKER_UPLOAD_SUBREQUESTS).toBe(42);
+    expect(MAX_WORKER_UPLOAD_SUBREQUESTS).toBe(41);
     expect(MAX_WORKER_UPLOAD_BYTES).toBe(32 * MIB);
   });
 });
@@ -69,10 +69,10 @@ describe("workerUploadProblem", () => {
   });
 
   it("refuses modules that take more ranges than the budget allows", () => {
-    const scattered = Array.from({ length: 42 }, (_, i) => ({ offset: i * MIB, size: 1 * KIB }));
-    expect(workerUploadProblem(scattered.slice(0, 41))).toBeNull();
+    const scattered = Array.from({ length: 41 }, (_, i) => ({ offset: i * MIB, size: 1 * KIB }));
+    expect(workerUploadProblem(scattered.slice(0, 40))).toBeNull();
     expect(workerUploadProblem(scattered)).toBe(
-      "The artifact needs 43 subrequests to read its 42 Worker modules (42 Range requests to the release zip and the redirect), but one upload may make at most 42 of the free plan's 50 per invocation. Pack it again with the current packer, which writes a Worker's modules next to each other in the zip.",
+      "The artifact needs 42 subrequests to read its 41 Worker modules (41 Range requests to the release zip and the redirect), but one upload may make at most 41 of the free plan's 50 per invocation. Pack it again with the current packer, which writes a Worker's modules next to each other in the zip.",
     );
   });
 });

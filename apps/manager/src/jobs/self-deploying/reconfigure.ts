@@ -5,6 +5,11 @@ import { requireConnection } from "../../cloudflare/connection.server";
 import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
+import {
+  keepWorkersLogsPhase,
+  readWorkersLogsPhase,
+  type WorkersLogsBefore,
+} from "../../usage/observability-keep";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
 import { healthColumns, healthLabel } from "../install/health";
 import { lookupSubdomainPhase } from "../install/phases";
@@ -55,6 +60,8 @@ export async function runSelfDeployingReconfigure(
   const { step, env } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
+  /** Workers Logs before the installer ran: put back after it, also when the job fails. */
+  let logsBefore: WorkersLogsBefore | null = null;
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -158,6 +165,8 @@ export async function runSelfDeployingReconfigure(
       mode: changesSecrets(params.secrets) ? "fresh" : "required",
     });
 
+    // The installer deploys with the app's own configuration: Workers Logs as they are now.
+    logsBefore = await readWorkersLogsPhase(steps, expectedWorkers(catalog, params.installId));
     steps.current = "prepare installer";
     const instanceType = catalog.install.container?.instanceType;
     const request = installerRequest({
@@ -191,6 +200,7 @@ export async function runSelfDeployingReconfigure(
       return {};
     });
     await recordDiscoveredPhase(steps, params.installId, deployed.resources, started.recorded);
+    const restore = await keepWorkersLogsPhase(steps, logsBefore);
 
     const health = await checkAppHealthPhase(
       ctx,
@@ -220,6 +230,7 @@ export async function runSelfDeployingReconfigure(
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
       ]);
+      for (const advice of restore) log.warn(advice);
       log.info(
         `Changed the settings of ${started.slug} ${started.version} (health: ${healthLabel(health)}).`,
       );
@@ -228,6 +239,8 @@ export async function runSelfDeployingReconfigure(
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
+    // The installer may have replaced a Worker before the failure.
+    const restore = logsBefore === null ? [] : await keepWorkersLogsPhase(steps, logsBefore);
     await step.do("mark settings change failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -245,6 +258,7 @@ export async function runSelfDeployingReconfigure(
           ? "Settings change failed while the installer ran: it may have applied part of the new settings. Save them again to finish; a self-deploying app cannot be rolled back."
           : `Settings change failed at "${failedAt}", before the installer ran; the app keeps its previous settings.${changesSecrets(params.secrets) ? " A new secret value the job already stored on the sandbox Worker reaches the app with its next update or settings change." : ""}`,
       );
+      for (const advice of restore) log.warn(advice);
       await log.flush(env.DB, params.jobId);
       return {};
     });

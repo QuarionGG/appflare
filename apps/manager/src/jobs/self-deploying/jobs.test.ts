@@ -34,6 +34,7 @@ import {
   publishedCatalog,
 } from "../../test/fake-sandbox";
 import { type FakeStep, fakeStep } from "../../test/fake-step";
+import { LOGS_ON } from "../../test/workers-logs";
 import { writeAppSpendSettings } from "../../usage/store/app-settings.server";
 import { type InstallJobParams, runInstall } from "../install";
 import { type ReconfigureJobParams, runReconfigure } from "../reconfigure";
@@ -639,6 +640,128 @@ describe("updating a self-deploying app", () => {
     expect(s.sandbox.cleanups.at(-1)).toEqual({ installId: "id1", keepVersions: ["deploy-1.1.0"] });
   });
 
+  /** Workers Logs on with sampling of their own, as an admin may set them in the dashboard. */
+  const SAMPLED = {
+    ...LOGS_ON,
+    head_sampling_rate: 0.5,
+    logs: { enabled: true, head_sampling_rate: 0.25, persist: true, invocation_logs: false },
+  };
+
+  /**
+   * An installed app whose `MAIN` Worker has `SAMPLED` and `JOBS` none,
+   * and an installer that deploys with the app's own configuration: it
+   * drops `MAIN`'s setting and turns `JOBS`'s on.
+   */
+  async function changedByInstaller() {
+    const s = setup();
+    await install(s);
+    const account = s.w.account.state;
+    account.observability[MAIN] = SAMPLED;
+    account.observability[JOBS] = null;
+    const push = s.sandbox.runs.push.bind(s.sandbox.runs);
+    s.sandbox.runs.push = (...runs) => {
+      account.observability[MAIN] = null;
+      account.observability[JOBS] = LOGS_ON;
+      return push(...runs);
+    };
+    const params = await startUpdate(s);
+    account.calls.length = 0;
+    return { s, account, params };
+  }
+
+  it("puts back the whole Workers Logs setting the installer changed", async () => {
+    const { s, account, params } = await changedByInstaller();
+    const step = fakeStep();
+    await runUpdate({ params, step, env: s.jobEnv, deps: { fetch: s.w.fetch, now: () => NOW } });
+    expect((await jobRow("u1"))?.status).toBe("succeeded");
+    // One step per Worker, each one or two calls.
+    expect(step.names.filter((n) => n.includes("Workers Logs"))).toEqual([
+      `read Workers Logs of ${MAIN}`,
+      `read Workers Logs of ${JOBS}`,
+      `keep Workers Logs of ${MAIN}`,
+      `keep Workers Logs of ${JOBS}`,
+    ]);
+    expect(account.calls.filter((c) => c.includes("script-settings"))).toEqual([
+      `GET /workers/scripts/${MAIN}/script-settings`,
+      `GET /workers/scripts/${JOBS}/script-settings`,
+      `GET /workers/scripts/${MAIN}/script-settings`,
+      `PATCH /workers/scripts/${MAIN}/script-settings`,
+      `GET /workers/scripts/${JOBS}/script-settings`,
+      `PATCH /workers/scripts/${JOBS}/script-settings`,
+    ]);
+    // The sampling too, not only on.
+    expect(account.observability[MAIN]).toEqual(SAMPLED);
+    // Off: no block, as Cloudflare answers.
+    expect(account.observability[JOBS]).toBeNull();
+    const messages = (await logsOf("u1")).map((l) => l.message);
+    expect(messages).toContain(
+      `The installer changed Workers Logs of ${MAIN} (off after it ran); they are on again, as they were.`,
+    );
+    expect(messages).toContain(
+      `The installer changed Workers Logs of ${JOBS} (on after it ran); they are off again, as they were.`,
+    );
+  });
+
+  it("puts them back when a step after the installer fails", async () => {
+    const { s, account, params } = await changedByInstaller();
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep({ failing: ["record new version"] }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("record new version");
+    expect((await jobRow("u1"))?.status).toBe("failed");
+    expect(account.observability[MAIN]).toEqual(SAMPLED);
+    expect(account.observability[JOBS]).toBeNull();
+  });
+
+  it("names the Worker and the setting to restore when it cannot put them back", async () => {
+    const { s, account, params } = await changedByInstaller();
+    account.failOnce.set(`PATCH /workers/scripts/${MAIN}/script-settings`, 403);
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep({ failing: ["record new version"] }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("record new version");
+    const warnings = (await logsOf("u1")).filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toContainEqual(
+      expect.stringContaining(
+        `Turn Workers Logs on for ${MAIN} in the app's Usage tab: the installer may have changed them, and Appflare could not put them back.`,
+      ),
+    );
+    expect(account.observability[MAIN]).toBeNull();
+    // The other Worker is put back all the same.
+    expect(account.observability[JOBS]).toBeNull();
+  });
+
+  it("stops before the installer when Cloudflare does not say whether Workers Logs are on", async () => {
+    const s = setup();
+    await install(s);
+    s.w.account.state.observability[MAIN] = LOGS_ON;
+    s.w.account.state.failOnce.set(`GET /workers/scripts/${MAIN}/script-settings`, 403);
+    const runs = s.sandbox.runs.length;
+    const params = await startUpdate(s);
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep(),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("read Workers Logs");
+    const job = await jobRow("u1");
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain(
+      `read Workers Logs of ${MAIN}: Appflare could not read whether Workers Logs are on for ${MAIN}`,
+    );
+    expect(s.sandbox.runs).toHaveLength(runs);
+  });
+
   it("stops before the installer when the sandbox Worker lost the token", async () => {
     const s = setup();
     await install(s);
@@ -981,6 +1104,31 @@ describe("changing a self-deploying app's settings", () => {
     expect(JSON.stringify(logs)).not.toContain(NEW_SECRET);
     expect(JSON.stringify(s.sandbox.runs)).not.toContain(NEW_SECRET);
   });
+
+  for (const failing of [[], ["record settings"]]) {
+    it(`puts back the Workers Logs the installer changed${failing.length > 0 ? ", also when a later step fails" : ""}`, async () => {
+      const s = setup();
+      await install(s);
+      const account = s.w.account.state;
+      account.observability[MAIN] = LOGS_ON;
+      const push = s.sandbox.runs.push.bind(s.sandbox.runs);
+      s.sandbox.runs.push = (...runs) => {
+        account.observability[MAIN] = null;
+        return push(...runs);
+      };
+      const params = await startChange({ vars: { HOME_PAGE: "links" }, buildConfirmed: true });
+      const run = runReconfigure({
+        params,
+        step: fakeStep({ failing }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      });
+      if (failing.length > 0) await expect(run).rejects.toThrow("record settings");
+      else await run;
+      expect((await jobRow("r1"))?.status).toBe(failing.length > 0 ? "failed" : "succeeded");
+      expect(account.observability[MAIN]).toEqual(LOGS_ON);
+    });
+  }
 
   it("asks for the installer's cost, and never removes a secret the installer sets", async () => {
     const s = setup();
