@@ -109,7 +109,7 @@ export function homeUsageFixture(variant: string | null): HomeUsageData {
         ? now - 6 * 60_000
         : now - (24 + i * 3) * DAY,
     paused: installId === "install-statusbeam" && variant === "usage-paused",
-    burnPerHour: installId === "install-statusbeam" && runaway ? 1.02 : 0.002 + (i % 3) * 0.004,
+    burnPerHour: installId === "install-statusbeam" && runaway ? 0.66 : 0.002 + (i % 3) * 0.004,
     ratio: installId === "install-statusbeam" && runaway ? 3000 : 1.1,
   }));
   return {

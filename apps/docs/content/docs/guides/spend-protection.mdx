@@ -60,6 +60,8 @@ turns red when the app runs far above its normal or used up a free daily limit, 
 grey while it is paused. In those cases the card also leads with **Pause** or
 **Resume** for admins.
 
+![Home on Workers Paid: Usage with this month's usage, the projected month and what is burning now, a 7-day chart of Worker requests stacked by app, and each app's card with its own small chart and share of today's requests](/screenshots/home-dashboard.png)
+
 ### Needs attention
 
 Spend protection puts its rows at the top of **Needs attention** on Home:
@@ -71,6 +73,8 @@ Spend protection puts its rows at the top of **Needs attention** on Home:
 - a free daily limit **about to run out** today, with **See usage**.
 
 The sidebar and the app's card show a dot for each.
+
+![Needs attention with Service status using far more than usual: Durable Objects requests at 4.4M an hour, 3,000× its normal, about $0.66 an hour, with See usage and Pause app](/screenshots/usage-needs-attention.png)
 
 ### The app's Usage tab
 
@@ -91,6 +95,8 @@ Every installed app's page has a **Usage** tab, after **Overview**.
   the app is running.
 - **Recent activity**: updates, settings changes, alerts, pauses and resumes, newest
   first.
+
+![Service status's Usage tab far above normal: a red banner with Pause app, a 24-hour chart of Durable Objects requests jumping from its normal right after a settings change, and the table of the app's products](/screenshots/usage-app-runaway.png)
 
 ## Alerts
 
@@ -268,12 +274,14 @@ running.
 - **What pauses an app**: the loop check and, on Workers Paid, a spending cap. Each
   shows which apps it would act on right now.
 
-{/* TODO: show settings-spend-protection.png here once the screenshot run has written it to public/screenshots; the build fails while the file is missing. */}
+![Settings, Spend protection: Pause apps automatically on; the loop check at Standard and a $10 monthly cap, each naming Service status; a $50 monthly budget on pace for $66.45; and unusual usage alerts at 20× its normal](/screenshots/settings-spend-protection.png)
 
 On an app's **Usage** tab, **Pause automatically** is **Account default**, **On for
 this app** or **Off for this app**. While it is on, the app follows the account's
 triggers, or select **Customize for this app** to give it its own. **Use the
 account's triggers** goes back.
+
+![An app's Spend protection on its Usage tab: unusual usage at 20× its normal, two usage alerts, and Pause automatically on for this app with its own triggers, paused after passing its $2.00 daily cap](/screenshots/usage-app-spend-protection.png)
 
 When a trigger trips, Appflare pauses the app on that check, the same way
 [a pause by hand](#what-a-pause-does) does, and tells you why. You resume it.
@@ -375,6 +383,8 @@ cards leave out their usage, each app's **Usage** tab says **Reconnect to see us
 or **Give the token access to usage**, and **Settings > Your account > Spend
 protection** says it has nothing to act on yet. Installing, updating and everything
 else work as before.
+
+![Home on a Cloudflare sign-in without the usage permission: a Sign-in permissions row under Needs attention and the Usage section, each with Reconnect Cloudflare](/screenshots/usage-reconnect-home.png)
 
 Once it has the permission, spend protection starts with the first numbers it reads.
 

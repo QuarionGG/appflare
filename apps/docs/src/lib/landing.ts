@@ -60,6 +60,7 @@ export const landingLinks = {
   users: "/guides/users/",
   health: "/guides/health/",
   notifications: "/guides/notifications/",
+  spendProtection: "/guides/spend-protection/",
   security: "/security/",
   faq: "/faq/",
   catalogHowItWorks: "/catalog/how-it-works/",
