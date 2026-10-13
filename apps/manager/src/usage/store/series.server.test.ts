@@ -186,6 +186,28 @@ describe("reading usage", () => {
     ]);
     expect(await readUsage(db(), { ...range, installIds: [] })).toEqual([]);
   });
+
+  it("orders installs and products within an hour as localeCompare does", async () => {
+    const ids = ["b", "A", "a_1", "a1", "Z", "01M4T0", "a-1", "ä"];
+    const products = ["r2_class_a", "d1_rows_read", "do_requests", "R2", "kv_reads"];
+    await recordHourlyUsage(
+      db(),
+      ids.flatMap((installId) =>
+        products.map((product) => ({ installId, product, hour: DAY + 5 * HOUR_SECONDS, value: 1 })),
+      ),
+      { now: NOW },
+    );
+    const rows = await readUsage(db(), {
+      from: DAY + 5 * HOUR_SECONDS,
+      to: DAY + 6 * HOUR_SECONDS,
+      grain: "hour",
+    });
+    const expected = [...rows].sort(
+      (a, b) => a.installId.localeCompare(b.installId) || a.product.localeCompare(b.product),
+    );
+    expect(rows).toEqual(expected);
+    expect(rows).toHaveLength(ids.length * products.length);
+  });
 });
 
 describe("pruneUsage", () => {

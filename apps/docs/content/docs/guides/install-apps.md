@@ -315,12 +315,15 @@ mention the app's URL and Worker name, filled in for this install.
 ## Home
 
 Home starts with **Needs attention**, shown only when something does, most urgent
-first: a job that did not finish (**View log**), an app that is not responding
+first: a job that did not finish (**View log**), an app using far more than usual or
+a paused app (**Pause app**, **Resume**), an app that is not responding
 (**Check again**), updates, and anything your account still needs for apps you use
 (**Set up**, or **Not needed** to hide it in this browser). The number beside **Home**
 in the sidebar counts these rows.
 
-Below it, **Your apps** shows a card for every install: its name, one line on how it is
+Below it, **Usage** shows what the account's apps use and what that costs (see
+[Usage and spend protection](/guides/spend-protection/#home)). **Your apps** shows a
+card for every install: its name, a small chart of its usage, one line on how it is
 doing, **Open** (the app itself, in a new tab, at its dashboard when the app keeps
 one at another path, such as `/dashboard`) and **Manage** (its page in Appflare).
 The sidebar lists the same apps under **Your apps**, with a dot when one needs
@@ -331,7 +334,8 @@ With no app installed, opening Appflare takes you to the catalog.
 ## The app's page
 
 **Manage** opens an app's page. It shows its status, version,
-health, resources, secret names, jobs, and the actions for
+health, resources, secret names, jobs, its [usage](/guides/spend-protection/#the-apps-usage-tab),
+and the actions for
 [updates and rollbacks](/guides/updates/), [changing settings and
 secrets](/guides/settings/), and [uninstalling](/guides/uninstall/).
 

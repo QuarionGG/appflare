@@ -1,7 +1,8 @@
 import { eq, inArray } from "drizzle-orm";
+import { type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
 import { app_spend_settings } from "../../db/schema";
-import { readSpendDefaults } from "./defaults.server";
+import { readSpendDefaults, spendDefaultsRead } from "./defaults.server";
 import { chunk, MAX_BOUND_PARAMETERS } from "./limits";
 import {
   type AppSpendSettings,
@@ -10,6 +11,7 @@ import {
   defaultAppSpendSettings,
   type EffectiveSpendSettings,
   resolveSpendSettings,
+  type SpendDefaults,
   UNUSUAL_FACTORS,
   type UnusualFactor,
 } from "./spend-settings";
@@ -55,28 +57,32 @@ export async function readAppSpendSettings(
   return row ? fromRow(row) : defaultAppSpendSettings(installId);
 }
 
+/** {@link readMany} as a read that can share a round trip with others (db/batch.ts). */
+function manyRead(
+  db: Database,
+  installIds?: readonly string[],
+): Read<Map<string, AppSpendSettings>> {
+  const queries =
+    installIds === undefined
+      ? [db.select().from(app_spend_settings)]
+      : chunk(installIds, MAX_BOUND_PARAMETERS).map((ids) =>
+          db.select().from(app_spend_settings).where(inArray(app_spend_settings.install_id, ids)),
+        );
+  return read(queries, (results) => {
+    const out = new Map<string, AppSpendSettings>();
+    for (const id of installIds ?? []) out.set(id, defaultAppSpendSettings(id));
+    for (const rows of results as Row[][])
+      for (const row of rows) out.set(row.install_id, fromRow(row));
+    return out;
+  });
+}
+
 /** The settings of the given installs, or of every install with a row when omitted. */
-async function readMany(
+function readMany(
   db: Database,
   installIds?: readonly string[],
 ): Promise<Map<string, AppSpendSettings>> {
-  const rows: Row[] = [];
-  if (installIds === undefined) {
-    rows.push(...(await db.select().from(app_spend_settings)));
-  } else {
-    for (const ids of chunk(installIds, MAX_BOUND_PARAMETERS)) {
-      rows.push(
-        ...(await db
-          .select()
-          .from(app_spend_settings)
-          .where(inArray(app_spend_settings.install_id, ids))),
-      );
-    }
-  }
-  const out = new Map<string, AppSpendSettings>();
-  for (const id of installIds ?? []) out.set(id, defaultAppSpendSettings(id));
-  for (const row of rows) out.set(row.install_id, fromRow(row));
-  return out;
+  return runRead(db, manyRead(db, installIds));
 }
 
 /**
@@ -135,10 +141,28 @@ export async function effectiveSpendSettingsOf(
   db: Database,
   installIds: readonly string[],
 ): Promise<Map<string, EffectiveSpendSettings>> {
-  const [defaults, apps] = await Promise.all([readSpendDefaults(db), readMany(db, installIds)]);
-  const out = new Map<string, EffectiveSpendSettings>();
-  for (const [id, app] of apps) out.set(id, resolveSpendSettings(defaults, app));
-  return out;
+  return (await runRead(db, effectiveSpendSettingsRead(db, installIds))).settings;
+}
+
+/**
+ * The effective settings of the given installs and the account's defaults
+ * they follow, as one read (db/batch.ts).
+ */
+export function effectiveSpendSettingsRead(
+  db: Database,
+  installIds: readonly string[],
+): Read<{ defaults: SpendDefaults; settings: Map<string, EffectiveSpendSettings> }> {
+  const defaults = spendDefaultsRead(db);
+  const apps = manyRead(db, installIds);
+  const split = defaults.queries.length;
+  return read([...defaults.queries, ...apps.queries], (results) => {
+    const d = defaults.decode(results.slice(0, split));
+    const settings = new Map<string, EffectiveSpendSettings>();
+    for (const [id, app] of apps.decode(results.slice(split))) {
+      settings.set(id, resolveSpendSettings(d, app));
+    }
+    return { defaults: d, settings };
+  });
 }
 
 /** Every app that changed any setting (for "Set their own" and "Never paused for the budget"). */

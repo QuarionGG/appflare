@@ -104,16 +104,12 @@ describe("docs topics", () => {
   });
 
   it("explains a failed job of every kind", () => {
-    // TODO: pausing and resuming an app have no docs page yet; once the spend
-    // protection guide exists, their failures link to it and this exemption goes.
-    const undocumented: ReadonlySet<string> = new Set(["pause", "resume"]);
-    for (const kind of JOB_KINDS) {
-      if (undocumented.has(kind)) expect(jobFailureTopic({ kind })).toBeNull();
-      else expect(jobFailureTopic({ kind })).not.toBeNull();
-    }
+    for (const kind of JOB_KINDS) expect(jobFailureTopic({ kind })).not.toBeNull();
     expect(jobFailureTopic({ kind: "rollback", restore: true })).toBe("databaseRestore");
     expect(jobFailureTopic({ kind: "uninstall", deleteRetained: true })).toBe("removedApps");
     expect(jobFailureTopic({ kind: "reconfigure" })).toBe("settingsChange");
     expect(jobFailureTopic({ kind: "move_address" })).toBe("appflareAddressMove");
+    expect(jobFailureTopic({ kind: "pause" })).toBe("pauseJob");
+    expect(jobFailureTopic({ kind: "resume" })).toBe("pauseJob");
   });
 });

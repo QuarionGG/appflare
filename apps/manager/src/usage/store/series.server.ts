@@ -1,5 +1,6 @@
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
+import { type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
 import { usage_daily, usage_hourly } from "../../db/schema";
 import {
@@ -267,13 +268,20 @@ export async function readUsage(
   db: Database,
   query: { from: number; to: number; grain: UsageGrain; installIds?: readonly string[] },
 ): Promise<UsageRow[]> {
+  return runRead(db, usageRead(db, query));
+}
+
+/** {@link readUsage} as a read (db/batch.ts). */
+export function usageRead(
+  db: Database,
+  query: { from: number; to: number; grain: UsageGrain; installIds?: readonly string[] },
+): Read<UsageRow[]> {
   const table = query.grain === "hour" ? usage_hourly : usage_daily;
   const time = query.grain === "hour" ? usage_hourly.hour : usage_daily.day;
   const groups =
     query.installIds === undefined ? [null] : chunk(query.installIds, MAX_BOUND_PARAMETERS - 2);
-  const out: UsageRow[] = [];
-  for (const ids of groups) {
-    const rows = await db
+  const queries = groups.map((ids) =>
+    db
       .select({
         installId: table.install_id,
         product: table.product,
@@ -287,14 +295,41 @@ export async function readUsage(
           lt(time, query.to),
           ids === null ? undefined : inArray(table.install_id, ids),
         ),
-      );
-    out.push(...rows);
-  }
-  return out.sort(
-    (a, b) =>
-      a.t - b.t || a.installId.localeCompare(b.installId) || a.product.localeCompare(b.product),
+      ),
   );
+  return read(queries, (results) => {
+    const rows = (results as UsageRow[][]).flat();
+    const install = collationRanks(rows.map((r) => r.installId));
+    const product = collationRanks(rows.map((r) => r.product));
+    return rows.sort(
+      (a, b) =>
+        a.t - b.t ||
+        (install.get(a.installId) ?? 0) - (install.get(b.installId) ?? 0) ||
+        (product.get(a.product) ?? 0) - (product.get(b.product) ?? 0),
+    );
+  });
 }
+
+/**
+ * Each value's place in the order `localeCompare` gives (by definition a
+ * new default `Intl.Collator`), values it holds equal sharing a place. Rows
+ * sort by these numbers in the same order as with `localeCompare`, which
+ * would call into the collator twice per comparison: thousands of rows sort
+ * every few minutes, over a few dozen distinct installs and products.
+ */
+function collationRanks(values: readonly string[]): Map<string, number> {
+  const sorted = [...new Set(values)].sort(COLLATOR.compare);
+  const ranks = new Map<string, number>();
+  let rank = 0;
+  sorted.forEach((value, i) => {
+    const previous = sorted[i - 1];
+    if (previous !== undefined && COLLATOR.compare(previous, value) !== 0) rank += 1;
+    ranks.set(value, rank);
+  });
+  return ranks;
+}
+
+const COLLATOR = new Intl.Collator();
 
 /**
  * Deletes hourly rows older than `HOURLY_RETENTION_DAYS` and days older
@@ -305,14 +340,19 @@ export async function pruneUsage(
   db: Database,
   now: Date = new Date(),
 ): Promise<{ hourly: number; daily: number }> {
+  const [hourly, daily] = await db.batch(pruneUsageStatements(db, now));
+  return { hourly: hourly.meta.changes, daily: daily.meta.changes };
+}
+
+/** The two deletes of {@link pruneUsage} (hourly rows, then days), to batch with others. */
+export function pruneUsageStatements(db: Database, now: Date) {
   const nowSeconds = toUnixSeconds(now.getTime());
-  const [hourly, daily] = await db.batch([
+  return [
     db
       .delete(usage_hourly)
       .where(lt(usage_hourly.hour, nowSeconds - HOURLY_RETENTION_DAYS * DAY_SECONDS)),
     db
       .delete(usage_daily)
       .where(lt(usage_daily.day, dayStart(nowSeconds) - DAILY_RETENTION_DAYS * DAY_SECONDS)),
-  ]);
-  return { hourly: hourly.meta.changes, daily: daily.meta.changes };
+  ] as const;
 }

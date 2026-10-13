@@ -1,3 +1,6 @@
+import { sql } from "drizzle-orm";
+import { type Read, read } from "../db/batch";
+import type { Database } from "../db/client";
 import type { CloudflareGrantStatus } from "../db/schema";
 
 /**
@@ -66,6 +69,20 @@ function rowOf(raw: RawGrant): GrantRow {
   };
 }
 
+const GRANT_SQL = "SELECT * FROM cloudflare_grant ORDER BY connected_at DESC LIMIT 1";
+
+/**
+ * {@link readGrant} as a read that can share a round trip with others
+ * (db/batch.ts), for a caller whose database is migrated (in a batch, a
+ * missing table fails every read of it).
+ */
+export function grantRead(db: Database): Read<GrantRow | null> {
+  return read([db.all(sql.raw(GRANT_SQL))], ([rows]) => {
+    const raw = (rows as RawGrant[])[0];
+    return raw === undefined ? null : rowOf(raw);
+  });
+}
+
 /**
  * The stored grant, or null when the manager connects with an API token.
  * A database the running version has not migrated yet has no grant table,
@@ -73,9 +90,7 @@ function rowOf(raw: RawGrant): GrantRow {
  */
 export async function readGrant(db: D1Database): Promise<GrantRow | null> {
   try {
-    const raw = await db
-      .prepare("SELECT * FROM cloudflare_grant ORDER BY connected_at DESC LIMIT 1")
-      .first<RawGrant>();
+    const raw = await db.prepare(GRANT_SQL).first<RawGrant>();
     return raw === null ? null : rowOf(raw);
   } catch (error) {
     if (error instanceof Error && error.message.includes("no such table")) return null;

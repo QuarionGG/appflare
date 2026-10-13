@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { z } from "zod";
+import { type Read, read } from "../../db/batch";
 import type { Database } from "../../db/client";
 import {
   ALERT_RULE_KINDS,
@@ -102,6 +103,53 @@ async function withFirings(db: Database, rows: RuleRow[]): Promise<AlertRule[]> 
     rows.map((r) => r.id),
   );
   return rows.map((row) => fromRow(row, fired.get(row.id) ?? null));
+}
+
+/**
+ * Every install's rules, oldest first, with their latest firings, as one
+ * read (db/batch.ts): the same as `listAlertRules(db)`.
+ */
+export function allAlertRulesRead(db: Database): Read<AlertRule[]> {
+  return read(
+    [
+      db
+        .select()
+        .from(usage_alert_rules)
+        .orderBy(asc(usage_alert_rules.created_at), asc(usage_alert_rules.id)),
+      // SQLite gives the bare columns the values of the row MAX() picked.
+      db
+        .select({
+          ruleId: usage_alert_firings.rule_id,
+          periodStart: sql<number>`max(${usage_alert_firings.period_start})`,
+          firedAt: usage_alert_firings.fired_at,
+          value: usage_alert_firings.value,
+        })
+        .from(usage_alert_firings)
+        .where(
+          inArray(
+            usage_alert_firings.rule_id,
+            db.select({ id: usage_alert_rules.id }).from(usage_alert_rules),
+          ),
+        )
+        .groupBy(usage_alert_firings.rule_id),
+    ],
+    ([rules, firings]) => {
+      const fired = new Map<string, AlertFiring>();
+      for (const row of firings as Array<{
+        ruleId: string;
+        periodStart: number;
+        firedAt: Date;
+        value: number;
+      }>) {
+        fired.set(row.ruleId, {
+          periodStart: row.periodStart,
+          firedAt: row.firedAt.getTime(),
+          value: row.value,
+        });
+      }
+      return (rules as RuleRow[]).map((row) => fromRow(row, fired.get(row.id) ?? null));
+    },
+  );
 }
 
 /** An install's rules, oldest first; every install's when `installId` is omitted. */
@@ -227,9 +275,12 @@ export async function pruneAlertFirings(
   now: Date = new Date(),
   days = 400,
 ): Promise<number> {
-  const cutoff = toUnixSeconds(now.getTime()) - days * DAY_SECONDS;
-  const result = await db
-    .delete(usage_alert_firings)
-    .where(lt(usage_alert_firings.period_start, cutoff));
+  const result = await pruneAlertFiringsStatement(db, now, days);
   return result.meta.changes;
+}
+
+/** The delete of {@link pruneAlertFirings}, to batch with others. */
+export function pruneAlertFiringsStatement(db: Database, now: Date, days = 400) {
+  const cutoff = toUnixSeconds(now.getTime()) - days * DAY_SECONDS;
+  return db.delete(usage_alert_firings).where(lt(usage_alert_firings.period_start, cutoff));
 }

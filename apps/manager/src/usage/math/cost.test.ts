@@ -193,3 +193,32 @@ it("ignores hours after now", () => {
   // At 15:30, the last 60 minutes hold the second half of 14:00's $5.
   expect(burnPerHour(usage, NOW + 3 * HOUR_MS)).toBeCloseTo(2.5);
 });
+
+describe("activityCostSeries (remembered)", () => {
+  const usage = () => ({
+    workers_requests: hourly(48, (ago) => 1_000 + ago),
+    do_rows_written: hourly(48, 5_000),
+    d1_storage: held(48, 2),
+  });
+
+  it("answers again for the same usage and moment with what it worked out", () => {
+    const u = usage();
+    const first = activityCostSeries(u, NOW);
+    expect(activityCostSeries(u, NOW)).toBe(first);
+    // The same as for a usage seen for the first time.
+    expect(first).toEqual(activityCostSeries(usage(), NOW));
+    expect(first).toEqual(costSeries(usage(), NOW, (key) => key !== "d1_storage"));
+  });
+
+  it("works it out again for another moment", () => {
+    const u = usage();
+    const first = activityCostSeries(u, NOW);
+    const later = activityCostSeries(u, NOW + 5 * 60_000);
+    expect(later).not.toBe(first);
+    expect(later).toEqual(activityCostSeries(usage(), NOW + 5 * 60_000));
+  });
+
+  it("cannot be changed by a caller", () => {
+    expect(Object.isFrozen(activityCostSeries(usage(), NOW))).toBe(true);
+  });
+});

@@ -8,6 +8,7 @@ import { AccountSettingsView } from "../../../components/settings-pages";
 import { redirectMovedSettings } from "../../../components/settings-redirect";
 import { getDangerZoneState } from "../../../danger/danger.functions";
 import { getTokenStatus } from "../../../server/token.functions";
+import { getSpendProtection } from "../../../usage/spend-defaults.functions";
 
 /**
  * `?cloudflare=<outcome>`: how a Cloudflare sign-in that just came back
@@ -25,7 +26,8 @@ const accountSearchSchema = z.object({
  * `/settings/account` (Your account): the Cloudflare account and how
  * Appflare connects to it (admins reconnect or change it) with the link that
  * makes appflare.dev open this Appflare at the address in the address bar,
- * what the account can run, and, for the owner only, the danger zone. Links
+ * what the account can run, spend protection (what every app follows), and,
+ * for the owner only, the danger zone. Links
  * to the sections that moved to Building apps, and to the account setup list
  * and its rows under their old anchors, are sent on (`settingsRedirect`).
  */
@@ -34,12 +36,15 @@ export const Route = createFileRoute("/_app/settings/account")({
   validateSearch: accountSearchSchema,
   beforeLoad: ({ location }) => redirectMovedSettings(location),
   loader: async ({ context }) => {
-    const [tokenStatus, capabilities, danger] = await Promise.all([
+    const [tokenStatus, capabilities, spend, danger] = await Promise.all([
       getTokenStatus(),
       getCapabilityRowsData(),
+      // Spend protection failing to load must not take the connection (and
+      // its Reconnect) with it: the section says so instead.
+      getSpendProtection().catch(() => null),
       context.viewer.isOwner ? getDangerZoneState() : null,
     ]);
-    return { tokenStatus, capabilities, danger };
+    return { tokenStatus, capabilities, spend, danger };
   },
   component: AccountSettingsPage,
 });

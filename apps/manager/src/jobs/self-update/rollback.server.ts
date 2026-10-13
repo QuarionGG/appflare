@@ -13,7 +13,7 @@ import {
 import { createDb } from "../../db/client";
 import { readSchemaVersion } from "../../db/migrate";
 import { jobs } from "../../db/schema";
-import { readSettings, SETTING, writeSettings } from "../../db/settings";
+import { deleteSettings, readSettings, SETTING, writeSettings } from "../../db/settings";
 import { reconcileJobs, type WorkflowLookup } from "../reconcile.server";
 import { StepLog } from "../step-log";
 import { activeVersionId, previewUrl } from "../update/plan";
@@ -30,6 +30,7 @@ import {
   readManagerHealth,
   rollbackSchemaRefusal,
 } from "./rollback";
+import { applyManagerCrons, cronsOfVersion, readManagerCrons } from "./schedule";
 
 /**
  * Rolling the manager back to one of its own earlier Worker versions, from
@@ -64,7 +65,10 @@ export interface ManagerVersionsApi {
     CloudflareClient["versions"],
     "listVersions" | "getVersion" | "listDeployments" | "createDeployment"
   >;
-  workers: Pick<CloudflareClient["workers"], "getAccountSubdomain">;
+  workers: Pick<
+    CloudflareClient["workers"],
+    "getAccountSubdomain" | "getSchedules" | "putSchedules"
+  >;
 }
 
 /** Version details never change, so an isolate reads each one once. */
@@ -330,7 +334,31 @@ export async function rollBackManagerCore(
     switched = { version: targetVersion, at };
     log.info(`Version ${target} (Appflare ${targetVersion}) now serves all traffic.`);
 
-    // 5. Record it. This request still runs the code it started on.
+    // 5. The target's cron schedule (cron triggers belong to the Worker, not
+    // to a version), when known; a failure is a warning, the switch stands.
+    try {
+      const crons = cronsOfVersion(await readManagerCrons(orm), targetVersion, deps.currentVersion);
+      if (crons === null) {
+        log.info(
+          `The cron schedule of Appflare ${targetVersion} is not known, so the Worker's schedule stays as it is.`,
+        );
+      } else if (crons.length > 0) {
+        const change = await applyManagerCrons(api, name, crons);
+        // The version now serving checks its own schedule again on its next run.
+        await deleteSettings(orm, [SETTING.managerScheduleVersion]);
+        log.info(
+          change.status === "changed"
+            ? `Cron triggers set to ${crons.join(", ")}, as Appflare ${targetVersion} ran them.`
+            : `Cron triggers stay ${crons.join(", ")}.`,
+        );
+      }
+    } catch (error) {
+      log.warn(
+        `Could not set the cron triggers of Appflare ${targetVersion}: ${errorText(error)}.`,
+      );
+    }
+
+    // 6. Record it. This request still runs the code it started on.
     const defaults = await readAutoUpdateDefaults(orm);
     if (defaults.manager) {
       await writeAutoUpdateDefaults(orm, { manager: false }, at);

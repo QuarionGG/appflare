@@ -1,10 +1,11 @@
 ---
 title: Notifications
-description: Send messages about updates, jobs, failing health checks and external domains to Telegram, Slack, Discord or your own webhook, and verify a webhook's signature.
+description: Send messages about updates, jobs, failing health checks, unusual usage, paused apps and external domains to Telegram, Slack, Discord or your own webhook, and verify a webhook's signature.
 ---
 
 Appflare can tell you when something needs attention: an update is available, an
-update or install finished, an app's health check started failing, an external domain
+update or install finished, an app's health check started failing, an app is using
+far more than usual or was [paused](/guides/spend-protection/), an external domain
 went active or failed. Messages go to
 **notification channels**, which admins manage under
 **Settings > Notifications > Channels**. Members cannot view or change them.
@@ -44,6 +45,7 @@ A new channel receives every event. Untick the ones you do not want.
 | **Free daily limit running out** | On the Free plan, once a day per app, when an app is on pace to use up one of the account's free daily limits before 00:00 UTC. | `usage_limit_near` |
 | **App paused** | When an app is paused, by someone or by Appflare, and why. | `app_paused` |
 | **App resumed** | When an app is resumed by Appflare, or by someone other than the person who paused it. | `app_resumed` |
+| **Pausing an app failed** | When pausing an app does not finish, by someone or by Appflare: the app may still be running and using Cloudflare. | `app_pause_failed` |
 | **Monthly budget reached** | Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps. | `budget_reached` |
 | **Appflare update available** | Once per release, when a newer Appflare release is published. | `manager_update_available` |
 | **Domain active** | When an external domain starts serving its app. | `domain_active` |
@@ -58,6 +60,13 @@ app's data and Appflare's own updates send nothing.
 A condition that still holds reaches a channel added later: a new channel hears about
 an update that is already available. A job that finished before the channel was
 added is not sent to it.
+
+### Usage and pauses
+
+The usage events come from Appflare's check of every app's usage, every 5 minutes.
+Each is sent once: once per episode of unusual usage, once per usage alert and
+period, and once per app and day for a free daily limit. What triggers each, and what
+a pause does, is in [Usage and spend protection](/guides/spend-protection/).
 
 ### Health check failing
 
@@ -182,8 +191,31 @@ for updates and Appflare releases; `version` for an install; `outcome`
 (`succeeded` or `failed`) for installs, uninstalls and Appflare's move; `jobId` for a
 finished job; `hostname` for the domain events, a lost address and a move (the
 address Appflare was moving to), `reason` for a failed domain,
-and `accessLeftBehind` when a lost address left Cloudflare Access on that hostname. A
-test message has `"event": "test"`, `"test": true` and an empty `data`.
+and `accessLeftBehind` when a lost address left Cloudflare Access on that hostname.
+The usage events carry their numbers, amounts in the product's own unit and dollars as
+estimates at list price:
+
+- `usage_unusual`: `plan`, `since`, `product` (such as `workers_requests`), `perHour`,
+  `times` (how many times its normal; `null` for an app with no normal yet, with
+  `installedRecently` saying whether it was installed in the last 7 days), `factor`,
+  `burnPerHour`, `spentToday`, and on Workers Free `freeShare`.
+- `usage_alert`: `plan`, `ruleId`, `sentence`, `kind` (`spent` or `pace`), `unit`
+  (`usd` or `pct`), `amount`, `value`, `period` and `periodStart`.
+- `usage_limit_near`: `product`, `limit`, `used`, `runsOutAt` (`null` once it ran
+  out), `appShare` and `day`.
+- `app_paused`: `pauseId`, `by` and `cause`, whose `reason` is `manual`, `loop`,
+  `cap` or `budget`.
+- `app_resumed`: `pauseId`, `by` and `capSetAsideUntil`.
+- `app_pause_failed`: `jobId`, `by`, `cause` and `left`, what the job could not put
+  back (empty when the app runs as before).
+- `budget_reached`: `budget`, `projected` and `monthStart`. It is about the account,
+  so it has no `app`.
+
+`by` is a person's name, `Someone` for a user that was removed, or `null` when
+Appflare acted on its own. `since`, `runsOutAt` and `capSetAsideUntil` are
+milliseconds since the epoch; `periodStart`, `day` and `monthStart` are Unix seconds.
+
+A test message has `"event": "test"`, `"test": true` and an empty `data`.
 
 ### Verify the signature
 

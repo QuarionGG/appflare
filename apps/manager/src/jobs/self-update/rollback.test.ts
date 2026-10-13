@@ -31,6 +31,7 @@ import {
   rollBackManagerAs,
   rollBackManagerCore,
 } from "./rollback.server";
+import { ensureOwnSchedule } from "./schedule";
 
 const OLD = "11111111-1111-4111-8111-111111111111";
 const SERVING = "22222222-2222-4222-8222-222222222222";
@@ -64,6 +65,9 @@ interface FakeOptions {
   details?: WorkerVersion[];
   serving?: string;
   deployError?: unknown;
+  /** The Worker's cron schedule. */
+  crons?: string[];
+  scheduleError?: unknown;
 }
 
 function fakeApi(options: FakeOptions = {}) {
@@ -77,6 +81,7 @@ function fakeApi(options: FakeOptions = {}) {
     ).map((v) => [v.id, v]),
   );
   const deployments: CreateDeploymentArgs[] = [];
+  const schedule = { crons: options.crons ?? ["*/5 * * * *"], puts: 0 };
   const api: ManagerVersionsApi = {
     versions: {
       async listVersions() {
@@ -102,9 +107,18 @@ function fakeApi(options: FakeOptions = {}) {
       async getAccountSubdomain() {
         return { subdomain: "acme" };
       },
+      async getSchedules() {
+        return { schedules: schedule.crons.map((cron) => ({ cron })) };
+      },
+      async putSchedules(_name: string, body: Array<{ cron: string }>) {
+        if (options.scheduleError !== undefined) throw options.scheduleError;
+        schedule.puts += 1;
+        schedule.crons = body.map((s) => s.cron);
+        return { schedules: body };
+      },
     },
   };
-  return { api, deployments };
+  return { api, deployments, schedule };
 }
 
 function healthFetch(report: Record<string, unknown> | null, urls: string[] = []) {
@@ -292,6 +306,97 @@ describe("rollBackManagerCore", () => {
     const lines = await logs();
     expect(lines).toContain(`Version ${OLD} (Appflare 0.4.0) now serves all traffic.`);
     expect(lines.some((l) => l.includes("SANDBOX"))).toBe(true);
+  });
+
+  it("after a rollback, a later update back to the same release sets its schedule again", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({ "0.4.0": ["*/30 * * * *"] }),
+    });
+    const { api, schedule } = fakeApi();
+    // Appflare 0.5.0 (Worker version SERVING) checked its schedule.
+    const own = (versionId: string) =>
+      ensureOwnSchedule(
+        { DB: env.DB, APPFLARE_VERSION: "0.5.0", CF_VERSION_METADATA: { id: versionId } },
+        { api },
+      );
+    expect((await own(SERVING)).status).toBe("checked");
+    expect(await own(SERVING)).toEqual({ status: "done" });
+    // Rolled back to 0.4.0: its */30, and the mark cleared.
+    await rollBackManagerCore(deps(api, HEALTHY), { versionId: OLD });
+    expect(schedule.crons).toEqual(["*/30 * * * *"]);
+    // Updated back to 0.5.0, even as the same Worker version: */5 again.
+    expect(await own(SERVING)).toMatchObject({
+      status: "checked",
+      change: { status: "changed", to: ["*/5 * * * *"] },
+    });
+    expect(schedule.crons).toEqual(["*/5 * * * *"]);
+  });
+
+  it("sets the cron schedule the target version ran with", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({
+        "0.4.0": ["*/30 * * * *"],
+        "0.5.0": ["*/5 * * * *"],
+      }),
+    });
+    const { api, schedule } = fakeApi();
+    await rollBackManagerCore(deps(api, HEALTHY), { versionId: OLD });
+    expect(schedule).toEqual({ crons: ["*/30 * * * *"], puts: 1 });
+    expect(await logs()).toContain(
+      "Cron triggers set to */30 * * * *, as Appflare 0.4.0 ran them.",
+    );
+  });
+
+  it("gives a version from before versions recorded their schedule the old */30", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({ "0.5.0": ["*/5 * * * *"] }),
+    });
+    const { api, schedule } = fakeApi();
+    await rollBackManagerCore(deps(api, HEALTHY), { versionId: OLD });
+    expect(schedule).toEqual({ crons: ["*/30 * * * *"], puts: 1 });
+  });
+
+  it("gives an older version the old */30 when nothing is recorded yet", async () => {
+    const bare = fakeApi();
+    await rollBackManagerCore(deps(bare.api, HEALTHY), { versionId: OLD });
+    expect(bare.schedule.crons).toEqual(["*/30 * * * *"]);
+  });
+
+  it("leaves the schedule when the target's is not known or already in place", async () => {
+    // Newer than a recorded version, yet not recorded itself.
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({ "0.3.0": ["*/5 * * * *"] }),
+    });
+    const unknown = fakeApi();
+    await rollBackManagerCore(deps(unknown.api, HEALTHY), { versionId: OLD });
+    expect(unknown.schedule.puts).toBe(0);
+    expect(await logs()).toContain(
+      "The cron schedule of Appflare 0.4.0 is not known, so the Worker's schedule stays as it is.",
+    );
+  });
+
+  it("makes no change when the target's schedule is in place", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({ "0.4.0": ["*/5 * * * *"] }),
+    });
+    const { api, schedule } = fakeApi();
+    await rollBackManagerCore(deps(api, HEALTHY), { versionId: OLD });
+    expect(schedule.puts).toBe(0);
+    expect(await logs()).toContain("Cron triggers stay */5 * * * *.");
+  });
+
+  it("warns when the schedule cannot be set, and the rollback stands", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerCrons]: JSON.stringify({ "0.4.0": ["*/30 * * * *"] }),
+    });
+    const { api, deployments } = fakeApi({ scheduleError: new Error("schedules down") });
+    const result = await rollBackManagerCore(deps(api, HEALTHY), { versionId: OLD });
+    expect(result.version).toBe("0.4.0");
+    expect(deployments).toHaveLength(1);
+    expect(await logs()).toContain(
+      "Could not set the cron triggers of Appflare 0.4.0: schedules down.",
+    );
+    expect((await jobRow())?.status).toBe("succeeded");
   });
 
   it("refuses a version whose code is older than the database's schema", async () => {

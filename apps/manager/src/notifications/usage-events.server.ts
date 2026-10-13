@@ -48,11 +48,14 @@ export type UsageEvent =
         since: number;
         product: ProductKey;
         perHour: number;
-        times: number;
+        /** How many times its normal hour; null for an app with no normal yet using a lot. */
+        times: number | null;
         factor: number;
         burnPerHour: number;
         spentToday: number;
         freeShare?: number | null;
+        /** With no normal (`times` null): it was installed within the last 7 days. */
+        installedRecently?: boolean;
       })
   | (Base &
       WithPlan & {
@@ -241,6 +244,9 @@ async function factsOf(
         burnPerHour: event.burnPerHour,
         spentToday: event.spentToday,
         ...(event.freeShare == null ? {} : { freeShare: event.freeShare }),
+        ...(event.installedRecently === undefined
+          ? {}
+          : { installedRecently: event.installedRecently }),
       };
     case "usage_alert":
       return {

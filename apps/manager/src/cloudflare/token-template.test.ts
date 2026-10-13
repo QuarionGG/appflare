@@ -76,7 +76,6 @@ describe("token template URLs", () => {
       "account_settings",
       "billing",
       "email_routing_address",
-      "workers_observability",
       "zone",
     ]);
   });
@@ -174,7 +173,7 @@ describe("token template URLs", () => {
       },
       {
         feature: SPEND_PROTECTION_FEATURE,
-        names: ["Account Analytics: Read", "Workers Observability: Read"],
+        names: ["Account Analytics: Read"],
       },
     ]);
   });
@@ -232,27 +231,22 @@ describe("token template URLs", () => {
     expect(groupsOf(userTokenTemplateUrl())).toContainEqual({ key: "containers", type: "edit" });
   });
 
-  it("asks for the usage and spend protection groups as optional, matching the sign-in scopes", () => {
+  it("asks for Account Analytics alone as optional, for usage and spend protection, matching the sign-in scopes", () => {
     const { required, optional } = splitPermissionGroups();
     const spend = optional.filter((g) => g.onlyFor === SPEND_PROTECTION_FEATURE);
     expect(spend.map(({ key, type }) => ({ key, type }))).toEqual([
       { key: "account_analytics", type: "read" },
-      { key: "workers_observability", type: "read" },
     ]);
     expect(required.some((g) => spend.some((s) => s.key === g.key))).toBe(false);
     const link = groupsOf(accountTokenTemplateUrl());
     expect(link).toContainEqual({ key: "account_analytics", type: "read" });
-    expect(link).toContainEqual({ key: "workers_observability", type: "read" });
-    // Nothing uses Notifications yet: only a sign-in asks for it, ahead of time.
+    // Nothing reads with these, so neither the token nor a sign-in asks for them.
     expect(JSON.stringify(link)).not.toContain("notifications");
+    expect(JSON.stringify(link)).not.toContain("observability");
     expect(
       spend.map((g) => (MANAGER_OAUTH_SCOPE_BY_GROUP as Record<string, string | null>)[g.key]),
     ).toEqual([...SPEND_PROTECTION_OAUTH_SCOPES]);
     expect(MANAGER_SCOPE_LABELS["account-analytics.read"]).toBe("Account Analytics");
-    expect(MANAGER_SCOPE_LABELS["workers-observability.read"]).toBe("Workers Observability");
-    // A sign-in made before Notifications was asked for names it in words.
-    expect(MANAGER_SCOPE_LABELS["notifications.read"]).toBe("Notifications: Read");
-    expect(MANAGER_SCOPE_LABELS["notifications.write"]).toBe("Notifications: Edit");
   });
 
   it("asks for Billing: Read only as optional, for reading the Workers plan", () => {

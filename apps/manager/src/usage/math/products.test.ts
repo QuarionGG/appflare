@@ -3,7 +3,7 @@ import { billedPrice, freeDailyLimit, PRODUCT_KEYS, PRODUCTS } from "./products"
 
 describe("PRODUCTS", () => {
   it("covers every product with a label, a unit and a price", () => {
-    expect(PRODUCT_KEYS).toHaveLength(28);
+    expect(PRODUCT_KEYS).toHaveLength(29);
     for (const key of PRODUCT_KEYS) {
       const p = PRODUCTS[key];
       expect(p.label, key).toMatch(/^[A-Z0-9]/);
@@ -31,6 +31,10 @@ describe("PRODUCTS", () => {
     expect(PRODUCTS.do_requests.price * 1e6).toBeCloseTo(0.15);
     // Workers AI includes 10,000 neurons a day on Paid, not a month.
     expect(PRODUCTS.ai_neurons.included).toEqual({ amount: 10_000, per: "day" });
+    // Workflow steps: $0.80 per 100,000 past 500,000 a month; 3,000 a day on Free.
+    expect(PRODUCTS.workflow_steps.price * 100_000).toBeCloseTo(0.8);
+    expect(PRODUCTS.workflow_steps.included).toEqual({ amount: 500_000, per: "month" });
+    expect(freeDailyLimit("workflow_steps")).toBe(3_000);
   });
 
   it("estimates Analytics Engine at $0 while Cloudflare does not bill it", () => {

@@ -1,4 +1,5 @@
 import { inArray, sql } from "drizzle-orm";
+import { type Read, read, runRead } from "./batch";
 import type { Database } from "./client";
 import { settings } from "./schema";
 
@@ -40,6 +41,19 @@ export const SETTING = {
    * self-update job's last step.
    */
   managerVersionHistory: "manager_version_history",
+  /**
+   * JSON `{ "<version>": ["<cron>", ...] }`: the cron schedule each Appflare
+   * version ran with, recorded by each version itself
+   * (jobs/self-update/schedule.ts), so a rollback can set the schedule of
+   * the version it goes back to.
+   */
+  managerCrons: "manager_crons",
+  /**
+   * The Workers version id (or, without the version binding, the release)
+   * that last made sure the Worker runs its own cron schedule; a rollback
+   * clears it.
+   */
+  managerScheduleVersion: "manager_schedule_version",
   /**
    * Cloudflare Access protection, all set together when it is turned on and
    * all removed when it is turned off. `access_aud` and `access_team_domain`
@@ -215,21 +229,53 @@ export const SETTING = {
   spendCap: "spend_cap",
   spendBudget: "spend_budget",
   spendUnusualFactor: "spend_unusual_factor",
+  /**
+   * JSON: the numbers spend protection shows, computed from the usage
+   * series (usage/overview.server.ts): each app's spend per period, burn,
+   * loop checks and share of the overage, the month's bill, and when they
+   * were computed. Written by the spend watcher every tick, and by a page
+   * that finds it missing or older than 15 minutes, so pages need not read
+   * the hourly series.
+   */
+  spendOverview: "spend_overview",
+  /**
+   * JSON: the spend watcher's last check (usage/watcher-status.ts): when it
+   * ran and whether it could read usage. `needs_access` means the
+   * Cloudflare connection lacks the analytics permission (an older OAuth
+   * grant, or an API token without "Account Analytics"): pages show
+   * "Reconnect to see usage" until a check succeeds again.
+   */
+  spendWatch: "spend_watch",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];
+
+/** The given rows, as a read that can share a round trip with others (db/batch.ts). */
+export function settingsRead<K extends SettingKey>(
+  db: Database,
+  keys: readonly K[],
+): Read<Partial<Record<K, string>>> {
+  return read(
+    [
+      db
+        .select({ key: settings.key, value: settings.value })
+        .from(settings)
+        .where(inArray(settings.key, [...keys])),
+    ],
+    ([rows]) => {
+      const out: Partial<Record<K, string>> = {};
+      for (const row of rows as Array<{ key: string; value: string }>)
+        out[row.key as K] = row.value;
+      return out;
+    },
+  );
+}
 
 export async function readSettings<K extends SettingKey>(
   db: Database,
   keys: readonly K[],
 ): Promise<Partial<Record<K, string>>> {
-  const rows = await db
-    .select({ key: settings.key, value: settings.value })
-    .from(settings)
-    .where(inArray(settings.key, [...keys]));
-  const out: Partial<Record<K, string>> = {};
-  for (const row of rows) out[row.key as K] = row.value;
-  return out;
+  return runRead(db, settingsRead(db, keys));
 }
 
 /** Upserts every given row in one statement. */

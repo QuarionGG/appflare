@@ -1,4 +1,10 @@
-import { createGraphQL, type GraphQLClient } from "../graphql";
+import {
+  CloudflareGraphQLError,
+  createGraphQL,
+  GRAPHQL_PATH,
+  type GraphQLClient,
+  type GraphQLErrorItem,
+} from "../graphql";
 import type { HttpApi } from "../http";
 
 /**
@@ -197,6 +203,31 @@ interface Answer {
   viewer: { accounts: Array<{ rows: RawRow[] }> };
 }
 
+/** One dataset's field in a combined query, as alias `r<i>` with filter `$f<i>`. */
+function fieldText(spec: DatasetSpec, i: number): string {
+  const dims = [spec.idField, "datetimeHour", ...(spec.dimensions ?? [])].join(" ");
+  const order = spec.orderBy ? `, orderBy: ${spec.orderBy}` : "";
+  return `r${i}: ${spec.dataset}(limit: ${USAGE_MAX_ROWS}, filter: $f${i}${order}) {
+        dimensions { ${dims} }
+        ${spec.select}
+      }`;
+}
+
+/** Several datasets' requests as one query: each its own aliased field and filter variable. */
+function combinedQueryText(specs: readonly DatasetSpec[]): string {
+  const vars = specs.map((s, i) => `$f${i}: ${filterType(s.dataset)}!`).join(", ");
+  return `query Usage($accountTag: string!, ${vars}) {
+  viewer {
+    accounts(filter: { accountTag: $accountTag }) {
+      ${specs.map((s, i) => fieldText(s, i)).join("\n      ")}
+    }
+  }
+}`;
+}
+
+/** Requests in one combined query at most; more go in further queries. */
+export const USAGE_BATCH_FIELDS = 20;
+
 /** A raw row with the caller's id for it and its hour. */
 interface Located {
   resourceId: string;
@@ -207,10 +238,42 @@ interface Located {
 export interface UsageOptions {
   /** Clock in milliseconds; tests pass a fixed one. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Send the requests made in the same turn as one combined query (see
+   * `batched()` on the returned object). Off by default: one request per
+   * dataset read.
+   */
+  batch?: boolean;
 }
 
-/** Usage analytics: one function per product, each returning hourly {@link UsageRow}s. */
+/** A request waiting for the combined query it goes out in. */
+interface Pending {
+  spec: DatasetSpec;
+  filter: Record<string, unknown>;
+  resolve(rows: RawRow[]): void;
+  reject(error: unknown): void;
+}
+
+/**
+ * Usage analytics: one function per product, each returning hourly
+ * {@link UsageRow}s; and `batched()`, the same reads sending the requests
+ * started together as one GraphQL query (an aliased field per dataset)
+ * instead of one request each: a caller that reads many datasets at once
+ * (the spend watcher) makes one subrequest, and pays the CPU time of one
+ * request, instead of many. Answers are the same; a field that fails fails
+ * only its read, and a whole query refused for a reason that names no field
+ * is sent again as separate requests.
+ */
 export function createUsage(http: HttpApi, options: UsageOptions = {}) {
+  return {
+    ...usageReads(http, options),
+    batched: () => usageReads(http, { ...options, batch: true }),
+  };
+}
+
+export type UsageReads = ReturnType<typeof usageReads>;
+
+function usageReads(http: HttpApi, options: UsageOptions) {
   const gql: GraphQLClient = createGraphQL(http);
   const clock = options.now ?? Date.now;
   let lastStamp = 0;
@@ -219,6 +282,104 @@ export function createUsage(http: HttpApi, options: UsageOptions = {}) {
   function stamp(): number {
     lastStamp = Math.max(clock(), lastStamp + 1);
     return lastStamp;
+  }
+
+  async function single(spec: DatasetSpec, filter: Record<string, unknown>): Promise<RawRow[]> {
+    const data = await gql.query<Answer>(queryText(spec), {
+      accountTag: http.accountId,
+      filter,
+    });
+    return data.viewer?.accounts?.[0]?.rows ?? [];
+  }
+
+  let queue: Pending[] = [];
+
+  /**
+   * Sends the waiting requests as combined queries of at most
+   * {@link USAGE_BATCH_FIELDS} fields. Every request settles, whatever the
+   * answer looks like.
+   */
+  async function flush(): Promise<void> {
+    const waiting = queue;
+    queue = [];
+    for (let at = 0; at < waiting.length; at += USAGE_BATCH_FIELDS) {
+      const group = waiting.slice(at, at + USAGE_BATCH_FIELDS);
+      void sendGroup(group).catch((error: unknown) => {
+        for (const p of group) p.reject(error);
+      });
+    }
+  }
+
+  /** The field (`r<i>`) an error's path names, or null when it names none of `count`. */
+  function fieldOf(error: unknown, count: number): number | null {
+    if (typeof error !== "object" || error === null) return null;
+    const path = (error as { path?: unknown }).path;
+    if (!Array.isArray(path)) return null;
+    const name = path.find((part) => typeof part === "string" && /^r\d+$/.test(part));
+    if (typeof name !== "string") return null;
+    const i = Number(name.slice(1));
+    return i < count ? i : null;
+  }
+
+  /**
+   * One combined query. Cloudflare answers a combined query in which a
+   * field fails with errors and no data at all (seen on 2026-10-13: a
+   * `quota` error whose path named one field, `data` null), and a query it
+   * cannot validate with an error naming no field. So the fields the errors
+   * name are sent again on their own (each fails or answers as it would
+   * alone) and the others again as one combined query; when an error names
+   * no field (or the answer is not one Cloudflare gives), each request is
+   * sent on its own. Errors naming their fields in an answer with data fail
+   * only those requests. A refused HTTP request fails them all, as each
+   * would have been refused alike. Anything unexpected fails them all too,
+   * so no request is left waiting.
+   */
+  async function sendGroup(group: Pending[]): Promise<void> {
+    const alone = (p: Pending) => single(p.spec, p.filter).then(p.resolve, p.reject);
+    if (group.length === 1) {
+      const [only] = group;
+      if (only !== undefined) await alone(only);
+      return;
+    }
+    try {
+      const variables: Record<string, unknown> = { accountTag: http.accountId };
+      group.forEach((p, i) => {
+        variables[`f${i}`] = p.filter;
+      });
+      const answer = (await http.send("POST", GRAPHQL_PATH, {
+        json: { query: combinedQueryText(group.map((p) => p.spec)), variables },
+      })) as unknown as {
+        data?: { viewer?: { accounts?: Array<Record<string, RawRow[] | null>> } } | null;
+        errors?: unknown;
+      } | null;
+      const errors: unknown[] = Array.isArray(answer?.errors) ? answer.errors : [];
+      const account = answer?.data?.viewer?.accounts?.[0];
+      const fields = errors.map((e) => fieldOf(e, group.length));
+      if (
+        fields.some((f) => f === null) ||
+        (errors.length === 0 && (account === undefined || account === null))
+      ) {
+        await Promise.all(group.map(alone));
+        return;
+      }
+      const named = new Set(fields as number[]);
+      if (account !== undefined && account !== null) {
+        group.forEach((p, i) => {
+          const own = errors.filter((_, k) => fields[k] === i) as GraphQLErrorItem[];
+          if (own.length > 0) p.reject(new CloudflareGraphQLError(own));
+          else p.resolve(account[`r${i}`] ?? []);
+        });
+        return;
+      }
+      const rest = group.filter((_, i) => !named.has(i));
+      await Promise.all([
+        ...group.filter((_, i) => named.has(i)).map(alone),
+        rest.length > 0 ? sendGroup(rest) : Promise.resolve(),
+      ]);
+    } catch (error) {
+      // Settling a settled request does nothing: only those still waiting fail.
+      for (const p of group) p.reject(error);
+    }
   }
 
   async function request(
@@ -236,11 +397,13 @@ export function createUsage(http: HttpApi, options: UsageOptions = {}) {
     if (ids !== null) {
       filter[`${spec.idField}_in`] = spec.sendWithoutDashes ? ids.map(uuidKey) : [...ids];
     }
-    const data = await gql.query<Answer>(queryText(spec), {
-      accountTag: http.accountId,
-      filter,
+    if (!options.batch) return single(spec, filter);
+    return new Promise<RawRow[]>((resolve, reject) => {
+      // The reads a caller starts together make their first requests in the
+      // same turn: they go out together once it ends.
+      if (queue.length === 0) setTimeout(() => void flush(), 0);
+      queue.push({ spec, filter, resolve, reject });
     });
-    return data.viewer?.accounts?.[0]?.rows ?? [];
   }
 
   /** Reads `[start, end)` for `ids`, splitting the window, then the ids, while an answer is full. */

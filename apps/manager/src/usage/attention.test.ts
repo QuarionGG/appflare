@@ -32,6 +32,30 @@ describe("usageAttentionCopy", () => {
     });
   });
 
+  it("a new app using a lot: no multiple of a normal it does not have", () => {
+    const fresh: UsageAttention = {
+      ...UNUSUAL,
+      times: null,
+      newApp: true,
+      installedRecently: true,
+      sentTo: [],
+    };
+    expect(usageAttentionCopy(fresh, LABEL, clock)).toEqual({
+      badge: { label: "Unusual usage", variant: "error" },
+      title: "Service status is new and already using a lot",
+      description:
+        "Durable Objects requests at 48.2K an hour since 14:05, with no usual week yet to compare with. About $3.20 an hour at Cloudflare's prices, $9.80 so far today.",
+    });
+    // Installed over a week ago, but too rarely used to have a normal: not "new".
+    const rare: UsageAttention = { ...fresh, installedRecently: false };
+    expect(usageAttentionCopy(rare, LABEL, clock)).toMatchObject({
+      title: "Service status is already using a lot",
+      description: expect.stringContaining(
+        "since 14:05, with no usual usage to compare against yet.",
+      ),
+    });
+  });
+
   it("unusual usage without the numbers the watcher records, and without channels", () => {
     const bare: UsageAttention = {
       ...UNUSUAL,

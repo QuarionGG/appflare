@@ -1,4 +1,5 @@
 import { Grid, LinkButton, Text } from "@cloudflare/kumo";
+import type { ReactNode } from "react";
 import { AppIcon } from "../components/catalog-media";
 import { OpenAppButton } from "../components/open-app-button";
 import { Section } from "../components/section";
@@ -14,34 +15,63 @@ import type { HomeApp } from "./layout-data";
  * app at its address, in a new tab, when it has one) and Manage (its page
  * here). The tiles share the section's card, split by hairlines instead of
  * each drawing a card of its own. One column on a phone, with the buttons
- * full width under the text.
+ * full width under the text. `below` adds a part above a tile's buttons
+ * (its usage), and `action` a first button (Pause or Resume).
  */
 export function YourApps({
   apps,
   signals,
   now,
+  below,
+  action,
 }: {
   apps: readonly HomeApp[];
   signals: ReadonlyMap<string, AppSignal>;
   now: Date;
+  below?: (app: HomeApp) => ReactNode;
+  action?: (app: HomeApp) => ReactNode;
 }) {
-  const sorted = [...apps].sort((a, b) =>
-    installLabel(a).localeCompare(installLabel(b), undefined, { sensitivity: "base" }),
-  );
+  const sorted = sortedApps(apps);
   return (
     <Section id="your-apps" title="Your apps">
       {/* Every tile draws a hairline on its right and bottom; the grid reaches 1 px
           past the card's body on both sides, which hides the lines at its edges. */}
       <Grid variant="3up" gap="none" className="-mr-px -mb-px">
         {sorted.map((app) => (
-          <AppCard key={app.id} app={app} signal={signals.get(app.id)} now={now} />
+          <AppCard
+            key={app.id}
+            app={app}
+            signal={signals.get(app.id)}
+            now={now}
+            below={below?.(app)}
+            action={action?.(app)}
+          />
         ))}
       </Grid>
     </Section>
   );
 }
 
-function AppCard({ app, signal, now }: { app: HomeApp; signal: AppSignal | undefined; now: Date }) {
+/** The apps in the order of their tiles: by the name Home shows. */
+export function sortedApps(apps: readonly HomeApp[]): HomeApp[] {
+  return [...apps].sort((a, b) =>
+    installLabel(a).localeCompare(installLabel(b), undefined, { sensitivity: "base" }),
+  );
+}
+
+function AppCard({
+  app,
+  signal,
+  now,
+  below,
+  action,
+}: {
+  app: HomeApp;
+  signal: AppSignal | undefined;
+  now: Date;
+  below?: ReactNode;
+  action?: ReactNode;
+}) {
   // Home never shows Worker names, even for two installs of one app.
   const name = installLabel(app);
   return (
@@ -69,7 +99,9 @@ function AppCard({ app, signal, now }: { app: HomeApp; signal: AppSignal | undef
           </span>
         </div>
       </div>
+      {below}
       <div className="mt-auto flex flex-col gap-2 *:w-full *:justify-center sm:flex-row sm:justify-end sm:*:w-auto">
+        {action}
         {app.address !== null && (
           <OpenAppButton href={app.address} label={name} size="sm" variant="primary" />
         )}

@@ -29,7 +29,10 @@ async function findChromium() {
   throw new Error("Chromium not found. Set CHROMIUM to the browser executable path.");
 }
 const here = import.meta.dirname;
-const output = resolve(here, "../../docs/public/screenshots");
+// `SHOTS_OUT` writes the pictures elsewhere, to compare them before they reach the docs.
+const output = process.env.SHOTS_OUT
+  ? resolve(process.env.SHOTS_OUT)
+  : resolve(here, "../../docs/public/screenshots");
 const temp = await mkdtemp(resolve(tmpdir(), "appflare-shots-"));
 const server = await createServer({ configFile: resolve(here, "vite.config.ts") });
 await server.listen();
@@ -224,6 +227,8 @@ const shots = [
     name: "home-dashboard",
     path: "/",
     expected: "Needs attention",
+    // Usage sits between "Needs attention" and the cards.
+    viewportHeight: 2000,
     cropBottomSelector: "#your-apps",
   },
   {
@@ -306,6 +311,36 @@ const shots = [
     expected: "What this account can run",
     viewportHeight: 1600,
     cropBottomSelector: "#capabilities",
+  },
+  {
+    // Spend protection on Your account: auto-pause and a budget on, an app
+    // looping past the budget, one never paused for it, one with its own triggers.
+    name: "settings-spend-protection",
+    path: "/settings/account?fixture=spend-busy",
+    expected: "Looping right now",
+    viewportHeight: 3200,
+    cropSelector: "#spend-protection",
+  },
+  {
+    name: "settings-spend-protection-off",
+    path: "/settings/account?fixture=spend-off",
+    expected: "Nothing is a trigger",
+    viewportHeight: 3200,
+    cropSelector: "#spend-protection",
+  },
+  {
+    name: "settings-spend-protection-free",
+    path: "/settings/account?fixture=spend-free",
+    expected: "R2 still bills past its free amount.",
+    viewportHeight: 3200,
+    cropSelector: "#spend-protection",
+  },
+  {
+    name: "settings-spend-protection-member",
+    path: "/settings/account?fixture=spend-member",
+    expected: "Only admins can change these.",
+    viewportHeight: 3200,
+    cropSelector: "#spend-protection",
   },
   {
     name: "domains-external-list",
@@ -421,7 +456,7 @@ try {
   await mkdir(output, { recursive: true });
   const port = await waitForPort();
   for (const shot of shots) {
-    if (process.env.SHOT && shot.name !== process.env.SHOT) continue;
+    if (process.env.SHOT && !process.env.SHOT.split(",").includes(shot.name)) continue;
     const width = shot.width ?? shot.viewportWidth ?? 1440;
     const page = await openPage(port, width, shot.viewportHeight ?? 900);
     try {

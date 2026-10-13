@@ -2,11 +2,11 @@ import { Button, Link, Text, useKumoToastManager } from "@cloudflare/kumo";
 import { PauseIcon, PlayIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { appTabLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { type StillPastCap, stillPastCapCopy } from "../usage/attention";
 import { pauseAppFn, resumeAppFn } from "../usage/pause.functions";
+import { appSpendHref } from "../usage/ui/format";
 import { readerClock } from "./attention-copy";
 
 /**
@@ -18,6 +18,10 @@ import { readerClock } from "./attention-copy";
  * A dialog changes the page only once it has finished closing
  * (`onOpenChangeComplete`): the reload that follows removes the button that
  * owns the dialog, and a dialog must not unmount while it animates.
+ *
+ * Each button's accessible name starts with its visible words and then names
+ * the app ("Pause app: Service status"), so a voice user saying what they see
+ * reaches it.
  */
 
 const dayAndTime = new Intl.DateTimeFormat(undefined, {
@@ -34,11 +38,20 @@ export function PauseAppButton({
   installId,
   label,
   size = "base",
+  text = "Pause app",
+  calm = false,
 }: {
   installId: string;
   /** What Home calls the app. */
   label: string;
   size?: "sm" | "base";
+  /** The button's words: "Pause app" in a row, "Pause" on an app's card. */
+  text?: string;
+  /**
+   * The app is running as usual: a secondary button, for pausing it by
+   * choice. Filled and destructive (the default) while it runs away.
+   */
+  calm?: boolean;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -47,8 +60,14 @@ export function PauseAppButton({
     <ConfirmDialog
       size="sm"
       trigger={(props) => (
-        <Button {...props} size={size} variant="destructive" icon={<PauseIcon />}>
-          Pause app
+        <Button
+          {...props}
+          size={size}
+          variant={calm ? "secondary" : "destructive"}
+          icon={<PauseIcon />}
+          aria-label={`${text}: ${label}`}
+        >
+          {text}
         </Button>
       )}
       title={`Pause ${label}`}
@@ -82,13 +101,17 @@ export function ResumeAppButton({
   label,
   stillPastCap,
   size = "base",
+  prominent = true,
 }: {
   installId: string;
   label: string;
   /** Set while the app is still past its cap: Resume then asks first. */
   stillPastCap: StillPastCap | null;
   size?: "sm" | "base";
+  /** Filled, as a row's main action; outlined beside a card's own Open. */
+  prominent?: boolean;
 }) {
+  const variant = prominent ? "primary" : "secondary";
   const router = useRouter();
   const toasts = useKumoToastManager();
   const [pending, setPending] = useState(false);
@@ -110,8 +133,9 @@ export function ResumeAppButton({
       <BusyButton
         pending={pending}
         size={size}
-        variant="primary"
+        variant={variant}
         icon={<PlayIcon />}
+        aria-label={`Resume: ${label}`}
         onClick={async () => {
           setPending(true);
           try {
@@ -137,7 +161,13 @@ export function ResumeAppButton({
       size="sm"
       destructive={false}
       trigger={(props) => (
-        <Button {...props} size={size} variant="primary" icon={<PlayIcon />}>
+        <Button
+          {...props}
+          size={size}
+          variant={variant}
+          icon={<PlayIcon />}
+          aria-label={`Resume: ${label}`}
+        >
           Resume
         </Button>
       )}
@@ -155,9 +185,7 @@ export function ResumeAppButton({
       }}
     >
       <Text>
-        {/* TODO: link to the Usage tab's spend protection section (`#spend-protection`) once the tab has it. */}
-        {copy.body} To keep a cap, <Link href={appTabLink(installId, "usage")}>change it</Link>{" "}
-        instead.
+        {copy.body} To keep a cap, <Link href={appSpendHref(installId)}>change it</Link> instead.
       </Text>
     </ConfirmDialog>
   );

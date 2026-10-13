@@ -20,6 +20,8 @@ import type { Viewer } from "../server/session.functions";
 import type { TokenStatus } from "../server/token.functions";
 import type { UserRow } from "../server/users.functions";
 import type { TelemetryStatus } from "../telemetry/telemetry";
+import type { SpendProtectionData } from "../usage/spend-defaults.functions";
+import { SpendProtectionSection } from "../usage/ui/spend-protection-section";
 import { AccessCard } from "./access-card";
 import { AppflareUpdatesCard } from "./appflare-updates-card";
 import { CatalogsList } from "./catalogs-settings";
@@ -80,12 +82,14 @@ function SettingsPageHeader({
 /**
  * `/settings/account` (Your account): the Cloudflare connection (admins
  * reconnect it or change how Appflare connects), what the account can run (admins check it again and
- * choose the Workers plan while it cannot be detected), and last, for the
- * owner only, the danger zone.
+ * choose the Workers plan while it cannot be detected), spend protection
+ * (admins change what every app follows), and last, for the owner only, the
+ * danger zone.
  */
 export function AccountSettingsView({
   tokenStatus,
   capabilities,
+  spend,
   danger,
   viewer,
   managerUrl,
@@ -94,6 +98,8 @@ export function AccountSettingsView({
 }: {
   tokenStatus: TokenStatus;
   capabilities: CapabilityRowsData;
+  /** Null when it could not be read: the section says so. */
+  spend: SpendProtectionData | null;
   /** Null for everyone but the owner. */
   danger: DangerZoneState | null;
   viewer: Pick<Viewer, "role" | "isOwner">;
@@ -119,6 +125,7 @@ export function AccountSettingsView({
         startOpen={reconnectOpen}
       />
       <CapabilitiesSection data={capabilities} isAdmin={isAdmin} />
+      <SpendProtectionSection data={spend} isAdmin={isAdmin} />
       {viewer.isOwner && danger !== null && <DangerZone state={danger} />}
     </>
   );

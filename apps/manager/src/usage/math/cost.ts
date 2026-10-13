@@ -73,12 +73,24 @@ export function costSeries(
 }
 
 /**
+ * Activity costs already worked out, by usage object and `now`. The checks
+ * of one app at one moment (spend, burn, caps, alerts, the loop check at
+ * each level) all start from this series; a weak map keeps it only as long
+ * as the usage it came from. A usage must not change after it is measured.
+ */
+const activityCosts = new WeakMap<Usage, { now: number; series: readonly HourValue[] }>();
+
+/**
  * The cost of an app's activity alone: counts, not storage. Spend, burn, caps
  * and the loop check all use it: storage moves slowly, a loop shows in
  * operations, and a pause stops activity but not storage.
  */
-export function activityCostSeries(usage: Usage, now: number): HourValue[] {
-  return costSeries(usage, now, (key) => PRODUCTS[key].measure === "count");
+export function activityCostSeries(usage: Usage, now: number): readonly HourValue[] {
+  const known = activityCosts.get(usage);
+  if (known !== undefined && known.now === now) return known.series;
+  const series = Object.freeze(costSeries(usage, now, (key) => PRODUCTS[key].measure === "count"));
+  activityCosts.set(usage, { now, series });
+  return series;
 }
 
 /** List-price dollars of activity over the last 60 minutes: what the app is burning now. */
@@ -231,9 +243,15 @@ export function accountOverage(
   for (const key of PRODUCT_KEYS) {
     const users = Object.entries(apps).filter(([, usage]) => usage[key] !== undefined);
     if (users.length === 0) continue;
-    const total = productMonth(key, addSeries(users.map(([, u]) => u[key] ?? [])), plan, now, {
+    const all = addSeries(users.map(([, u]) => u[key] ?? []));
+    // The pace counts only apps still running; it matters only for a projection.
+    const running = users.filter(([id]) => !stopped.has(id));
+    const total = productMonth(key, all, plan, now, {
       projected,
-      paceFrom: addSeries(users.filter(([id]) => !stopped.has(id)).map(([, u]) => u[key] ?? [])),
+      paceFrom:
+        !projected || running.length === users.length
+          ? all
+          : addSeries(running.map(([, u]) => u[key] ?? [])),
     });
     result.byProduct[key] = total;
     result.usd += total.usd;

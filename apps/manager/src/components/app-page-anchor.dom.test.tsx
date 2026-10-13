@@ -105,6 +105,17 @@ vi.mock("../installs/access-change.functions", () => ({
   checkAppAccess: vi.fn(),
   startAccessChange: vi.fn(),
 }));
+vi.mock("../usage/tab.functions", () => ({
+  getUsageTab: vi.fn(async () => null),
+  setAppSpend: vi.fn(),
+}));
+vi.mock("../usage/alert-rules.functions", () => ({
+  createAlertRuleFn: vi.fn(),
+  updateAlertRuleFn: vi.fn(),
+  deleteAlertRuleFn: vi.fn(),
+}));
+vi.mock("../usage/observability.functions", () => ({ setObservabilityFn: vi.fn() }));
+vi.mock("../usage/pause.functions", () => ({ pauseAppFn: vi.fn(), resumeAppFn: vi.fn() }));
 
 const { Route } = await import("../routes/_app/apps/$installId");
 

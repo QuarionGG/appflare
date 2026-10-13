@@ -60,6 +60,14 @@ export {
   type WindowOptions,
 } from "./projection";
 export {
+  lastHourRate,
+  MIN_RESUME_WINDOW_MS,
+  type ResumeWindow,
+  resumeBase,
+  resumeMatters,
+  usageSinceResume,
+} from "./resume";
+export {
   ALARMS_PER_OBJECT_HOUR,
   alarmLoop,
   type BudgetCandidate,
@@ -70,6 +78,8 @@ export {
   DEFAULT_LOOP_LEVEL,
   DEFAULT_UNUSUAL_FACTOR,
   freeDailyShare,
+  type HeavyNewUse,
+  heavyNewUse,
   LOOP_CHECKS_TO_PAUSE,
   LOOP_LEVEL_NAMES,
   LOOP_LEVELS,

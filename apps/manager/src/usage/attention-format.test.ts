@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   count,
   fullCount,
+  labelAfter,
   percent,
   productLabel,
   productRate,
@@ -9,7 +10,31 @@ import {
   usd,
   utcClock,
   utcDateTime,
+  withUnit,
 } from "./attention-format";
+
+describe("units after a number", () => {
+  it("are singular after 1, plural otherwise, and measures stay as they are", () => {
+    expect(withUnit("1", "requests")).toBe("1 request");
+    expect(withUnit("48K", "requests")).toBe("48K requests");
+    expect(withUnit("0", "rows")).toBe("0 rows");
+    expect(withUnit("1", "data points")).toBe("1 data point");
+    expect(withUnit("1", "GB-s")).toBe("1 GB-s");
+    expect(withUnit("1", "CPU ms")).toBe("1 CPU ms");
+  });
+
+  it("make a product's name singular after 1 when it ends in its unit", () => {
+    expect(labelAfter("1", "Durable Objects requests", "requests")).toBe("Durable Objects request");
+    expect(labelAfter("2", "Durable Objects requests", "requests")).toBe(
+      "Durable Objects requests",
+    );
+  });
+
+  it("read in a rate", () => {
+    expect(productRate("workflow_steps", 1)).toBe("Workflow steps at 1 an hour");
+    expect(productRate("d1_rows_read", 1)).toBe("D1 rows read at 1 row an hour");
+  });
+});
 
 describe("spend protection's numbers", () => {
   it("writes counts short, and limits in full", () => {

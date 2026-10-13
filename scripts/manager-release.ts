@@ -199,7 +199,7 @@ export function managerArtifactProblems(
   for (const flag of REQUIRED_FLAGS) {
     expect(worker.compatibilityFlags.includes(flag), `compatibility flag ${flag} is missing`);
   }
-  expect(same(worker.crons, ["*/30 * * * *"]), `crons are ${JSON.stringify(worker.crons)}`);
+  expect(same(worker.crons, ["*/5 * * * *"]), `crons are ${JSON.stringify(worker.crons)}`);
 
   const binding = (type: string, name: string) =>
     worker.bindings.find((b) => b.type === type && b.name === name) as

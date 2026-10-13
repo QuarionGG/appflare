@@ -24,6 +24,9 @@ const PAGE_SOURCES = import.meta.glob<string>(
     "./external-domains-section.tsx",
     "./source-changes-card.tsx",
     "./versions-section.tsx",
+    "../usage/tab/usage-section.tsx",
+    "../usage/tab/spend-protection.tsx",
+    "../usage/tab/recent-activity.tsx",
   ],
   { query: "?raw", import: "default", eager: true },
 );
@@ -67,6 +70,7 @@ describe("appSectionTab", () => {
     expect(appSectionTab("#versions")).toBe("jobs");
     expect(appSectionTab("#danger-zone")).toBe("overview");
     expect(appSectionTab("#kept-resources")).toBe("resources");
+    expect(appSectionTab("#spend-protection")).toBe("usage");
   });
 
   it("is null for no hash or one that names no section", () => {
@@ -107,7 +111,7 @@ describe("appPlace", () => {
 describe("the app page", () => {
   it("has an element for every section a link can name", () => {
     const source = Object.values(PAGE_SOURCES).join("\n");
-    expect(Object.keys(PAGE_SOURCES)).toHaveLength(7);
+    expect(Object.keys(PAGE_SOURCES)).toHaveLength(10);
     for (const id of Object.keys(APP_SECTIONS)) {
       expect(source, id).toMatch(new RegExp(`\\bid="${id}"`));
     }

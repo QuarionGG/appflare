@@ -60,7 +60,7 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [PIPELINES_FEATURE]:
     "Installing an app that streams events into R2 (Workers Paid): Appflare creates a Pipelines stream, sink and pipeline for each stream the app uses, and deletes them on uninstall",
   [SPEND_PROTECTION_FEATURE]:
-    "Showing each app's usage, sending the usage alerts you set, and pausing an app that runs away: Appflare reads each app's usage from Cloudflare's analytics, and an app's Workers Logs when you turn them on for it",
+    "Showing each app's usage, sending the usage alerts you set, and pausing an app that runs away: Appflare reads each app's usage from Cloudflare's analytics",
 };
 
 /** What a rotation saved. */

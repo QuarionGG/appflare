@@ -30,6 +30,7 @@ export type ProductKey =
   | "r2_class_b"
   | "r2_storage"
   | "queues_operations"
+  | "workflow_steps"
   | "ai_neurons"
   | "vectorize_queried_dimensions"
   | "vectorize_stored_dimensions"
@@ -248,6 +249,18 @@ export const PRODUCTS: Readonly<Record<ProductKey, Product>> = {
     included: { amount: 1 * M, per: "month" },
     price: 0.4 / M,
     free: { amount: 10_000, per: "day" },
+  }),
+
+  // https://developers.cloudflare.com/workflows/reference/pricing/
+  // A Workflow's CPU time and invocations are billed as its Worker's (the
+  // Workers entries above); steps are their own meter. Rollback handlers and
+  // retries are not steps. Billed from 2026-08-10.
+  workflow_steps: count({
+    label: "Workflow steps",
+    unit: "steps",
+    included: { amount: 500_000, per: "month" },
+    price: 0.8 / 100_000,
+    free: { amount: 3_000, per: "day" },
   }),
 
   // https://developers.cloudflare.com/workers-ai/platform/pricing/

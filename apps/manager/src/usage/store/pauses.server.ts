@@ -1,6 +1,7 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { z } from "zod";
+import { type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
 import { app_pauses, type PauseReason } from "../../db/schema";
 
@@ -168,12 +169,51 @@ export async function findOpenPause(db: Database, installId: string): Promise<Ap
 
 /** Every open pause (every paused install), oldest first. */
 export async function listOpenPauses(db: Database): Promise<AppPause[]> {
-  const rows = await db
-    .select()
-    .from(app_pauses)
-    .where(isNull(app_pauses.resumed_at))
-    .orderBy(app_pauses.paused_at);
-  return rows.map(fromRow);
+  return runRead(db, openPausesRead(db));
+}
+
+/** The open pauses, oldest first, as a read (db/batch.ts). */
+export function openPausesRead(db: Database): Read<AppPause[]> {
+  return read(
+    [
+      db
+        .select()
+        .from(app_pauses)
+        .where(isNull(app_pauses.resumed_at))
+        .orderBy(app_pauses.paused_at),
+    ],
+    ([rows]) => (rows as Row[]).map(fromRow),
+  );
+}
+
+/**
+ * Each install's latest resume since `since` (epoch ms), by install id. Only
+ * resumes a resume job ran count: a pause that failed closes its row too,
+ * but the app never stopped.
+ */
+export async function latestResumes(db: Database, since: Date): Promise<Map<string, number>> {
+  return runRead(db, latestResumesRead(db, since));
+}
+
+/** {@link latestResumes} as a read (db/batch.ts). */
+export function latestResumesRead(db: Database, since: Date): Read<Map<string, number>> {
+  return read(
+    [
+      db
+        .select({ installId: app_pauses.install_id, resumedAt: app_pauses.resumed_at })
+        .from(app_pauses)
+        .where(and(gt(app_pauses.resumed_at, since), isNotNull(app_pauses.resume_job_id))),
+    ],
+    ([rows]) => {
+      const out = new Map<string, number>();
+      for (const row of rows as Array<{ installId: string; resumedAt: Date | null }>) {
+        const at = row.resumedAt?.getTime();
+        if (at === undefined) continue;
+        if (at > (out.get(row.installId) ?? 0)) out.set(row.installId, at);
+      }
+      return out;
+    },
+  );
 }
 
 /** The install's pauses, newest first (for its recent activity). */

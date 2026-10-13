@@ -1,5 +1,6 @@
+import { type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
-import { readSettings, SETTING, writeSettings } from "../../db/settings";
+import { SETTING, settingsRead, writeSettings } from "../../db/settings";
 import {
   DEFAULT_SPEND_DEFAULTS,
   type SpendDefaults,
@@ -37,7 +38,16 @@ function parsed<T>(
 const shape = spendDefaultsSchema.shape;
 
 export async function readSpendDefaults(db: Database): Promise<SpendDefaults> {
-  const rows = await readSettings(db, KEYS);
+  return runRead(db, spendDefaultsRead(db));
+}
+
+/** The defaults, as a read that can share a round trip with others (db/batch.ts). */
+export function spendDefaultsRead(db: Database): Read<SpendDefaults> {
+  const rows = settingsRead(db, KEYS);
+  return read(rows.queries, (results) => spendDefaultsFrom(rows.decode(results)));
+}
+
+function spendDefaultsFrom(rows: Partial<Record<(typeof KEYS)[number], string>>): SpendDefaults {
   const d = DEFAULT_SPEND_DEFAULTS;
   const auto = rows[SETTING.spendAutoPause];
   return {

@@ -1,7 +1,8 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, ne, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
+import { type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
-import { app_usage_state } from "../../db/schema";
+import { app_usage_state, installs } from "../../db/schema";
 import { chunk, MAX_BOUND_PARAMETERS, rowsPerStatement, STATEMENTS_PER_BATCH } from "./limits";
 
 /**
@@ -66,16 +67,53 @@ export async function readUsageStates(
   db: Database,
   installIds: readonly string[],
 ): Promise<Map<string, UsageState>> {
-  const out = new Map<string, UsageState>();
-  for (const id of installIds) out.set(id, initialUsageState(id));
-  for (const ids of chunk(installIds, MAX_BOUND_PARAMETERS)) {
-    const rows = await db
-      .select()
-      .from(app_usage_state)
-      .where(inArray(app_usage_state.install_id, ids));
-    for (const row of rows) out.set(row.install_id, fromRow(row));
-  }
-  return out;
+  return runRead(db, usageStatesRead(db, installIds));
+}
+
+/**
+ * {@link readUsageStates} as a read (db/batch.ts). With `null`, the
+ * stored states of every install not uninstalled (found by key through the
+ * installs table), for a caller that does not know its installs yet, which
+ * then picks them with {@link usageStatesOf}.
+ */
+export function usageStatesRead(
+  db: Database,
+  installIds: readonly string[] | null,
+): Read<Map<string, UsageState>> {
+  const queries =
+    installIds === null
+      ? [
+          db
+            .select()
+            .from(app_usage_state)
+            .where(
+              inArray(
+                app_usage_state.install_id,
+                db
+                  .select({ id: installs.id })
+                  .from(installs)
+                  .where(ne(installs.status, "uninstalled")),
+              ),
+            ),
+        ]
+      : chunk(installIds, MAX_BOUND_PARAMETERS).map((ids) =>
+          db.select().from(app_usage_state).where(inArray(app_usage_state.install_id, ids)),
+        );
+  return read(queries, (results) => {
+    const out = new Map<string, UsageState>();
+    for (const id of installIds ?? []) out.set(id, initialUsageState(id));
+    for (const rows of results as Row[][])
+      for (const row of rows) out.set(row.install_id, fromRow(row));
+    return out;
+  });
+}
+
+/** The state of each given install from stored states (initial for one never checked). */
+export function usageStatesOf(
+  stored: ReadonlyMap<string, UsageState>,
+  installIds: readonly string[],
+): Map<string, UsageState> {
+  return new Map(installIds.map((id) => [id, stored.get(id) ?? initialUsageState(id)]));
 }
 
 /**

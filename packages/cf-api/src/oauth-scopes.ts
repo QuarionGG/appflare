@@ -1,8 +1,7 @@
 /**
  * The Cloudflare OAuth scopes Appflare's manager asks for, one per permission
  * group of its API token (the manager's `TOKEN_PERMISSION_GROUPS`, keyed by
- * the same dashboard template keys), plus the few a sign-in asks for ahead
- * of the token ({@link MANAGER_OAUTH_ONLY_GROUPS}). A browser install and an OAuth reconnect
+ * the same dashboard template keys). A browser install and an OAuth reconnect
  * both request the whole list, every time: one connection covers every
  * manager feature, so enabling a feature later never needs another consent.
  *
@@ -59,30 +58,10 @@ export const MANAGER_OAUTH_SCOPE_BY_GROUP = {
   account_settings: "account-settings.read",
   // Usage and spend protection: GraphQL Analytics for every product.
   account_analytics: "account-analytics.read",
-  // Cloudflare's own alerts, for a later version: asked for now so it needs
-  // no new sign-in. The catalog's "Notifications Write" says only "write
-  // access" (unlike Observability Write's "read and write"), so the read
-  // scope is asked for too. Sign-in only: the API token leaves both out
-  // (see MANAGER_OAUTH_ONLY_GROUPS).
-  notifications: "notifications.write",
-  notifications_read: "notifications.read",
-  // Reading Workers Logs (turning them on goes through Workers Scripts).
-  workers_observability: "workers-observability.read",
 } as const satisfies Record<string, string | null>;
 
 /** A manager permission group key that has a scope decision. */
 export type ManagerOAuthGroupKey = keyof typeof MANAGER_OAUTH_SCOPE_BY_GROUP;
-
-/**
- * Groups a Cloudflare sign-in asks for that the manager's API token does
- * not: nothing in this version uses them yet, so the token form leaves them
- * out, while a sign-in asks now so a later version needs no new consent.
- * Every other key of {@link MANAGER_OAUTH_SCOPE_BY_GROUP} is a token group.
- */
-export const MANAGER_OAUTH_ONLY_GROUPS = [
-  "notifications",
-  "notifications_read",
-] as const satisfies readonly ManagerOAuthGroupKey[];
 
 /**
  * The protocol scope that makes the token endpoint issue a refresh token.
@@ -171,15 +150,12 @@ export function missingManagerScopes(granted: readonly string[]): string[] {
 }
 
 /**
- * The scopes usage and spend protection read with: analytics and Workers
- * Logs, the two an API token can carry too. Every sign-in asks for them
- * with the rest; a manager connected before they were added holds a grant
- * without them until it reconnects. The notification scopes every sign-in
- * also asks for are not among them: nothing reads with them yet.
+ * The scopes usage and spend protection need to read usage: analytics
+ * alone. Every sign-in asks for it with the rest; a manager connected
+ * before it was added holds a grant without it until it reconnects.
  */
 export const SPEND_PROTECTION_OAUTH_SCOPES: readonly string[] = Object.freeze([
   MANAGER_OAUTH_SCOPE_BY_GROUP.account_analytics,
-  MANAGER_OAUTH_SCOPE_BY_GROUP.workers_observability,
 ]);
 
 /**

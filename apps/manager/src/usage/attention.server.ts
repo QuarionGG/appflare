@@ -5,15 +5,9 @@ import { createDb, type Database } from "../db/client";
 import { app_usage_state } from "../db/schema";
 import type { StillPastCap, UsageAttention } from "./attention";
 import { parsePauseCause } from "./attention-cause";
-import {
-  DAY_MS,
-  dayStart,
-  freeDailyLimit,
-  PRODUCTS,
-  type ProductKey,
-  periodEnd,
-  periodStart,
-} from "./math";
+import { stillPastCap } from "./cap-status";
+import { DAY_MS, dayStart, freeDailyLimit, PRODUCTS, type ProductKey } from "./math";
+import { readStoredSnapshot } from "./overview.server";
 import { listActivity } from "./store/activity.server";
 import { effectiveSpendSettingsOf } from "./store/app-settings.server";
 import { listOpenPauses } from "./store/pauses.server";
@@ -37,6 +31,10 @@ import type { EffectiveSpendSettings } from "./store/spend-settings";
 
 const unusualFacts = z.object({
   times: z.number().nonnegative(),
+  /** No normal yet: the app used a lot (`times` is 0). */
+  newApp: z.boolean().optional(),
+  /** With `newApp`: installed within the last 7 days. */
+  installedRecently: z.boolean().optional(),
   product: z.string().min(1).optional(),
   perHour: z.number().nonnegative().optional(),
   burnPerHour: z.number().nonnegative().optional(),
@@ -193,20 +191,28 @@ export async function readUsageAttention(
   // Unusual usage of apps not paused, and not already told as a used-up limit.
   const unusual = episodes.filter((s) => !paused.has(s.installId) && !usedUp.has(s.installId));
   const open = [...paused.values()];
-  const capped = open.filter((p) => p.reason === "cap").map((p) => p.installId);
+  const pausedIds = open.map((p) => p.installId);
   // A second round, only for the rows that need it: the plan and channels of
-  // unusual usage, the people and cap settings of pauses.
-  const [plan, sentTo, names, settings] = await Promise.all([
-    unusual.length > 0 ? readAccountPlan(db) : Promise.resolve("free" as const),
+  // unusual usage, the people, cap settings and spend of paused apps (any of
+  // them may be past its cap, whatever paused it).
+  const [plan, sentTo, names, settings, numbers] = await Promise.all([
+    unusual.length > 0 || open.length > 0 ? readAccountPlan(db) : Promise.resolve("free" as const),
     unusual.length > 0 && opts.isAdmin ? unusualChannels(d1) : Promise.resolve([]),
     readNames(
       d1,
       open.map((p) => p.pausedBy).filter((by) => by !== "auto"),
     ),
-    capped.length > 0
-      ? effectiveSpendSettingsOf(db, capped)
+    open.length > 0
+      ? effectiveSpendSettingsOf(db, pausedIds)
       : Promise.resolve(new Map<string, EffectiveSpendSettings>()),
+    open.length > 0 ? readStoredSnapshot(db) : Promise.resolve(null),
   ]);
+  const spentBy = new Map(
+    (numbers?.apps ?? []).map((a) => [
+      a.installId,
+      { day: a.spend.day.spent, week: a.spend.week.spent, month: a.spend.month.spent },
+    ]),
+  );
   for (const state of unusual) {
     const since = state.unusualSince;
     const started = activity.find(
@@ -217,11 +223,13 @@ export async function readUsageAttention(
     );
     const facts =
       started === undefined ? null : (unusualFacts.safeParse(started.facts).data ?? null);
-    const ratio =
-      facts?.times ??
-      (state.lastBurn !== null && state.normalBurn !== null && state.normalBurn > 0
-        ? state.lastBurn / state.normalBurn
-        : null);
+    const newApp = facts?.newApp === true;
+    const ratio = newApp
+      ? null
+      : (facts?.times ??
+        (state.lastBurn !== null && state.normalBurn !== null && state.normalBurn > 0
+          ? state.lastBurn / state.normalBurn
+          : null));
     rows.push({
       kind: "unusual",
       installId: state.installId,
@@ -230,6 +238,7 @@ export async function readUsageAttention(
       product: facts?.product !== undefined && facts.perHour !== undefined ? facts.product : null,
       perHour: facts?.product !== undefined ? (facts.perHour ?? null) : null,
       times: ratio !== null && ratio > 0 ? ratio : null,
+      ...(newApp ? { newApp: true, installedRecently: facts?.installedRecently === true } : {}),
       burnPerHour: facts?.burnPerHour ?? state.lastBurn,
       spentToday: facts?.spentToday ?? null,
       freeShare: facts?.freeShare ?? null,
@@ -240,28 +249,14 @@ export async function readUsageAttention(
   // Paused apps: who paused them and why; whether Resume must deal with the cap.
   for (const pause of open) {
     const cause = parsePauseCause(pause.reason, pause.detailJson);
-    let stillPastCap: StillPastCap | null = null;
     const effective = settings.get(pause.installId);
-    if (cause?.reason === "cap" && effective !== undefined) {
-      const cap = effective.triggers.cap;
-      const setAside = effective.capSetAsideUntil !== null && effective.capSetAsideUntil > now;
-      if (
-        effective.autoPause.on &&
-        cap.on &&
-        cap.amount !== null &&
-        !setAside &&
-        cap.period === cause.period &&
-        periodStart(cap.period, pause.pausedAt) === periodStart(cap.period, now) &&
-        (cause.spent ?? cause.amount) >= cap.amount
-      ) {
-        stillPastCap = {
-          amount: cap.amount,
-          period: cap.period,
-          spent: cause.spent ?? null,
-          resetsAt: periodEnd(cap.period, now),
-        };
-      }
-    }
+    const pastCap: StillPastCap | null =
+      effective === undefined
+        ? null
+        : stillPastCap({ pausedAt: pause.pausedAt, cause }, effective, now, {
+            spent: spentBy.get(pause.installId) ?? null,
+            plan,
+          });
     rows.push({
       kind: "paused",
       installId: pause.installId,
@@ -269,7 +264,7 @@ export async function readUsageAttention(
       pausedBy: pause.pausedBy === "auto" ? null : (names.get(pause.pausedBy) ?? "Someone"),
       cause,
       loopSince: states.get(pause.installId)?.unusualSince ?? null,
-      stillPastCap,
+      stillPastCap: pastCap,
     });
   }
   return rows;
