@@ -218,7 +218,7 @@ export function UsersSettingsView({
   );
 }
 
-/** `/settings/usage-data`: the anonymous daily report, its switch, and a preview of it. */
+/** `/settings/anonymous-report`: the anonymous daily report, its switch, and a preview of it. */
 export function UsageDataSettingsView({
   telemetry,
   isAdmin,

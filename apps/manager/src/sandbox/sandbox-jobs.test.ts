@@ -22,6 +22,7 @@ import {
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { seedInstall } from "../test/seed-install";
+import { LOGS_OFF, LOGS_ON } from "../test/workers-logs";
 import { runSandboxDisable, type SandboxDisableJobParams } from "./disable-job";
 import { runSandboxEnable, type SandboxEnableJobParams } from "./enable-job";
 import { SandboxJobError, startSandboxJobCore } from "./jobs.server";
@@ -448,6 +449,54 @@ describe("enable sandbox builds", () => {
       Array(4).fill(image(VERSION)),
     );
     expect(r.world.manager.state.versionPatches).toEqual([]);
+  });
+
+  for (const [label, setting] of [
+    ["on", LOGS_ON],
+    ["off", LOGS_OFF],
+    ["never set", null],
+  ] as const) {
+    it(`keeps the sandbox Worker's own Workers Logs setting when it uploads it again (${label})`, async () => {
+      const at = enabledAt("0.1.1");
+      const worker = at.worker;
+      if (worker == null) throw new Error("no Worker");
+      const r = await enable(
+        { ...at, worker: { ...worker, observability: setting } },
+        connected,
+        "update",
+      );
+      expect(r.error).toBeNull();
+      const metadata = r.world.state.uploads[0]?.metadata ?? {};
+      // The release turns them on for a new sandbox Worker; this one keeps its own.
+      if (setting === null) expect(metadata).not.toHaveProperty("observability");
+      else expect(metadata.observability).toEqual(setting);
+      expect(r.world.state.worker?.observability).toEqual(setting);
+    });
+  }
+
+  it("stops before uploading the sandbox Worker when its Workers Logs setting cannot be read", async () => {
+    const at = enabledAt("0.1.1");
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, at, {
+      previews: [healthy],
+      ...connected,
+    });
+    const { params } = await start(world, { action: "update" });
+    // Cloudflare refuses the read once the job runs.
+    const fetch = world.fetch;
+    world.fetch = async (input, init) =>
+      input.endsWith("/workers/scripts/appflare-sandbox/script-settings")
+        ? Response.json(
+            { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+            { status: 403 },
+          )
+        : fetch(input, init);
+    const r = await runJob(world, params, release);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain(
+      "upload sandbox Worker: Appflare could not read whether Workers Logs are on for appflare-sandbox",
+    );
+    expect(world.state.uploads).toEqual([]);
   });
 
   it("adds the self-deploying classes to a sandbox Worker that has only the build classes", async () => {

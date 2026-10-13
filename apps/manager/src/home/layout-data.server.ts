@@ -27,6 +27,7 @@ import {
 import { countRemovedAppsCore } from "../installs/removed-apps.server";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
 import { runningVersion } from "../server/build-version";
+import { readUsageAttention } from "../usage/attention.server";
 import { accountAttentionRows } from "./account-attention";
 import type { Downgrade } from "./attention";
 import { readFailedJobs, readUpdateNeeds } from "./attention.server";
@@ -77,6 +78,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     deployCopy,
     migrated,
     reconnectNeeded,
+    usage,
   ] = await Promise.all([
     recordsRead,
     rowsRead,
@@ -102,6 +104,14 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     ensureMigrated(env),
     // One read: whether a stored Cloudflare grant needs reconnecting.
     connectionNeedsReconnecting(env),
+    // Spend protection's rows: three reads beside the installs; more only for a row.
+    readUsageAttention(env.DB, {
+      installIds: rowsRead.then((r) =>
+        r.filter((row) => row.status !== "uninstalled").map((row) => row.id),
+      ),
+      isAdmin,
+      now: Date.now(),
+    }),
   ]);
   // A catalog not cached yet (a new manager before its first cron run) is
   // fetched after the answer, so the next page shows its icons and updates.
@@ -148,5 +158,6 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     deployCopy,
     downgrade,
     reconnectNeeded,
+    usage,
   };
 }

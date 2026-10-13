@@ -153,6 +153,24 @@ export const MANAGER_SCOPE_REASONS = {
     label: "Account Settings",
     text: "Account Settings lets Appflare read which Cloudflare account it is in and that account's name.",
   },
+  account_analytics: {
+    label: "Account Analytics",
+    text: "Account Analytics lets Appflare read how much each app uses of Workers, storage and the other services it runs on, to show its usage, send the usage alerts you set, and pause an app that runs away.",
+  },
+  notifications: {
+    label: "Notifications: Edit",
+    // Not used yet: asked for now so that a later version can add
+    // Cloudflare's own billing alerts without a new sign-in.
+    text: "Notifications: Edit lets Appflare add Cloudflare's own alerts about your bill. Appflare asks for it now so a later version can add them without asking you to sign in again.",
+  },
+  notifications_read: {
+    label: "Notifications: Read",
+    text: "Notifications: Read lets Appflare see the Cloudflare alerts your account already has, so it never adds one twice. Appflare asks for it now so a later version can use it without asking you to sign in again.",
+  },
+  workers_observability: {
+    label: "Workers Observability",
+    text: "Workers Observability lets Appflare read an app's Workers Logs when you turn them on, to show its usage in the first minutes after you install it, before Cloudflare's usage numbers arrive.",
+  },
 } as const satisfies Record<RequestedGroupKey, ScopeReason>;
 
 /**

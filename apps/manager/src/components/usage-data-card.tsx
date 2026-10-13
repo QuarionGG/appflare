@@ -10,8 +10,8 @@ import { settingsSection } from "./settings-links";
 import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-parts";
 
 /**
- * The usage data settings' one section: what it is for, the switch (admins change it,
- * members see it; off and disabled while a Worker variable turns usage data
+ * The anonymous report settings' one section: what it is for, the switch (admins change it,
+ * members see it; off and disabled while a Worker variable turns the report
  * off), what is and is not sent, and a preview of the next daily report,
  * built on request.
  */
@@ -52,7 +52,7 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
     // The switch shows the choice. What is sent in the end (nothing from a
     // development build, whatever the switch says) is spelled out below it.
     <Section
-      {...settingsSection("usageData", "usage-data")}
+      {...settingsSection("usageData", "anonymous-report")}
       description="What the report is for, what it holds, and the switch that turns it off."
       error={error}
     >

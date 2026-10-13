@@ -16,6 +16,28 @@ export function createQueues(http: HttpApi) {
       return http.list("GET", http.acct("/queues"));
     },
 
+    /** `GET /queues/{id}`: the queue with its `settings` (`delivery_paused` among them). */
+    getQueue(queueId: string): Promise<Queue> {
+      return http.result("GET", http.acct(`/queues/${enc(queueId)}`));
+    },
+
+    /**
+     * `PATCH /queues/{id}` with `{ queue_name, settings: { delivery_paused } }`,
+     * the body wrangler's `queues pause-delivery` and
+     * `resume-delivery` send. While paused, producers still send and
+     * messages wait in the queue; consumers get none until delivery resumes
+     * (it takes effect within about 10 seconds).
+     */
+    setDeliveryPaused(args: {
+      queueId: string;
+      queueName: string;
+      paused: boolean;
+    }): Promise<Queue> {
+      return http.result("PATCH", http.acct(`/queues/${enc(args.queueId)}`), {
+        json: { queue_name: args.queueName, settings: { delivery_paused: args.paused } },
+      });
+    },
+
     /** `DELETE /queues/{id}`. */
     deleteQueue(queueId: string): Promise<unknown> {
       return http.result("DELETE", http.acct(`/queues/${enc(queueId)}`));
@@ -29,7 +51,11 @@ export function createQueues(http: HttpApi) {
       return http.result("POST", http.acct(`/queues/${enc(queueId)}/consumers`), { json: body });
     },
 
-    /** `GET /queues/{id}/consumers`. */
+    /**
+     * `GET /queues/{id}/consumers`. A Worker that consumes a queue cannot be
+     * deleted, nor the queue, until its consumer is removed
+     * ({@link deleteConsumer}).
+     */
     listConsumers(queueId: string): Promise<QueueConsumerInfo[]> {
       return http.result("GET", http.acct(`/queues/${enc(queueId)}/consumers`));
     },

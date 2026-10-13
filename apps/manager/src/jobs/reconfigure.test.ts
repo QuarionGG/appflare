@@ -36,6 +36,7 @@ import { type FakeSandbox, fakeSandbox } from "../test/fake-sandbox";
 import { fakeSelf } from "../test/fake-self";
 import { type FakeStep, fakeStep } from "../test/fake-step";
 import { INSTALL_ID, OLD_VERSION, type SeedResource, seedInstall } from "../test/seed-install";
+import { LOGS_OFF, LOGS_ON } from "../test/workers-logs";
 import { type ReconfigureJobParams, runReconfigure } from "./reconfigure";
 import { reconcileHyperdriveRecords } from "./reconfigure/hyperdrive";
 import { type RollbackJobParams, runRollback } from "./rollback";
@@ -470,6 +471,40 @@ describe("settings change job", () => {
     expect(r.fake.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
     expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
     expect(r.install).toMatchObject({ health_status: "verified", workers_dev_enabled: 0 });
+  });
+
+  for (const [label, setting] of [
+    ["on", LOGS_ON],
+    ["off", LOGS_OFF],
+  ] as const) {
+    it(`uploads the version with the Worker's own Workers Logs setting (${label})`, async () => {
+      const r = await reconfigure({
+        app: {
+          ...APP,
+          tweak: (m) => {
+            m.worker.observability = { enabled: label === "off" };
+          },
+        },
+        world: { observability: { cut: setting } },
+      });
+      expect(r.error).toBeNull();
+      expect(r.fake.state.versions[0]?.metadata.observability).toEqual(setting);
+      expect(r.fake.state.observability.cut).toEqual(setting);
+    });
+  }
+
+  it("changes nothing when Cloudflare does not say whether Workers Logs are on", async () => {
+    const r = await reconfigure({
+      world: {
+        observability: { cut: LOGS_ON },
+        failOnce: new Map([["GET /workers/scripts/cut/script-settings", 403]]),
+      },
+    });
+    expect(r.job?.error).toContain(
+      "upload Worker version: Appflare could not read whether Workers Logs are on for cut",
+    );
+    expect(r.fake.state.versions).toEqual([]);
+    expect(r.fake.state.deployments).toHaveLength(1);
   });
 
   it("promotes the uploaded version itself when no secret changes", async () => {

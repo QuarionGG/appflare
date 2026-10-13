@@ -60,7 +60,7 @@ export const SETTINGS_PAGES = {
   },
   usageData: {
     href: SETTINGS_SECTIONS.usageData.path,
-    label: "Usage data",
+    label: "Anonymous report",
     description: "The anonymous daily report Appflare can send.",
   },
 } as const satisfies Record<string, SettingsPage>;
@@ -129,6 +129,12 @@ const ACCOUNT_ANCHORS: Record<string, string> = {
   checklist: settingsLink("account", "capabilities"),
 };
 
+/** The anonymous report's page under its earlier name, and its one section's anchor. */
+const USAGE_DATA_PATH = "/settings/usage-data";
+const USAGE_DATA_ANCHORS: Record<string, string> = {
+  "usage-data": settingsLink("usageData", "anonymous-report"),
+};
+
 /**
  * Where an address Settings used to have leads now, or null when it is
  * still current. Bookmarks, older notification messages and job errors
@@ -139,7 +145,9 @@ const ACCOUNT_ANCHORS: Record<string, string> = {
  *   named (Appflare's version when it named none);
  * - `/settings/account#sandbox` and `#github-access` moved to Building
  *   apps; the account setup list (`#checklist`) is part of "What this
- *   account can run" (`#capabilities`), and its rows are `#capability-<id>`.
+ *   account can run" (`#capabilities`), and its rows are `#capability-<id>`;
+ * - `/settings/usage-data` is the Anonymous report page, at its section
+ *   when the address named it (`#usage-data`).
  *
  * `hash` is the location hash, with or without its `#`.
  */
@@ -150,6 +158,7 @@ export function settingsRedirect(pathname: string, hash: string): string | null 
   if (path === "/settings/appflare-updates") {
     return APPFLARE_UPDATES_ANCHORS[anchor] ?? settingsLink("updates", "appflare");
   }
+  if (path === USAGE_DATA_PATH) return USAGE_DATA_ANCHORS[anchor] ?? settingsLink("usageData");
   if (path === SETTINGS_PAGES.account.href) {
     const moved = ACCOUNT_ANCHORS[anchor];
     if (moved !== undefined) return moved;

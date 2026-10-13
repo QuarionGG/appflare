@@ -11,11 +11,12 @@ import { messageLink } from "./message-links";
  */
 
 /** The app page's tabs, in the order they show. */
-export const APP_TABS = ["overview", "settings", "domains", "resources", "jobs"] as const;
+export const APP_TABS = ["overview", "usage", "settings", "domains", "resources", "jobs"] as const;
 export type AppTab = (typeof APP_TABS)[number];
 
 export const APP_TAB_LABELS: Record<AppTab, string> = {
   overview: "Overview",
+  usage: "Usage",
   settings: "Settings",
   domains: "Domains and email",
   resources: "Resources",
@@ -57,6 +58,16 @@ function isAppSectionId(id: string): id is AppSectionId {
 export function appLink(installId: string, anchor?: AppSectionId): string {
   const path = `/apps/${encodeURIComponent(installId)}`;
   return anchor === undefined ? path : `${path}#${anchor}`;
+}
+
+/**
+ * The path of one tab of an installed app's page, for a link to the tab as
+ * a whole: `appTabLink("01J…", "usage")` is `/apps/01J…?tab=usage`.
+ * Overview is the page itself.
+ */
+export function appTabLink(installId: string, tab: AppTab): string {
+  const path = appLink(installId);
+  return tab === "overview" ? path : `${path}?tab=${tab}`;
 }
 
 /**

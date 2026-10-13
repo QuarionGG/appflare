@@ -56,6 +56,7 @@ import {
   workerExportsOf,
 } from "../jobs/update/plan";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
+import { notPausedSql, pausedRefusal } from "../usage/pause-guard.server";
 import {
   derivedVarValues,
   heldSecrets,
@@ -152,6 +153,9 @@ export async function claim<P extends { jobId: string }>(
   },
 ): Promise<{ jobId: string }> {
   await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new VersionActionError(m));
+  // A paused app serves its stand-in: deploying over it would run it again unresumed.
+  const paused = await pausedRefusal(deps.db, input.installId);
+  if (paused !== null) throw new VersionActionError(paused);
   const now = (deps.now ?? (() => new Date()))();
   const jobId = input.params.jobId;
   const [claimed] = await deps.db.batch([
@@ -163,6 +167,7 @@ export async function claim<P extends { jobId: string }>(
            AND NOT EXISTS (
              SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
            )
+           AND ${notPausedSql("?2")}
            AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(jobId, input.installId, input.kind, input.inputJson, deps.startedBy ?? "admin"),
@@ -175,7 +180,8 @@ export async function claim<P extends { jobId: string }>(
   ]);
   if (claimed?.meta.changes !== 1) {
     const selfUpdate = await activeSelfJob(deps.db);
-    throw new VersionActionError(selfUpdate === null ? BUSY : selfUpdateBusyMessage(selfUpdate));
+    if (selfUpdate !== null) throw new VersionActionError(selfUpdateBusyMessage(selfUpdate));
+    throw new VersionActionError((await pausedRefusal(deps.db, input.installId)) ?? BUSY);
   }
 
   const db = createDb(deps.db);
@@ -334,7 +340,7 @@ export async function startUpdateCore(
   request: StartUpdateRequest,
 ): Promise<StartUpdateResult> {
   const install = await readInstall(deps.db, request.installId);
-  const refusal = statusRefusal(install.status);
+  const refusal = statusRefusal(install.status) ?? (await pausedRefusal(deps.db, install.id));
   if (refusal !== null) throw new VersionActionError(refusal);
   // Only the install's own catalog: another catalog listing the same slug is another app.
   const app = await deps.loadApp(installAppKey(install));

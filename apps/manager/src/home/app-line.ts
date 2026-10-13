@@ -22,6 +22,9 @@ export function appLine(
     case "uninstalling":
       return signal === "failed" ? "Removal did not finish" : "Being removed";
   }
+  if (signal === "unusual-usage") return "Using far more than usual";
+  if (signal === "limit-used-up") return "Used up a free daily limit";
+  if (signal === "paused") return "Paused";
   if (signal === "not-responding") return "Not responding";
   if (signal === "failed") return "Last change did not finish";
   if (signal === "update") return "Update available";

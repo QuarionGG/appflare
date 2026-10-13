@@ -53,7 +53,7 @@ function isKept(finding: string): boolean {
 }
 
 const PAGES =
-  "Your account|Building apps|Updates|Users and sign-in|Users|Domains|Notifications|Catalogs|Removed apps|Usage data|General|Account and capabilities|Appflare updates";
+  "Your account|Building apps|Updates|Users and sign-in|Users|Domains|Notifications|Catalogs|Removed apps|Anonymous report|Usage data|General|Account and capabilities|Appflare updates";
 
 const PATTERNS: ReadonlyArray<[name: string, pattern: RegExp]> = [
   ["a settings breadcrumb", new RegExp(`Settings\\s*[›>]\\s*(?:${PAGES})\\b`)],
@@ -127,7 +127,7 @@ describe("wording that names a place in the manager", () => {
   it("would catch each pattern", () => {
     const samples = [
       "Open Settings > Building apps > GitHub access.",
-      "turn it off under Settings, Usage data",
+      "turn it off under Settings, Anonymous report",
       "Save the Cloudflare token under Settings first.",
       "Reload the Settings page.",
       "use the Settings tab",

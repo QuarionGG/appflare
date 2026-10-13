@@ -9,8 +9,9 @@ went active or failed. Messages go to
 **notification channels**, which admins manage under
 **Settings > Notifications > Channels**. Members cannot view or change them.
 
-Messages name the app, its version and its Worker, and link to the manager. They
-never contain secrets or tokens. A failed job links to its log instead of quoting
+Messages name the app, its version and its Worker, and link to the manager. When
+someone pauses or resumes an app, they name that person. They never contain
+secrets or tokens. A failed job links to its log instead of quoting
 its error, since error text can name secrets and request paths.
 
 ![Notifications settings with a webhook channel and recent delivery](/screenshots/notifications-channel.png)
@@ -38,13 +39,19 @@ A new channel receives every event. Untick the ones you do not want.
 | **Install finished** | When an install job succeeds or fails. | `install_finished` |
 | **Uninstall finished** | When an uninstall job succeeds or fails. | `uninstall_finished` |
 | **Health check failing** | Once each time an installed app starts answering its health check with a server error. | `health_failing` |
+| **Unusual usage** | Once each time an app's usage in an hour climbs far above its normal, with what it costs at Cloudflare's prices. | `usage_unusual` |
+| **Usage alert** | When an app passes one of its usage alerts, once per alert and day, week or month. | `usage_alert` |
+| **Free daily limit running out** | On the Free plan, once a day per app, when an app is on pace to use up one of the account's free daily limits before 00:00 UTC. | `usage_limit_near` |
+| **App paused** | When an app is paused, by someone or by Appflare, and why. | `app_paused` |
+| **App resumed** | When an app is resumed by Appflare, or by someone other than the person who paused it. | `app_resumed` |
+| **Monthly budget reached** | Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps. | `budget_reached` |
 | **Appflare update available** | Once per release, when a newer Appflare release is published. | `manager_update_available` |
 | **Domain active** | When an external domain starts serving its app. | `domain_active` |
 | **Domain failed** | When an external domain stops serving or cannot be validated, for example its custom hostname was deleted or its certificate expired. | `domain_failed` |
 | **Appflare's address stopped working** | When the domain [Appflare lives on](/guides/appflare-address/) no longer serves it, for example it was removed in the Cloudflare dashboard. Appflare goes back to its `workers.dev` address. | `manager_address_lost` |
 | **Appflare's move finished** | When [moving Appflare to a new address](/guides/appflare-address/#what-happens-during-a-move) succeeds, with a link to it, or fails, with a link to the job. | `manager_move_finished` |
 
-The end of a job is usually sent right away (without the manager's own service binding it waits for the next scheduled run). Everything else is noticed by the scheduled run
+The end of a job and the usage and pause events are usually sent right away (without the manager's own service binding they wait for the next scheduled run). Everything else is noticed by the scheduled run
 every 30 minutes. Rollbacks, database restores, settings changes, deleting a removed
 app's data and Appflare's own updates send nothing.
 

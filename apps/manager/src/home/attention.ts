@@ -3,12 +3,16 @@ import type { CapabilityId } from "../capabilities/capability-rows";
 import type { HealthStatus } from "../db/schema";
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
 import { installAgainLink } from "../installs/install-again";
+import { USAGE_ATTENTION_ORDER, type UsageAttention } from "../usage/attention";
 
 /**
  * What needs someone's attention, in one list: Home's "Needs attention"
  * section shows it, the sidebar's Home item counts it, and the sidebar's
  * app rows take their status dot from it. Rows are ordered by severity:
  *
+ * -1. spend protection: an app using far more than usual, a free daily
+ *    limit an app used up, a paused app, a free daily limit about to run out
+ *    (`usage/attention.ts`; everyone sees them, only admins pause and resume);
  * 0. Appflare's connection to Cloudflare needs reconnecting (everyone sees
  *    it: until an administrator reconnects, nothing can change in the account);
  * 1. a job of an app that failed, with no job of that app finishing after it;
@@ -30,6 +34,7 @@ import { installAgainLink } from "../installs/install-again";
  */
 
 export type AttentionKind =
+  | "usage"
   | "connection"
   | "failed-job"
   | "not-responding"
@@ -41,6 +46,7 @@ export type AttentionKind =
 
 /** The order rows appear in, most severe first. */
 export const SEVERITY_ORDER: readonly AttentionKind[] = [
+  "usage",
   "connection",
   "failed-job",
   "not-responding",
@@ -165,6 +171,8 @@ export interface AttentionInput {
    * page reloads the installs.
    */
   leftForAdmin?: ReadonlyMap<string, string>;
+  /** Spend protection's rows (absent: none). */
+  usage?: readonly UsageAttention[];
 }
 
 interface AppItem {
@@ -173,6 +181,7 @@ interface AppItem {
 }
 
 export type AttentionItem =
+  | ({ kind: "usage"; key: string; usage: UsageAttention } & AppItem)
   | { kind: "connection"; key: string }
   | ({
       kind: "failed-job";
@@ -213,6 +222,24 @@ function byLabel(a: { label: string }, b: { label: string }): number {
 
 export function attentionItems(input: AttentionInput): AttentionItem[] {
   const apps = new Map(input.apps.map((a) => [a.id, a]));
+  // Spend protection's rows of the apps Home lists, by kind, then by name.
+  const rank = (u: UsageAttention) => USAGE_ATTENTION_ORDER.indexOf(u.kind);
+  const usage: AttentionItem[] = (input.usage ?? [])
+    .flatMap((u) => {
+      const app = apps.get(u.installId);
+      if (app === undefined || app.status === "uninstalled") return [];
+      return [
+        {
+          kind: "usage" as const,
+          key: `usage:${u.kind}:${u.installId}`,
+          installId: app.id,
+          label: app.label,
+          usage: u,
+        },
+      ];
+    })
+    .sort((a, b) => rank(a.usage) - rank(b.usage) || byLabel(a, b));
+
   const failed: AttentionItem[] = input.failedJobs
     .flatMap((job) => {
       const app = apps.get(job.installId);
@@ -318,6 +345,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     input.reconnectNeeded === true ? [{ kind: "connection", key: "connection" }] : [];
 
   return [
+    ...usage,
     ...connection,
     ...failed,
     ...notResponding,
@@ -329,22 +357,45 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
 }
 
 /** What an app's row in the sidebar shows beside its name, most severe first. */
-export type AppSignal = "failed" | "not-responding" | "update" | "reinstall";
+export type AppSignal =
+  | "unusual-usage"
+  | "limit-used-up"
+  | "paused"
+  | "failed"
+  | "not-responding"
+  | "update"
+  | "reinstall";
+
+/** The dot of a spend protection row; none for a free daily limit that has not run out yet. */
+function usageSignal(usage: UsageAttention): AppSignal | null {
+  switch (usage.kind) {
+    case "unusual":
+      return "unusual-usage";
+    case "limit-used-up":
+      return "limit-used-up";
+    case "paused":
+      return "paused";
+    case "limit-near":
+      return null;
+  }
+}
 
 /** Each app's most severe row, as the dot on its sidebar row; apps without one are left out. */
 export function appSignals(items: readonly AttentionItem[]): Map<string, AppSignal> {
   const signals = new Map<string, AppSignal>();
   for (const item of items) {
     const signal =
-      item.kind === "failed-job"
-        ? "failed"
-        : item.kind === "not-responding"
-          ? "not-responding"
-          : item.kind === "update"
-            ? item.reinstall
-              ? "reinstall"
-              : "update"
-            : null;
+      item.kind === "usage"
+        ? usageSignal(item.usage)
+        : item.kind === "failed-job"
+          ? "failed"
+          : item.kind === "not-responding"
+            ? "not-responding"
+            : item.kind === "update"
+              ? item.reinstall
+                ? "reinstall"
+                : "update"
+              : null;
     // Items come most severe first: the first one of an app wins.
     if (signal !== null && "installId" in item && !signals.has(item.installId)) {
       signals.set(item.installId, signal);
@@ -355,6 +406,9 @@ export function appSignals(items: readonly AttentionItem[]): Map<string, AppSign
 
 /** The dot's meaning, for its tooltip and screen readers. */
 export const APP_SIGNAL_LABELS: Record<AppSignal, string> = {
+  "unusual-usage": "Using far more than usual",
+  "limit-used-up": "Used up a free daily limit",
+  paused: "Paused",
   failed: "Something did not finish",
   "not-responding": "Not responding",
   update: "Update available",

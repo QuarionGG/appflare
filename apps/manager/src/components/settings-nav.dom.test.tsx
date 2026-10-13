@@ -85,7 +85,7 @@ describe("Settings in the sidebar", () => {
       "Domains",
       "Notifications",
       "Catalogs",
-      "Usage data",
+      "Anonymous report",
     ]);
   });
 
@@ -171,7 +171,7 @@ describe("Settings in the sidebar", () => {
       "Notifications",
       "Catalogs",
       "Removed apps",
-      "Usage data",
+      "Anonymous report",
     ]);
     const updates = items.find((i) => i.textContent === "Updates");
     expect(updates?.getAttribute("href")).toBe("/settings/updates");

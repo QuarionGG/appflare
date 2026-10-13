@@ -42,6 +42,8 @@ export interface SaasWorld {
   patches: Array<{ name: string; env: Record<string, unknown> }>;
   deployments: Array<{ name: string; version: string }>;
   uploads: Array<{ name: string; metadata: Record<string, unknown>; modules: string[] }>;
+  /** Workers Logs settings by script (`.../script-settings`), as the last full upload left them. */
+  observability: Record<string, unknown>;
   /** Bodies of `POST /workers/scripts/<name>/subdomain` (workers.dev on or off), in order. */
   subdomain: Array<{ script: string; enabled: boolean; previews_enabled?: boolean }>;
   /** Zones with Cloudflare for SaaS off (1404/1456). */
@@ -73,6 +75,7 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
     patches: [],
     deployments: [],
     uploads: [],
+    observability: {},
     subdomain: [],
     saasOff: new Set(),
     noSsl: false,
@@ -278,6 +281,7 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
       const form = await request.formData();
       const metadata = JSON.parse(String(form.get("metadata"))) as {
         bindings?: Array<Record<string, unknown>>;
+        observability?: unknown;
       };
       world.uploads.push({
         name,
@@ -285,7 +289,14 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
         modules: [...form.keys()].filter((k) => k !== "metadata"),
       });
       world.scripts[name] = metadata.bindings ?? [];
+      world.observability[name] = metadata.observability ?? null;
       return ok({ id: name });
+    }
+    m = /^GET \/workers\/scripts\/([^/]+)\/script-settings$/.exec(key);
+    if (m?.[1]) {
+      return world.scripts[m[1]] === undefined
+        ? fail(404, 10007, "This Worker does not exist on your account.")
+        : ok({ logpush: false, observability: world.observability[m[1]] ?? null });
     }
     m = /^POST \/workers\/scripts\/([^/]+)\/subdomain$/.exec(key);
     if (m?.[1]) {

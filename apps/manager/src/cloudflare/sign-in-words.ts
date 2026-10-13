@@ -1,5 +1,6 @@
 import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { NO_CONTAINERS_PERMISSION_REASON, NO_R2_PERMISSION_REASON } from "../sandbox/preflight";
+import { OBSERVABILITY_MESSAGES } from "../usage/observability-copy";
 import { RECONNECT_PLACE } from "./connection-errors";
 import type { ConnectionKind } from "./connection-view";
 
@@ -39,6 +40,7 @@ export const SIGN_IN_WORDS: ReadonlyMap<string, string> = new Map([
     NO_R2_PERMISSION_REASON,
     `Cloudflare did not let Appflare use R2 with its Cloudflare sign-in, and sandbox builds keep their outputs there. ${SIGN_IN_PERMISSION_FIX}`,
   ],
+  [OBSERVABILITY_MESSAGES.permission, refusedWith("read or change Workers Logs settings")],
 ]);
 
 /** A job's way on after a sign-in refused it: reconnect, then run the job again. */

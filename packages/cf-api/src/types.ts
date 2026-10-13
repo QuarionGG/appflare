@@ -239,6 +239,18 @@ export interface Queue {
   queue_id: string;
   queue_name: string;
   created_on?: string;
+  /** Returned by `GET /queues/{id}` and its `PATCH`. */
+  settings?: QueueSettings;
+}
+
+/** A queue's own settings (not its consumers'). */
+export interface QueueSettings {
+  /** True while message delivery to consumers is paused; producers can still send. */
+  delivery_paused?: boolean;
+  /** Seconds every message waits before it is delivered. */
+  delivery_delay?: number;
+  /** Seconds an unconsumed message is kept. */
+  message_retention_period?: number;
 }
 
 /**
@@ -299,6 +311,74 @@ export interface WorkflowInfo {
    * Workflow has none. The other settings of a `PUT` are not returned.
    */
   schedules?: Array<{ cron: string; next_instance?: string }>;
+}
+
+/** An instance's status, as `GET /workflows/{name}/instances` names it. */
+export type WorkflowInstanceStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "errored"
+  | "terminated"
+  | "complete"
+  | "waitingForPause"
+  | "waiting"
+  | "rollingBack";
+
+/** One entry of `GET /workflows/{name}/instances`. */
+export interface WorkflowInstance {
+  id: string;
+  status: WorkflowInstanceStatus;
+  /** The Worker version the instance runs; an instance stays on the version it started on. */
+  version_id?: string;
+  workflow_id?: string;
+  created_on?: string;
+  modified_on?: string;
+  started_on?: string | null;
+  ended_on?: string | null;
+  /** `unknown`, `api`, `binding`, `event` or `cron`. */
+  trigger_source?: string;
+}
+
+/** The answer to `PATCH /workflows/{name}/instances/{id}/status`. */
+export interface WorkflowInstanceStatusChange {
+  status: WorkflowInstanceStatus;
+  timestamp?: string;
+}
+
+/**
+ * Workers Observability settings of a script (`script-settings`). A full
+ * `PUT /workers/scripts/{name}` whose metadata has no `observability` turns
+ * them off; a version upload and deploy keeps them.
+ */
+export interface WorkerObservability {
+  enabled: boolean;
+  /** 0 to 1; 1 records every request. */
+  head_sampling_rate?: number;
+  logs?: {
+    enabled: boolean;
+    invocation_logs: boolean;
+    head_sampling_rate?: number;
+    persist?: boolean;
+    destinations?: string[];
+  };
+  traces?: {
+    enabled?: boolean;
+    head_sampling_rate?: number;
+    persist?: boolean;
+    destinations?: string[];
+  };
+  [key: string]: unknown;
+}
+
+/** `GET`/`PATCH /workers/scripts/{name}/script-settings`: the settings that are not part of a version. */
+export interface ScriptSettings {
+  logpush?: boolean;
+  /** `null` on a script that never had Observability settings. */
+  observability?: WorkerObservability | null;
+  tags?: string[] | null;
+  tail_consumers?: Array<{ service: string; environment?: string; namespace?: string }> | null;
+  [key: string]: unknown;
 }
 
 /**

@@ -167,10 +167,10 @@ or a sponsor to show an image.
 
 Next to its index, the catalog publishes numbers it rebuilds about every hour: the
 stars of each app's upstream repository on GitHub, and how many Appflare managers run
-the app or installed it in the last 30 days, counted from anonymous
-[usage data](/telemetry/). Counts below 10 are not published; app pages show them
-as **Fewer than 10**. A manager with usage data turned off is not counted, and still
-sees the numbers.
+the app or installed it in the last 30 days, counted from the
+[anonymous report](/telemetry/) managers send. Counts below 10 are not published; app
+pages show them as **Fewer than 10**. A manager with the anonymous report turned off is
+not counted, and still sees the numbers.
 
 The **Most popular** row, and search and filter results, list first the apps running
 on the most managers, then those installed most in 30 days, then the most starred,
@@ -199,7 +199,7 @@ The sponsored slot never tracks you. Its image is served by the manager like eve
 other catalog image. Its links open in a new tab with `noreferrer`, so the sponsor
 does not learn your manager's address, and nothing is added to them. Nothing about
 the item, whether you saw it, clicked it or hid it, leaves the manager, and it is
-not part of usage data.
+not part of the anonymous report.
 
 ## Next
 

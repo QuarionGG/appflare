@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { accessPlaceholderValues } from "../../access/placeholder-values.server";
 import { buildArtifactFixture } from "../../test/artifact-fixture";
 import {
+  assetsOnlyMetadata,
   buildScriptMetadata,
   durableObjectMigrations,
   installVars,
@@ -425,6 +426,29 @@ describe("buildScriptMetadata", () => {
         assetsJwt: "jwt",
       }),
     ).toThrow(/cannot have bindings or vars/);
+  });
+
+  it("gives a new Worker of static assets only the app's own Workers Logs setting", async () => {
+    const f = await buildArtifactFixture({
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.worker.observability = { enabled: true };
+      },
+    });
+    const input = { manifest: f.manifest, workerName: "cut", resources: [], vars: [] };
+    expect(buildScriptMetadata({ ...input, assetsJwt: "jwt" }).observability).toEqual({
+      enabled: true,
+    });
+    // An upload without modules keeps it: a full upload without it would turn it off.
+    expect(
+      assetsOnlyMetadata({
+        assets: { jwt: "jwt" },
+        bindings: [],
+        keep_bindings: ["secret_text"],
+        observability: { enabled: false },
+      }),
+    ).toEqual({ assets: { jwt: "jwt" }, observability: { enabled: false } });
   });
 
   it("sends the assets directory's _redirects and _headers in assets.config, as wrangler does", async () => {

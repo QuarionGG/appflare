@@ -48,6 +48,7 @@ import {
   type SeedResource,
   seedInstall,
 } from "../test/seed-install";
+import { LOGS_OFF, LOGS_ON } from "../test/workers-logs";
 import { entryJobCost, otherWorkerCost } from "./entry-budget";
 import { entryWorkers } from "./entry-workers";
 import { FRESH_INVOCATION_SLEEP } from "./invocation-budget";
@@ -2224,6 +2225,75 @@ describe("update job", () => {
   });
 });
 
+describe("update job, Workers Logs", () => {
+  /** The version turns Workers Logs on in its own settings. */
+  const WITH_LOGS: ArtifactFixtureOptions = {
+    ...NEW_APP,
+    tweak: (m) => {
+      m.worker.observability = { enabled: true };
+    },
+  };
+
+  it("uploads the new version with the Worker's own setting, on or off", async () => {
+    for (const setting of [LOGS_ON, LOGS_OFF]) {
+      await reset();
+      await createMigrator(migrations).ensure(env.DB);
+      const r = await update(WITH_LOGS, { observability: { cut: setting } });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).toContain("POST /workers/scripts/cut/versions");
+      expect(r.fake.state.versions[0]?.metadata.observability).toEqual(setting);
+      expect(r.fake.state.observability.cut).toEqual(setting);
+    }
+  });
+
+  it("keeps the setting through a full upload with Durable Object migrations", async () => {
+    for (const setting of [LOGS_ON, LOGS_OFF]) {
+      await reset();
+      await createMigrator(migrations).ensure(env.DB);
+      const r = await update(
+        {
+          ...WITH_LOGS,
+          bindings: [
+            { type: "kv_namespace", name: "CUT_KV" },
+            { type: "d1", name: "DB" },
+            { type: "durable_object_namespace", name: "ROOMS", class_name: "Room" },
+          ],
+          migrations: [
+            { tag: "v1", new_sqlite_classes: ["Room"] },
+            { tag: "v2", renamed_classes: [{ from: "Room", to: "Chat" }] },
+          ],
+        },
+        { observability: { cut: setting } },
+        {
+          manifestJson: JSON.stringify({
+            worker: { migrations: [{ tag: "v1", new_sqlite_classes: ["Room"] }] },
+          }),
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.fake.state.calls).toContain("PUT /workers/scripts/cut");
+      expect(r.fake.state.versions[0]?.metadata.observability).toEqual(setting);
+      // A full upload sets it to what it sent: unchanged.
+      expect(r.fake.state.observability.cut).toEqual(setting);
+    }
+  });
+
+  it("fails before uploading when Cloudflare does not say whether Workers Logs are on", async () => {
+    const r = await update(WITH_LOGS, {
+      observability: { cut: LOGS_ON },
+      failOnce: new Map([["GET /workers/scripts/cut/script-settings", 403]]),
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain(
+      "upload Worker version: Appflare could not read whether Workers Logs are on for cut, and deploying it without that setting would turn them off, so nothing was deployed",
+    );
+    expect(r.fake.state.versions).toEqual([]);
+    expect(r.fake.state.observability.cut).toEqual(LOGS_ON);
+    expect(r.install).toMatchObject({ status: "installed", current_version_id: OLD_VERSION });
+  });
+});
+
 describe("update job, Workflows of an app of one Worker", () => {
   const jobs = (className: string, binding = "JOBS") => ({
     type: "workflow",
@@ -3025,6 +3095,21 @@ describe("update job, an app of several Workers", () => {
     );
     const route = r.resources.find((row) => row.name === "cut-jobs.appflare-dev.workers.dev");
     expect(route?.deleted_at).toBeNull();
+  });
+
+  it("uploads each Worker with its own Workers Logs setting", async () => {
+    const r = await updateBoth(
+      { observability: { cut: LOGS_OFF } },
+      { observability: { "cut-jobs": LOGS_ON } },
+    );
+    expect(r.error).toBeNull();
+    const calls = r.jobs.state.calls;
+    // Read just before its upload.
+    expect(calls.indexOf("POST /workers/scripts/cut-jobs/versions") - 1).toBe(
+      calls.indexOf("GET /workers/scripts/cut-jobs/script-settings"),
+    );
+    expect(r.jobs.state.versions[0]?.metadata.observability).toEqual(LOGS_ON);
+    expect(r.fake.state.versions[0]?.metadata.observability).toEqual(LOGS_OFF);
   });
 
   it("refuses a version that adds a Worker, before snapshotting", async () => {

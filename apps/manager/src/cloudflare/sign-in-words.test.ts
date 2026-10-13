@@ -4,6 +4,7 @@ import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "../access/messages";
 import { capabilitiesView } from "../capabilities/capabilities";
 import { NO_CONTAINERS_PERMISSION_REASON, NO_R2_PERMISSION_REASON } from "../sandbox/preflight";
 import { sandboxReadinessOf } from "../sandbox/readiness";
+import { OBSERVABILITY_MESSAGES } from "../usage/observability-copy";
 import {
   hasTokenWords,
   inConnectionWords,
@@ -24,6 +25,7 @@ describe("permission refusals for a Cloudflare sign-in", () => {
       INSTALL_ACCESS_MESSAGES.tokensPermission,
       NO_CONTAINERS_PERMISSION_REASON,
       NO_R2_PERMISSION_REASON,
+      OBSERVABILITY_MESSAGES.permission,
     ];
     expect([...SIGN_IN_WORDS.keys()].sort()).toEqual([...tokens].sort());
     for (const signIn of SIGN_IN_WORDS.values()) {

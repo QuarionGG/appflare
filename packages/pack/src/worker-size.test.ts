@@ -73,6 +73,7 @@ describe("workerSizeLine", () => {
   it("marks what one upload could not carry", () => {
     const line = workerSizeLine({ size: MAX_WORKER_UPLOAD_BYTES + 1, gzipSize: 1, ranges: 42 }, 50);
     expect(line).toMatch(/^50 modules in 42 ranges, .*: too large to upload, too many ranges$/);
-    expect(workerSizeLine({ size: 1, gzipSize: 1, ranges: 41 }, 41)).not.toMatch(/too many/);
+    expect(workerSizeLine({ size: 1, gzipSize: 1, ranges: 40 }, 40)).not.toMatch(/too many/);
+    expect(workerSizeLine({ size: 1, gzipSize: 1, ranges: 41 }, 41)).toMatch(/too many ranges$/);
   });
 });

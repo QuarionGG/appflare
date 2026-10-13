@@ -34,6 +34,8 @@ import {
   publishedCatalog,
 } from "../../test/fake-sandbox";
 import { type FakeStep, fakeStep } from "../../test/fake-step";
+import { LOGS_ON } from "../../test/workers-logs";
+import { writeAppSpendSettings } from "../../usage/store/app-settings.server";
 import { type InstallJobParams, runInstall } from "../install";
 import { type ReconfigureJobParams, runReconfigure } from "../reconfigure";
 import type { JobEnv } from "../run-job";
@@ -638,6 +640,128 @@ describe("updating a self-deploying app", () => {
     expect(s.sandbox.cleanups.at(-1)).toEqual({ installId: "id1", keepVersions: ["deploy-1.1.0"] });
   });
 
+  /** Workers Logs on with sampling of their own, as an admin may set them in the dashboard. */
+  const SAMPLED = {
+    ...LOGS_ON,
+    head_sampling_rate: 0.5,
+    logs: { enabled: true, head_sampling_rate: 0.25, persist: true, invocation_logs: false },
+  };
+
+  /**
+   * An installed app whose `MAIN` Worker has `SAMPLED` and `JOBS` none,
+   * and an installer that deploys with the app's own configuration: it
+   * drops `MAIN`'s setting and turns `JOBS`'s on.
+   */
+  async function changedByInstaller() {
+    const s = setup();
+    await install(s);
+    const account = s.w.account.state;
+    account.observability[MAIN] = SAMPLED;
+    account.observability[JOBS] = null;
+    const push = s.sandbox.runs.push.bind(s.sandbox.runs);
+    s.sandbox.runs.push = (...runs) => {
+      account.observability[MAIN] = null;
+      account.observability[JOBS] = LOGS_ON;
+      return push(...runs);
+    };
+    const params = await startUpdate(s);
+    account.calls.length = 0;
+    return { s, account, params };
+  }
+
+  it("puts back the whole Workers Logs setting the installer changed", async () => {
+    const { s, account, params } = await changedByInstaller();
+    const step = fakeStep();
+    await runUpdate({ params, step, env: s.jobEnv, deps: { fetch: s.w.fetch, now: () => NOW } });
+    expect((await jobRow("u1"))?.status).toBe("succeeded");
+    // One step per Worker, each one or two calls.
+    expect(step.names.filter((n) => n.includes("Workers Logs"))).toEqual([
+      `read Workers Logs of ${MAIN}`,
+      `read Workers Logs of ${JOBS}`,
+      `keep Workers Logs of ${MAIN}`,
+      `keep Workers Logs of ${JOBS}`,
+    ]);
+    expect(account.calls.filter((c) => c.includes("script-settings"))).toEqual([
+      `GET /workers/scripts/${MAIN}/script-settings`,
+      `GET /workers/scripts/${JOBS}/script-settings`,
+      `GET /workers/scripts/${MAIN}/script-settings`,
+      `PATCH /workers/scripts/${MAIN}/script-settings`,
+      `GET /workers/scripts/${JOBS}/script-settings`,
+      `PATCH /workers/scripts/${JOBS}/script-settings`,
+    ]);
+    // The sampling too, not only on.
+    expect(account.observability[MAIN]).toEqual(SAMPLED);
+    // Off: no block, as Cloudflare answers.
+    expect(account.observability[JOBS]).toBeNull();
+    const messages = (await logsOf("u1")).map((l) => l.message);
+    expect(messages).toContain(
+      `The installer changed Workers Logs of ${MAIN} (off after it ran); they are on again, as they were.`,
+    );
+    expect(messages).toContain(
+      `The installer changed Workers Logs of ${JOBS} (on after it ran); they are off again, as they were.`,
+    );
+  });
+
+  it("puts them back when a step after the installer fails", async () => {
+    const { s, account, params } = await changedByInstaller();
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep({ failing: ["record new version"] }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("record new version");
+    expect((await jobRow("u1"))?.status).toBe("failed");
+    expect(account.observability[MAIN]).toEqual(SAMPLED);
+    expect(account.observability[JOBS]).toBeNull();
+  });
+
+  it("names the Worker and the setting to restore when it cannot put them back", async () => {
+    const { s, account, params } = await changedByInstaller();
+    account.failOnce.set(`PATCH /workers/scripts/${MAIN}/script-settings`, 403);
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep({ failing: ["record new version"] }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("record new version");
+    const warnings = (await logsOf("u1")).filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toContainEqual(
+      expect.stringContaining(
+        `Turn Workers Logs on for ${MAIN} in the app's Usage tab: the installer may have changed them, and Appflare could not put them back.`,
+      ),
+    );
+    expect(account.observability[MAIN]).toBeNull();
+    // The other Worker is put back all the same.
+    expect(account.observability[JOBS]).toBeNull();
+  });
+
+  it("stops before the installer when Cloudflare does not say whether Workers Logs are on", async () => {
+    const s = setup();
+    await install(s);
+    s.w.account.state.observability[MAIN] = LOGS_ON;
+    s.w.account.state.failOnce.set(`GET /workers/scripts/${MAIN}/script-settings`, 403);
+    const runs = s.sandbox.runs.length;
+    const params = await startUpdate(s);
+    await expect(
+      runUpdate({
+        params,
+        step: fakeStep(),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      }),
+    ).rejects.toThrow("read Workers Logs");
+    const job = await jobRow("u1");
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain(
+      `read Workers Logs of ${MAIN}: Appflare could not read whether Workers Logs are on for ${MAIN}`,
+    );
+    expect(s.sandbox.runs).toHaveLength(runs);
+  });
+
   it("stops before the installer when the sandbox Worker lost the token", async () => {
     const s = setup();
     await install(s);
@@ -733,6 +857,7 @@ describe("uninstalling a self-deploying app", () => {
   it("runs the destroy command, then removes the token and secrets from the sandbox Worker", async () => {
     const s = setup();
     await install(s);
+    await writeAppSpendSettings(createDb(env.DB), "id1", { autoPause: "on" }, { userId: "u1" });
     const r = await uninstall(s);
     expect(r.error).toBeNull();
     expect(r.params).toMatchObject({ selfDeploying: true, deleteResources: [] });
@@ -752,6 +877,120 @@ describe("uninstalling a self-deploying app", () => {
       "SELECT COUNT(*) AS n FROM resources WHERE install_id = 'id1' AND deleted_at IS NULL",
     ).first<{ n: number }>();
     expect(left?.n).toBe(0);
+    expect((await installRow("id1"))?.status).toBe("uninstalled");
+    // The app's spend protection goes with it.
+    const spend = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM app_spend_settings WHERE install_id = 'id1'",
+    ).first<{ n: number }>();
+    expect(spend?.n).toBe(0);
+  });
+
+  /** A container application behind the app's Durable Object, and a queue it consumes. */
+  function leaveRunning(s: Setup) {
+    const state = s.w.account.state;
+    state.containerApps = [
+      { id: "ca-1", name: "cut-box", namespaceId: "ns-box" },
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ];
+    state.doNamespaces = [
+      { id: "ns-box", script: MAIN, class: "Box" },
+      { id: "ns-theirs", script: "someone-else", class: "Box" },
+    ];
+    state.queues = [{ queue_id: "q-1", queue_name: "cut-jobs" }];
+    state.consumers = { "q-1": [{ consumer_id: "c-1", type: "worker", script_name: JOBS }] };
+  }
+
+  it("records what may outlive the destroy, and deletes what the destroy left behind", async () => {
+    const s = setup();
+    await install(s);
+    leaveRunning(s);
+    const step = fakeStep();
+    const r = await uninstall(s, step);
+    expect(r.error).toBeNull();
+    const names = step.names;
+    const destroy = names.indexOf("destroy in sandbox");
+    // Found before the destroy, while the Workers and their namespaces exist.
+    for (const found of [
+      "check queues for consumers",
+      "check consumers of queue cut-jobs",
+      "check container applications",
+    ]) {
+      expect(names.indexOf(found)).toBeGreaterThan(-1);
+      expect(names.indexOf(found)).toBeLessThan(destroy);
+    }
+    expect(names.indexOf(`remove consumer of queue cut-jobs from ${JOBS}`)).toBeGreaterThan(
+      destroy,
+    );
+    expect(names.indexOf("delete container application cut-box")).toBeGreaterThan(destroy);
+    const state = s.w.account.state;
+    expect(state.containerApps).toEqual([
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ]);
+    expect(state.consumers["q-1"]).toEqual([]);
+    const warnings = (await logsOf("x1")).filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toEqual([
+      `The installer's destroy command left the queue "cut-jobs" delivering to Worker "${JOBS}"; removed that consumer.`,
+      `The installer's destroy command left the container application "cut-box" running; deleted it, and its instances stop with it.`,
+    ]);
+    expect((await installRow("id1"))?.status).toBe("uninstalled");
+  });
+
+  it("has nothing left to delete when the destroy removed them", async () => {
+    const s = setup({
+      sandbox: {
+        onDestroy: () => {
+          const state = s.w.account.state;
+          state.containerApps = (state.containerApps ?? []).filter((a) => a.id !== "ca-1");
+          state.consumers["q-1"] = [];
+        },
+      },
+    });
+    await install(s);
+    leaveRunning(s);
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const logs = await logsOf("x1");
+    expect(logs.filter((l) => l.level === "warn")).toEqual([]);
+    expect(logs.map((l) => l.message)).toEqual(
+      expect.arrayContaining([
+        `The installer's destroy command removed the consumer of the queue "cut-jobs".`,
+        `The installer's destroy command deleted the container application "cut-box".`,
+      ]),
+    );
+    expect(s.w.account.state.containerApps).toEqual([
+      { id: "ca-2", name: "someone-else-box", namespaceId: "ns-theirs" },
+    ]);
+  });
+
+  it("looks no further on Workers Free, where Cloudflare refuses Containers", async () => {
+    const s = setup();
+    await install(s);
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const calls = s.w.account.state.calls;
+    expect(calls.some((c) => c.includes("/containers/applications"))).toBe(true);
+    expect(calls.some((c) => c.includes("/workers/durable_objects/namespaces"))).toBe(false);
+    expect((await logsOf("x1")).map((l) => l.message)).toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+  });
+
+  it("warns on Workers Paid when Cloudflare answers 401 for Containers, and goes on", async () => {
+    const s = setup();
+    await install(s);
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    // Cloudflare answers 401, as it does to an account off Workers Paid.
+    s.w.account.state.containerApps = null;
+    s.w.account.state.doNamespaces = [{ id: "ns-box", script: MAIN, class: "Box" }];
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const logs = await logsOf("x1");
+    expect(logs.map((l) => l.message)).not.toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+    expect(logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual([
+      "Cloudflare answered 401 when asked for the account's container applications: on Workers Paid that means it did not accept Appflare's API token for Containers, so Appflare could not check whether a container application runs behind the app's Durable Objects (Box). If Workers > Containers in the Cloudflare dashboard lists one for this app, delete it there: it keeps running, and billing, once the Worker is gone.",
+    ]);
     expect((await installRow("id1"))?.status).toBe("uninstalled");
   });
 
@@ -884,6 +1123,31 @@ describe("changing a self-deploying app's settings", () => {
     expect(JSON.stringify(logs)).not.toContain(NEW_SECRET);
     expect(JSON.stringify(s.sandbox.runs)).not.toContain(NEW_SECRET);
   });
+
+  for (const failing of [[], ["record settings"]]) {
+    it(`puts back the Workers Logs the installer changed${failing.length > 0 ? ", also when a later step fails" : ""}`, async () => {
+      const s = setup();
+      await install(s);
+      const account = s.w.account.state;
+      account.observability[MAIN] = LOGS_ON;
+      const push = s.sandbox.runs.push.bind(s.sandbox.runs);
+      s.sandbox.runs.push = (...runs) => {
+        account.observability[MAIN] = null;
+        return push(...runs);
+      };
+      const params = await startChange({ vars: { HOME_PAGE: "links" }, buildConfirmed: true });
+      const run = runReconfigure({
+        params,
+        step: fakeStep({ failing }),
+        env: s.jobEnv,
+        deps: { fetch: s.w.fetch, now: () => NOW },
+      });
+      if (failing.length > 0) await expect(run).rejects.toThrow("record settings");
+      else await run;
+      expect((await jobRow("r1"))?.status).toBe(failing.length > 0 ? "failed" : "succeeded");
+      expect(account.observability[MAIN]).toEqual(LOGS_ON);
+    });
+  }
 
   it("asks for the installer's cost, and never removes a secret the installer sets", async () => {
     const s = setup();

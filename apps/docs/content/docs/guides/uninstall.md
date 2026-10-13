@@ -22,7 +22,16 @@ there is nothing to keep.
 
 Next, the app's queue consumers: each queue the Worker reads from is detached from
 it, before the Worker and before any queue is deleted. A kept queue stays in your
-account without a consumer.
+account without a consumer. This includes queues the install did not set up: if any
+queue in the account still delivers its messages to one of the app's Workers, that
+consumer is removed too, since Cloudflare deletes neither a Worker nor a queue while
+one is left.
+
+On Workers Paid, the container applications behind the app's Durable Objects go next.
+Cloudflare keeps a container application running, and billing, after its Worker is
+deleted, so the uninstall deletes each one itself. If Appflare's token cannot read
+Containers, the log says so and names the app's Durable Objects, so you can check
+**Workers > Containers** in the Cloudflare dashboard.
 
 Then the Worker itself, and everything that only exists with it:
 
@@ -49,7 +58,12 @@ runs.
 
 For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), the
 uninstall deletes every Worker of the app this way, each with its queue consumers
-detached first, before it deletes any resource.
+detached and its container applications deleted first, before it deletes any
+resource.
+
+When the uninstall finishes, Appflare forgets the app's spend protection: its usage
+alerts, its automatic pause settings, and a pause that is still in place. The app's
+usage history stays, since this month's bill still counts what it used.
 
 ## What you choose
 

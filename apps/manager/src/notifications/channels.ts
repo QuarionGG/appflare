@@ -36,6 +36,13 @@ export const EVENT_LABELS: Record<NotificationEvent, string> = {
   install_finished: "Install finished",
   uninstall_finished: "Uninstall finished",
   health_failing: "Health check failing",
+  usage_unusual: "Unusual usage",
+  usage_alert: "Usage alert",
+  usage_limit_near: "Free daily limit running out",
+  app_paused: "App paused",
+  app_resumed: "App resumed",
+  app_pause_failed: "Pausing an app failed",
+  budget_reached: "Monthly budget reached",
   manager_update_available: "Appflare update available",
   domain_active: "Domain active",
   domain_failed: "Domain failed",
@@ -51,6 +58,18 @@ export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
   uninstall_finished: "When an uninstall job succeeds or fails.",
   health_failing:
     "Once each time an installed app starts answering its health check with a server error. Turning this on makes the scheduled check probe every installed app every 30 minutes.",
+  usage_unusual:
+    "Once each time an app's usage in an hour climbs far above its normal (the app's Usage tab sets how far), with what it costs at Cloudflare's prices.",
+  usage_alert: "When an app passes one of its usage alerts, once per alert and day, week or month.",
+  usage_limit_near:
+    "On the Free plan, once a day per app, when an app is on pace to use up one of the account's free daily limits before 00:00 UTC.",
+  app_paused: "When an app is paused, by someone or by Appflare, and why.",
+  app_resumed:
+    "When an app is resumed by Appflare, or by someone other than the person who paused it.",
+  app_pause_failed:
+    "When pausing an app does not finish, by someone or by Appflare: the app may still be running and using Cloudflare.",
+  budget_reached:
+    "Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps.",
   manager_update_available: "Once per release, when a newer Appflare release is published.",
   domain_active:
     "When an external domain starts serving its app: Cloudflare validated it and issued its certificate.",
@@ -209,9 +228,10 @@ export const SIGNATURE_HEADER = "X-Appflare-Signature";
 
 export const NOTIFICATION_COPY = {
   membersOnly: "Only admins can view and change notification channels",
-  empty: "No channels yet. Add one to hear about updates, finished jobs and failing health checks.",
+  empty:
+    "No channels yet. Add one to hear about updates, finished jobs, failing health checks and unusual usage.",
   privacy:
-    "Messages name the app, its version and Worker, and link to this manager. They never include secrets or tokens. Credentials you enter here are stored encrypted.",
+    "Messages name the app, its version and Worker, and link to this manager. When someone pauses or resumes an app, they name that person. They never include secrets or tokens. Credentials you enter here are stored encrypted.",
   signingSecret:
     "Every request carries an X-Appflare-Signature header: sha256= followed by the hex HMAC-SHA256 of the raw request body, keyed with this secret. Copy the secret now; it is not shown again.",
   webhookAddress:

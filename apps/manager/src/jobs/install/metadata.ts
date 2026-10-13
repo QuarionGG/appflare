@@ -296,6 +296,11 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
       assets: { jwt: assetsJwt, config: { ...manifest.assets.config } },
       compatibility_date: manifest.worker.compatibilityDate,
       compatibility_flags: manifest.worker.compatibilityFlags,
+      ...(manifest.worker.observability
+        ? {
+            observability: manifest.worker.observability as ScriptMetadata["observability"],
+          }
+        : {}),
     };
   }
   const byBinding = new Map(resources.map((r) => [r.binding, r]));
@@ -369,6 +374,9 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
   if (exports !== undefined && Object.keys(exports).length > 0) metadata.exports = { ...exports };
   // A versioned setting: sent with every script and version upload, as wrangler does.
   if (cacheOptions !== undefined) metadata.cache_options = { ...cacheOptions };
+  // What a new Worker gets. For one that exists, the upload sends the
+  // Worker's current Workers Logs setting instead (`withCarriedObservability`,
+  // applied by the upload unit), so a deploy never turns them off.
   if (manifest.worker.observability) {
     metadata.observability = manifest.worker.observability as ScriptMetadata["observability"];
   }
@@ -404,9 +412,12 @@ export function uploadModule(
  * its static assets only: exactly what wrangler 4.136.2's
  * `createWorkerUploadForm` sends when the assets router has no user Worker
  * (`assets: { jwt, config }`, `compatibility_date`, `compatibility_flags`, and
- * a version's `annotations`), with no `main_module`. What the jobs add to
- * every upload and that such a Worker has none of (an empty `bindings` list,
- * `keep_bindings`) is left out. Throws when the metadata carries anything
+ * a version's `annotations`), with no `main_module`, plus the Worker's
+ * Workers Logs setting (`observability`): wrangler leaves it out, but a full
+ * upload without it turns the setting off, and Cloudflare takes it for such
+ * a Worker too (seen live, 2026-10-12). What the jobs add to every upload and
+ * that such a Worker has none of (an empty `bindings` list, `keep_bindings`)
+ * is left out. Throws when the metadata carries anything
  * that needs code: a binding, Durable Object migrations or exports, or a
  * main module, or has no assets to serve.
  */
@@ -416,6 +427,7 @@ export function assetsOnlyMetadata(metadata: ScriptMetadata): ScriptMetadata {
     compatibility_date,
     compatibility_flags,
     annotations,
+    observability,
     bindings,
     keep_bindings: _keep,
     ...rest
@@ -439,5 +451,6 @@ export function assetsOnlyMetadata(metadata: ScriptMetadata): ScriptMetadata {
     ...(compatibility_date === undefined ? {} : { compatibility_date }),
     ...(compatibility_flags === undefined ? {} : { compatibility_flags }),
     ...(annotations === undefined ? {} : { annotations }),
+    ...(observability === undefined ? {} : { observability }),
   };
 }

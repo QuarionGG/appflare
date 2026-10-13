@@ -78,6 +78,8 @@ export interface FakeSandboxOptions {
     deploy?: (request: SelfManagedRunRequest) => SelfManagedOutcome;
     /** Expected Workers a destroy leaves behind. */
     remaining?: string[];
+    /** What a destroy does to the test's fake Cloudflare account, before it answers. */
+    onDestroy?: (request: SelfManagedRunRequest) => void;
     /** Retryable failures (the container went away) before a run succeeds. */
     retryableFailures?: number;
   };
@@ -181,6 +183,7 @@ export function fakeSandbox(
         ],
       };
     }
+    opts.selfManaged?.onDestroy?.(request);
     return {
       ok: true,
       action,

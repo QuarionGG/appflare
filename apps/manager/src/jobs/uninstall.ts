@@ -41,6 +41,7 @@ import {
 } from "../installs/resource-kinds";
 import { detachWildcardParts, wildcardDetachMessage } from "../installs/wildcard-domains.server";
 import { sandboxBuildOfInput } from "../sandbox/progress";
+import { forgetInstallSpendStatements } from "../usage/store/forget.server";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
 import { deleteOtherWorkersPhase } from "./install/entry-worker-phases";
 import {
@@ -52,10 +53,13 @@ import {
 } from "./install/pipelines";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL, unrecordedNote } from "./install/resources";
+import { resumeKeptQueuesPhase } from "./pause/phases";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError, type JobSteps } from "./steps";
+import { deleteAppContainersPhase } from "./uninstall/containers";
+import { removeRemainingConsumersPhase } from "./uninstall/queue-consumers";
 import { removeInstallBuildsPhase } from "./uninstall-builds";
 import { settleUnit } from "./units/result";
 import { R2_PAGE_MAX_OBJECTS } from "./units/units";
@@ -75,7 +79,11 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * that outlive the Worker), then its queue
  * consumers (no data
  * either; each is removed before the Worker it points at and before the queue
- * it reads), then the Worker (with `?force=true`, which also removes its cron
+ * it reads: the recorded ones, then any other consumer of the app's Workers
+ * the account lists, since Cloudflare deletes neither while one is left),
+ * then the container applications behind its Durable Objects (they keep
+ * running, and billing, after the Worker is deleted, and are found through
+ * namespaces that go with it), then the Worker (with `?force=true`, which also removes its cron
  * triggers, workers.dev route, secrets, and Durable Objects), then each of its
  * Workflows by name (deleting a Worker leaves the Workflows it ran, with
  * their instances), then its Hyperdrive configurations, the bound ones and
@@ -90,7 +98,9 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * Resources the admin kept were marked retained when the uninstall started
  * and are never touched. An install built in the sandbox Worker has its
  * builds deleted from the sandbox Worker's bucket last (housekeeping that
- * never fails the job).
+ * never fails the job). The finish forgets the app's spend protection (its
+ * settings, alert rules, the watcher's state, an open pause); its usage
+ * history stays for the month's bill.
  *
  * On failure the job records `<step>: <message>` and the install stays
  * `uninstalling`, so the install page offers a retry for what is left.
@@ -582,6 +592,19 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     // A run started before consumers were recorded has none to remove.
     await removeQueueConsumersPhase(steps, workerName, started.consumers ?? []);
 
+    // The app's Workers that are still to be deleted: its other Workers, and
+    // the primary one when this install recorded it and no run deleted it.
+    const liveWorkers = [
+      ...(started.otherWorkers ?? []).map((w) => w.name),
+      ...(started.worker === "live" ? [workerName] : []),
+    ];
+    // Consumers of those Workers the install never recorded: Cloudflare
+    // deletes neither a Worker nor a queue while one is left.
+    await removeRemainingConsumersPhase(steps, liveWorkers);
+    // Container applications outlive the Worker, running and billed, and
+    // are found through its Durable Object namespaces, which go with it.
+    await deleteAppContainersPhase(steps, liveWorkers, started.accountPaid === true);
+
     // A run started before other Workers were listed has none.
     await deleteOtherWorkersPhase(steps, started.otherWorkers ?? []);
 
@@ -708,6 +731,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     }
 
     await deleteDataResourcesPhase(steps, started.targets, "uninstall");
+    // A paused app's kept queues deliver again before its pause closes.
+    await resumeKeptQueuesPhase(steps, env.DB, params.installId);
 
     // The install's builds in the sandbox Worker's bucket (every version
     // no other install uses; ./uninstall-builds.ts).
@@ -717,6 +742,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
+      // The app is gone: its spend protection goes in the same transaction
+      // that marks it uninstalled. Its usage stays for this month's bill.
       await orm.batch([
         orm
           .update(installs)
@@ -726,6 +753,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .update(jobs)
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
+        ...forgetInstallSpendStatements(orm, params.installId, at),
       ]);
       const retained = await orm
         .select({ name: resources.name })

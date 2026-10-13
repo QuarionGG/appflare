@@ -1,3 +1,7 @@
+import {
+  MANAGER_OAUTH_SCOPE_BY_GROUP,
+  SPEND_PROTECTION_OAUTH_SCOPES,
+} from "@appflare/cf-api/oauth";
 import { APP_TOKEN_PERMISSION_GROUPS, type TokenPermission } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,6 +13,7 @@ import {
   DATABASE_ELSEWHERE_FEATURE,
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
+  MANAGER_SCOPE_LABELS,
   optionalGroupsByFeature,
   type PermissionGroup,
   PIPELINES_FEATURE,
@@ -17,6 +22,7 @@ import {
   r2ApiTokensUrl,
   resolveAppTokenPermissions,
   SANDBOX_BUILDS_FEATURE,
+  SPEND_PROTECTION_FEATURE,
   splitPermissionGroups,
   TOKEN_PERMISSION_GROUPS,
   UNMAPPED_PERMISSION_REASON,
@@ -66,9 +72,11 @@ describe("token template URLs", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
     expect(reads.sort()).toEqual([
       "access_acct",
+      "account_analytics",
       "account_settings",
       "billing",
       "email_routing_address",
+      "workers_observability",
       "zone",
     ]);
   });
@@ -164,6 +172,10 @@ describe("token template URLs", () => {
         feature: PIPELINES_FEATURE,
         names: ["Pipelines: Edit", "Workers R2 Data Catalog: Edit (add by hand)"],
       },
+      {
+        feature: SPEND_PROTECTION_FEATURE,
+        names: ["Account Analytics: Read", "Workers Observability: Read"],
+      },
     ]);
   });
 
@@ -218,6 +230,29 @@ describe("token template URLs", () => {
     ]);
     expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "containers", type: "edit" });
     expect(groupsOf(userTokenTemplateUrl())).toContainEqual({ key: "containers", type: "edit" });
+  });
+
+  it("asks for the usage and spend protection groups as optional, matching the sign-in scopes", () => {
+    const { required, optional } = splitPermissionGroups();
+    const spend = optional.filter((g) => g.onlyFor === SPEND_PROTECTION_FEATURE);
+    expect(spend.map(({ key, type }) => ({ key, type }))).toEqual([
+      { key: "account_analytics", type: "read" },
+      { key: "workers_observability", type: "read" },
+    ]);
+    expect(required.some((g) => spend.some((s) => s.key === g.key))).toBe(false);
+    const link = groupsOf(accountTokenTemplateUrl());
+    expect(link).toContainEqual({ key: "account_analytics", type: "read" });
+    expect(link).toContainEqual({ key: "workers_observability", type: "read" });
+    // Nothing uses Notifications yet: only a sign-in asks for it, ahead of time.
+    expect(JSON.stringify(link)).not.toContain("notifications");
+    expect(
+      spend.map((g) => (MANAGER_OAUTH_SCOPE_BY_GROUP as Record<string, string | null>)[g.key]),
+    ).toEqual([...SPEND_PROTECTION_OAUTH_SCOPES]);
+    expect(MANAGER_SCOPE_LABELS["account-analytics.read"]).toBe("Account Analytics");
+    expect(MANAGER_SCOPE_LABELS["workers-observability.read"]).toBe("Workers Observability");
+    // A sign-in made before Notifications was asked for names it in words.
+    expect(MANAGER_SCOPE_LABELS["notifications.read"]).toBe("Notifications: Read");
+    expect(MANAGER_SCOPE_LABELS["notifications.write"]).toBe("Notifications: Edit");
   });
 
   it("asks for Billing: Read only as optional, for reading the Workers plan", () => {

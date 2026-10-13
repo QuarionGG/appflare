@@ -26,6 +26,11 @@ import {
   type WaitForSandboxContainersResult,
   waitForSandboxContainersInputSchema,
 } from "../../sandbox/units";
+import {
+  ObservabilityReadError,
+  type WorkersApi,
+  withCarriedObservability,
+} from "../../usage/observability";
 import { isNotFound, JobError } from "../errors";
 import { artifactReader } from "../install/artifact";
 import type { CronTriggerScan } from "../install/cron-limit";
@@ -178,7 +183,11 @@ export const workerUploadInputSchema = z.object({
   modules: z.array(workerModuleSchema),
   /**
    * Upload metadata. For an update it may carry the values of secrets the new
-   * version introduces; it is never logged.
+   * version introduces; it is never logged. Its `observability` is what a
+   * Worker that does not exist yet gets (the app's own setting): for one
+   * that exists, the unit sends the Worker's current Workers Logs setting
+   * instead, read from Cloudflare just before the upload
+   * (`withCarriedObservability`), and uploads nothing when it cannot read it.
    */
   metadata: metadataSchema,
   /**
@@ -426,6 +435,26 @@ export function artifactFetch(
   }
 }
 
+/**
+ * `metadata` with the Worker's current Workers Logs setting
+ * (`withCarriedObservability`). A failed read fails the unit the way the
+ * read failed (a 5xx is retried, a refusal is not), with a message saying
+ * why nothing was deployed.
+ */
+async function carryObservability(
+  api: WorkersApi,
+  workerName: string,
+  metadata: ScriptMetadata,
+): Promise<ScriptMetadata> {
+  try {
+    return await withCarriedObservability(api, workerName, metadata);
+  } catch (error) {
+    if (error instanceof ObservabilityReadError)
+      throw new UnitItemError(error.subject, error.cause);
+    throw error;
+  }
+}
+
 /** The units, run in this invocation with `env`'s secrets. */
 export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServer {
   return {
@@ -478,6 +507,12 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     uploadWorker: (input) =>
       parsed(workerUploadInputSchema, input, "uploadWorker", (upload) =>
         runUnit(env, deps, upload.accountId, async ({ fetch, count, cf }) => {
+          const api = cf();
+          // No modules: a Worker of static assets only, uploaded as wrangler uploads one.
+          const given =
+            upload.modules.length === 0 ? assetsOnlyMetadata(upload.metadata) : upload.metadata;
+          // First, so a failed read reads no artifact and uploads nothing.
+          const metadata = await carryObservability(api, upload.workerName, given);
           const reader = artifactReader(
             artifactFetch(env, fetch, upload.artifact.host, count),
             upload.artifact.zipUrl,
@@ -487,10 +522,6 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           const modules = refs.map((module, i) =>
             uploadModule(module, contents[i] ?? new Uint8Array(0)),
           );
-          // No modules: a Worker of static assets only, uploaded as wrangler uploads one.
-          const metadata =
-            refs.length === 0 ? assetsOnlyMetadata(upload.metadata) : upload.metadata;
-          const api = cf();
           if (upload.target === "version") {
             const result = await api.versions.uploadVersion(upload.workerName, {
               metadata,

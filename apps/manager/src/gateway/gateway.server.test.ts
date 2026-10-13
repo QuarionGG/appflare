@@ -6,6 +6,7 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
+import { LOGS_ON } from "../test/workers-logs";
 import { GATEWAY_CODE_VERSION } from "./gateway";
 import {
   bindGatewayService,
@@ -234,6 +235,17 @@ describe("gateway service bindings", () => {
       "APP_I1",
     ]);
     expect(saas.world.patches).toEqual([]);
+  });
+
+  it("keeps the gateway's Workers Logs setting when it uploads it again", async () => {
+    const { saas, gateway } = await ready();
+    saas.world.scripts["appflare-gateway"] = [
+      { type: "plain_text", name: "GATEWAY_VERSION", text: "0" },
+    ];
+    saas.world.observability["appflare-gateway"] = LOGS_ON;
+    await bindGatewayService(saas.api, gateway, { binding: "APP_I1", service: "cut" });
+    expect(saas.world.uploads.at(-1)?.metadata.observability).toEqual(LOGS_ON);
+    expect(saas.world.observability["appflare-gateway"]).toEqual(LOGS_ON);
   });
 
   it("annotates every version it makes", async () => {

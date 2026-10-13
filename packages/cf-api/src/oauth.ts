@@ -24,12 +24,15 @@ import type { FetchLike } from "./http";
 
 export {
   MANAGER_OAUTH_API_SCOPES,
+  MANAGER_OAUTH_ONLY_GROUPS,
   MANAGER_OAUTH_SCOPE_BY_GROUP,
   MANAGER_OAUTH_SCOPES,
   MANAGER_OAUTH_SCOPES_BY_PROBE,
   type ManagerOAuthGroupKey,
   missingManagerScopes,
+  missingSpendProtectionScopes,
   OFFLINE_ACCESS_SCOPE,
+  SPEND_PROTECTION_OAUTH_SCOPES,
   signInCanProbe,
 } from "./oauth-scopes";
 

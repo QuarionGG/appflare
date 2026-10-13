@@ -4,8 +4,8 @@ import { managerSiteLink } from "../site-links";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 
 /**
- * The pieces of Settings, Usage data. That page, the docs and the installer's
- * console notice are where usage data is disclosed: no banner anywhere in the
+ * The pieces of Settings, Anonymous report. That page, the docs and the installer's
+ * console notice are where the report is disclosed: no banner anywhere in the
  * app interrupts anyone about it.
  */
 

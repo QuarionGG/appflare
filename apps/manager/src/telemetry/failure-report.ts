@@ -37,7 +37,7 @@ export interface FailureReportPreview {
   jobId: string;
   /** When the report was sent (ISO 8601); null while it has not been. */
   reportedAt: string | null;
-  /** Usage data is off (by the switch or a Worker variable); the report is still sent. */
+  /** The anonymous report is off (by the switch or a Worker variable); the report is still sent. */
   usageDataOff: boolean;
   /** A development build never sends reports. */
   devBuild: boolean;
@@ -152,7 +152,7 @@ export const FAILURE_REPORT_COPY = {
   noteDescription:
     "What you were trying to do, or anything that looked odd. Please leave out passwords and keys.",
   usageDataOff:
-    "Usage data is turned off for this manager. This report is still sent, because you chose to send it. Nothing else is.",
+    "The anonymous report is turned off for this manager. This failure report is still sent, because you chose to send it. Nothing else is.",
   devBuild: "This is a development build of Appflare, which never sends reports.",
   details: "See exactly what is sent",
   detailsDescription:

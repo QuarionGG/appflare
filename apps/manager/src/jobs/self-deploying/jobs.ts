@@ -7,6 +7,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
+import { readAccountPlan } from "../../account/plan.server";
 import { readCachedListing } from "../../catalog/merged.server";
 import { requirementLabel } from "../../catalog/requirements";
 import { unsignedTierRefusal } from "../../catalog/sources";
@@ -14,6 +15,12 @@ import { requireConnection } from "../../cloudflare/connection.server";
 import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
+import {
+  keepWorkersLogsPhase,
+  readWorkersLogsPhase,
+  type WorkersLogsBefore,
+} from "../../usage/observability-keep";
+import { forgetInstallSpendStatements } from "../../usage/store/forget.server";
 import type { InstallJobParams } from "../install";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
 import { awaitCleanupPhase, CLEANUP_WAIT_NOTE } from "../install/cleanup-wait";
@@ -29,6 +36,8 @@ import { awaitSandboxSettledPhase } from "../sandbox-settle";
 import { StepLog } from "../step-log";
 import { createJobSteps, errorMessage, JobError, type JobSteps } from "../steps";
 import type { UninstallJobParams } from "../uninstall";
+import { deleteContainersPhase, findContainersPhase } from "../uninstall/containers";
+import { findConsumersPhase, removeConsumersPhase } from "../uninstall/queue-consumers";
 import type { UpdateJobParams } from "../update";
 import { updateRefusal } from "../update/plan";
 import {
@@ -311,6 +320,8 @@ export async function runSelfDeployingUpdate(
   const { step, env } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
+  /** Workers Logs before the installer ran: put back after it, also when the job fails. */
+  let logsBefore: WorkersLogsBefore | null = null;
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -428,6 +439,8 @@ export async function runSelfDeployingUpdate(
       mode: replacing ? "fresh" : "required",
     });
 
+    // The installer deploys with the app's own configuration: Workers Logs as they are now.
+    logsBefore = await readWorkersLogsPhase(steps, workers);
     steps.current = "prepare installer";
     const request = installerRequest({
       action: "deploy",
@@ -462,6 +475,7 @@ export async function runSelfDeployingUpdate(
       return {};
     });
     await recordDiscoveredPhase(steps, params.installId, deployed.resources, started.recorded);
+    const restore = await keepWorkersLogsPhase(steps, logsBefore);
 
     const health = await checkAppHealthPhase(
       ctx,
@@ -488,6 +502,7 @@ export async function runSelfDeployingUpdate(
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
       ]);
+      for (const advice of restore) log.warn(advice);
       log.info(
         `Updated ${started.slug} from ${started.fromVersion} to ${params.version} (health: ${healthLabel(health)}).`,
       );
@@ -496,6 +511,8 @@ export async function runSelfDeployingUpdate(
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
+    // The installer may have replaced a Worker before the failure.
+    const restore = logsBefore === null ? [] : await keepWorkersLogsPhase(steps, logsBefore);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -513,6 +530,7 @@ export async function runSelfDeployingUpdate(
           ? "Update failed while the installer ran: it may have changed part of the app. Run the update again to finish it; a self-deploying app cannot be rolled back."
           : `Update failed at "${failedAt}", before the installer ran; nothing changed.`,
       );
+      for (const advice of restore) log.warn(advice);
       await log.flush(env.DB, params.jobId);
       return {};
     });
@@ -563,6 +581,10 @@ export async function runSelfDeployingUninstall(
         catalogText: catalog === null ? null : install.manifest_json,
         userVars: parseVars(install.config_json),
         deployed: live.filter((r) => r.kind !== "secret").length > 0,
+        // What the installer reported deploying, for what may outlive its destroy.
+        workers: live.filter((r) => r.kind === "worker").map((r) => r.name),
+        // Absent in a step output recorded before it was read: not known to be paid.
+        accountPaid: (await readAccountPlan(orm)) === "paid",
       };
     });
     steps.setAccountId(started.accountId);
@@ -596,6 +618,13 @@ export async function runSelfDeployingUninstall(
         // A secret change made just before this job may still be rolling out.
         await awaitSandboxSettledPhase(steps, steps.accountId());
         const subdomain = await lookupSubdomainPhase(steps);
+        // Recorded before the destroy, while the app's Workers (and through
+        // them its Durable Object namespaces) still exist: queue consumers
+        // and container applications an installer may leave behind, which
+        // keep a queue from being deleted, or keep running and billing.
+        const workers = started.workers ?? [];
+        const consumers = await findConsumersPhase(steps, workers);
+        const containers = await findContainersPhase(steps, workers, started.accountPaid === true);
         steps.current = "prepare installer";
         const request = installerRequest({
           action: "destroy",
@@ -611,6 +640,9 @@ export async function runSelfDeployingUninstall(
           }),
         });
         const result = await runInstallerPhase(steps, env, "destroy", request);
+        // Whatever of those the destroy left goes now, each in its own step.
+        await removeConsumersPhase(steps, consumers, { afterInstaller: true });
+        await deleteContainersPhase(steps, containers, { afterInstaller: true });
         if (result.remaining.length > 0) {
           steps.current = "destroy in sandbox";
           throw new JobError(
@@ -647,6 +679,8 @@ export async function runSelfDeployingUninstall(
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
+      // The app is gone: its spend protection goes in the same transaction
+      // that marks it uninstalled. Its usage stays for this month's bill.
       await orm.batch([
         orm
           .update(installs)
@@ -656,6 +690,7 @@ export async function runSelfDeployingUninstall(
           .update(jobs)
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
+        ...forgetInstallSpendStatements(orm, params.installId, at),
       ]);
       log.info(`Uninstalled "${started.workerName}".`);
       return {};

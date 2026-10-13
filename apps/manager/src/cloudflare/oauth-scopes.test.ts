@@ -1,4 +1,8 @@
-import { MANAGER_OAUTH_SCOPE_BY_GROUP, MANAGER_OAUTH_SCOPES } from "@appflare/cf-api/oauth";
+import {
+  MANAGER_OAUTH_ONLY_GROUPS,
+  MANAGER_OAUTH_SCOPE_BY_GROUP,
+  MANAGER_OAUTH_SCOPES,
+} from "@appflare/cf-api/oauth";
 import { describe, expect, it } from "vitest";
 import { TOKEN_PERMISSION_GROUPS } from "./token-template";
 
@@ -27,9 +31,15 @@ describe("OAuth scope for each permission group", () => {
     },
   );
 
-  it("decides only groups the token has", () => {
+  it("decides only groups the token has, besides the ones a sign-in asks for ahead of it", () => {
     const keys = new Set<string>(TOKEN_PERMISSION_GROUPS.map((g) => g.key));
-    expect(Object.keys(MANAGER_OAUTH_SCOPE_BY_GROUP).filter((k) => !keys.has(k))).toEqual([]);
+    expect(Object.keys(MANAGER_OAUTH_SCOPE_BY_GROUP).filter((k) => !keys.has(k))).toEqual([
+      ...MANAGER_OAUTH_ONLY_GROUPS,
+    ]);
+    for (const group of MANAGER_OAUTH_ONLY_GROUPS) {
+      expect(keys.has(group), group).toBe(false);
+      expect(MANAGER_OAUTH_SCOPES).toContain(MANAGER_OAUTH_SCOPE_BY_GROUP[group]);
+    }
   });
 
   it("maps every group but the ones decided scope-less, at the group's level", () => {

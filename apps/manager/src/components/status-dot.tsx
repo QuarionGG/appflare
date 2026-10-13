@@ -2,6 +2,9 @@ import { cn } from "@cloudflare/kumo";
 import { APP_SIGNAL_LABELS, type AppSignal } from "../home/attention";
 
 const DOT_COLOURS: Record<AppSignal, string> = {
+  "unusual-usage": "bg-kumo-danger",
+  "limit-used-up": "bg-kumo-danger",
+  paused: "bg-kumo-warning",
   failed: "bg-kumo-danger",
   "not-responding": "bg-kumo-warning",
   update: "bg-kumo-info",
@@ -10,8 +13,9 @@ const DOT_COLOURS: Record<AppSignal, string> = {
 
 /**
  * The small dot beside an app's name in the sidebar and on its Home card:
- * red when something it was doing did not finish, amber when it is not
- * responding, blue when a newer version is out (an update, or a reinstall
+ * red when it uses far more than usual, used up a free daily limit, or
+ * something it was doing did not finish; amber when it is paused or not
+ * responding; blue when a newer version is out (an update, or a reinstall
  * when the app's catalog entry changed how it is installed). Its meaning is its
  * accessible name. On a Home card the line beside it says the same in words,
  * and in the folded sidebar the app's tooltip does; in the expanded sidebar

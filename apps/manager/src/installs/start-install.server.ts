@@ -60,6 +60,7 @@ import {
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
+import { pausedRefusal } from "../usage/pause-guard.server";
 import { installAccessChoice } from "./access-offer";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
@@ -397,6 +398,9 @@ export async function startInstallCore(
       catalogId,
     });
     if (!read.ok) throw new StartInstallError(read.refusal);
+    // Its removal would deploy nothing over a pause, but its pause is the admin's to resume.
+    const paused = await pausedRefusal(deps.db, input.replaces);
+    if (paused !== null) throw new StartInstallError(paused);
     replaced = read.install;
   }
   // Where the artifact comes from: the signed release, or a build of the pin

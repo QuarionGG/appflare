@@ -9,6 +9,9 @@ import m0005 from "./0005_access_users_policy.sql?raw";
 import m0006 from "./0006_access_accepted_bypass.sql?raw";
 import m0007 from "./0007_cloudflare_grant.sql?raw";
 import m0008 from "./0008_access_hostnames_resync.sql?raw";
+import m0009 from "./0009_spend_protection.sql?raw";
+import m0010 from "./0010_notification_usage_events.sql?raw";
+import m0011 from "./0011_notification_pause_failed_event.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -21,4 +24,7 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0006_access_accepted_bypass", sql: m0006 },
   { tag: "0007_cloudflare_grant", sql: m0007 },
   { tag: "0008_access_hostnames_resync", sql: m0008 },
+  { tag: "0009_spend_protection", sql: m0009 },
+  { tag: "0010_notification_usage_events", sql: m0010 },
+  { tag: "0011_notification_pause_failed_event", sql: m0011 },
 ];

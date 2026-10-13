@@ -99,6 +99,8 @@ export function sandboxScriptMetadata(
   };
   const migrations = migrationsToUpload(manifest.worker.migrations, currentMigrationTag);
   if (migrations !== undefined) metadata.migrations = migrations;
+  // What a new sandbox Worker gets. One that exists keeps its own Workers
+  // Logs setting: the upload unit sends that instead (`withCarriedObservability`).
   if (manifest.worker.observability) {
     metadata.observability = manifest.worker.observability as ScriptMetadata["observability"];
   }

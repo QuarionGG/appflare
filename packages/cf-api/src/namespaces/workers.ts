@@ -4,8 +4,10 @@ import type {
   AccountSubdomain,
   DurableObjectNamespace,
   ScriptMetadata,
+  ScriptSettings,
   ScriptUploadResult,
   SubdomainResult,
+  WorkerObservability,
   WorkerSchedule,
   WorkerScript,
   WorkerSecret,
@@ -73,6 +75,41 @@ export function createWorkers(http: HttpApi) {
       const form = new FormData();
       form.set("settings", JSON.stringify(settings));
       return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/settings`), { form });
+    },
+
+    /**
+     * `GET /workers/scripts/{name}/script-settings`: the settings that are
+     * not part of a version, Workers Observability among them
+     * (`observability` is `null` on a script that never had it set).
+     */
+    getScriptSettings(name: string): Promise<ScriptSettings> {
+      return http.result("GET", http.acct(`/workers/scripts/${enc(name)}/script-settings`));
+    },
+
+    /**
+     * Turns a Worker's Workers Observability (Workers Logs) on or off:
+     * `PATCH /workers/scripts/{name}/script-settings` with
+     * `{ observability: { enabled } }` alone, as JSON (as wrangler sends
+     * it), so no other setting can change. It creates no new version and
+     * needs only the Workers Scripts permission.
+     */
+    setObservability(name: string, enabled: boolean): Promise<ScriptSettings> {
+      return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/script-settings`), {
+        json: { observability: { enabled } },
+      });
+    },
+
+    /**
+     * Puts back a Worker's whole Workers Observability block, as
+     * `getScriptSettings` read it (sampling rates, logs and traces
+     * included): `PATCH /workers/scripts/{name}/script-settings` with
+     * `{ observability: block }` alone, as JSON, so no other setting can
+     * change. Like {@link setObservability}, it creates no new version.
+     */
+    setObservabilitySettings(name: string, block: WorkerObservability): Promise<ScriptSettings> {
+      return http.result("PATCH", http.acct(`/workers/scripts/${enc(name)}/script-settings`), {
+        json: { observability: block },
+      });
     },
 
     /** `GET /workers/scripts/{name}/bindings`. */

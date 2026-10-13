@@ -19,6 +19,8 @@ import { ACC } from "../test/fake-account";
 import { fakeCloudflare } from "../test/fake-cloudflare";
 import { probeRoundTrips, type RoundTrips } from "../test/round-trips";
 import { cacheIndex, INSTALL_ID, seedInstall } from "../test/seed-install";
+import { openPause } from "../usage/store/pauses.server";
+import { initialUsageState, writeUsageStates } from "../usage/store/usage-state.server";
 import { readGate } from "./gate.server";
 
 /**
@@ -146,6 +148,44 @@ describe("round trips of the signed-in pages", () => {
     expect(data.apps[0]?.latestVersion).toBe(fixture.index.version);
     report("layout", p);
     expect(p.waves()).toBeLessThanOrEqual(2);
+    expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
+  });
+
+  it("the layout with spend protection rows: one more round, for what they name", async () => {
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
+         artifact_url, artifact_digest, status, installed_at, updated_at)
+       VALUES ('i2', 'cut', 'cut-two', 'cut-two', '1.0.0', 'https://artifacts.test/cut.zip', ?1,
+         'installed', 1, 1)`,
+    )
+      .bind("2".repeat(64))
+      .run();
+    const db = createDb(env.DB);
+    await writeUsageStates(db, [
+      {
+        ...initialUsageState("i2"),
+        unusualSince: Date.now() - 600_000,
+        lastBurn: 2,
+        normalBurn: 0.1,
+      },
+    ]);
+    // Paused past its cap by a person: their name and the cap's settings are read.
+    await openPause(db, {
+      installId: INSTALL_ID,
+      pausedBy: "someone",
+      reason: "cap",
+      detailJson: JSON.stringify({ amount: 2, period: "day" }),
+    });
+    const session = await sessionLoader("copy")();
+    const p = start();
+    const data = await readLayoutData(session);
+    expect(data.apps).toHaveLength(2);
+    expect(data.usage.map((u) => `${u.kind}:${u.installId}`).sort()).toEqual([
+      "paused:i1",
+      "unusual:i2",
+    ]);
+    report("layout with spend protection rows", p);
+    expect(p.waves()).toBeLessThanOrEqual(3);
     expect(p.ops.filter((o) => o.kind === "fetch")).toEqual([]);
   });
 

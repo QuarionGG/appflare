@@ -54,6 +54,7 @@ export function useAttention(
         deployCopy: data.deployCopy,
         downgrade: data.downgrade,
         reconnectNeeded: data.reconnectNeeded,
+        usage: data.usage,
         ...(leftForAdmin === undefined ? {} : { leftForAdmin }),
       }),
     [data, isAdmin, dismissed, leftForAdmin],

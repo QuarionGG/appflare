@@ -90,6 +90,8 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   self_rollback: "Appflare rollback",
   source_build: "Build for review",
   move_address: "Move Appflare's address",
+  pause: "Pause",
+  resume: "Resume",
 };
 
 export function jobKindLabel(job: {

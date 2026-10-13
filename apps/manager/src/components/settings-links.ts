@@ -58,8 +58,8 @@ export const SETTINGS_SECTIONS = {
     sections: { "removed-apps": "Removed apps" },
   },
   usageData: {
-    path: "/settings/usage-data",
-    sections: { "usage-data": "Usage data" },
+    path: "/settings/anonymous-report",
+    sections: { "anonymous-report": "Anonymous report" },
   },
 } as const satisfies Record<string, { path: string; sections: Record<string, string> }>;
 

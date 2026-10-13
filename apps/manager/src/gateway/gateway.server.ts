@@ -23,6 +23,7 @@ import { resources } from "../db/schema";
 import { deleteSettings, readSettings, SETTING, writeSettings } from "../db/settings";
 import { isPermissionError, listAccountZones } from "../installs/custom-domains.server";
 import { CUSTOM_HOSTNAME_KIND } from "../installs/resource-kinds";
+import { withCarriedObservability } from "../usage/observability";
 import {
   type ExternalDomainRef,
   externalDomainsInUse,
@@ -295,8 +296,15 @@ async function uploadGateway(
   state: Pick<GatewayState, "zoneName"> & { kvId: string },
   services: readonly GatewayService[],
 ): Promise<void> {
+  // A full upload without the Worker's Workers Logs setting would turn them
+  // off: it keeps whatever the account set for it.
+  const metadata = await withCarriedObservability(
+    api,
+    GATEWAY_WORKER_NAME,
+    gatewayMetadata(state, services),
+  );
   await api.workers.uploadScript(GATEWAY_WORKER_NAME, {
-    metadata: gatewayMetadata(state, services),
+    metadata,
     modules: [{ name: GATEWAY_MODULE, type: "esm", content: gatewaySource }],
     excludeScript: true,
   });

@@ -1,4 +1,5 @@
 import { RECONNECT_COPY } from "../cloudflare/connection-view";
+import { type ClockFormat, usageAttentionCopy } from "../usage/attention";
 import type { AttentionItem, FailedJob } from "./attention";
 
 /**
@@ -30,6 +31,10 @@ export function failedJobTitle(
       return `Rolling back ${label} did not finish`;
     case "reconfigure":
       return `Saving the settings of ${label} did not finish`;
+    case "pause":
+      return `Pausing ${label} did not finish`;
+    case "resume":
+      return `Resuming ${label} did not finish`;
     default:
       return `A change to ${label} did not finish`;
   }
@@ -42,13 +47,32 @@ function failedJobLine(job: FailedJob): string {
     case "reconfigure":
     case "rollback":
       return "The app keeps running as it was. The log shows the step that failed and why.";
+    case "pause":
+      return "It may still be running and using Cloudflare. The log shows the step that failed and why.";
+    case "resume":
+      return "It stays paused; resume it again to carry on. The log shows the step that failed and why.";
     default:
       return "The log shows the step that failed and why.";
   }
 }
 
-export function attentionCopy(item: AttentionItem): { title: string; description: string } {
+const shortTime = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+
+/** A clock time in the reader's time zone ("2:05 PM"). */
+export function readerClock(epochMs: number): string {
+  return shortTime.format(new Date(epochMs));
+}
+
+export function attentionCopy(
+  item: AttentionItem,
+  /** How a spend protection row says a time; the reader's clock by default. */
+  clock: ClockFormat = readerClock,
+): { title: string; description: string } {
   switch (item.kind) {
+    case "usage": {
+      const { title, description } = usageAttentionCopy(item.usage, item.label, clock);
+      return { title, description };
+    }
     case "connection":
       return { title: RECONNECT_COPY.title, description: RECONNECT_COPY.description };
     case "failed-job":

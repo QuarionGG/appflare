@@ -1,23 +1,24 @@
 ---
-title: Usage data
-description: What leaving usage data on does, what Appflare sends and never sends, where it goes, and the ways to turn it off.
+title: Anonymous report
+description: What leaving the anonymous report on does, what Appflare sends and never sends, where it goes, and the ways to turn it off.
 ---
 
-Appflare collects anonymous usage data to decide what to build and fix. It is on by
-default and easy to turn off. The manager's first report goes out with its first
-scheduled run after setup finishes (or, on a manager updated from a version without
-usage data, after the update). No banner in the manager announces it: this page,
-**Settings > Usage data** in the manager, and the installer's notice when it
-starts are where it is disclosed, and nothing waits for an answer. A development
-build never sends anything, and a pre-release of the manager (a version with a
-pre-release part, such as `0.4.0-rc.1`) sends no usage data, so test managers stay
-out of the numbers. **Settings > Usage data** says so on either, and the Worker's log
-notes the skipped report once.
+Appflare collects anonymous usage data to decide what to build and fix: the manager
+sends an anonymous report once a day, with an event for each job, and the installer
+sends one event when it ends. It is on by default and easy to turn off. The manager's first report
+goes out with its first scheduled run after setup finishes (or, on a manager updated
+from a version without the report, after the update). No banner in the manager
+announces it: this page, **Settings > Anonymous report** in the manager, and the
+installer's notice when it starts are where it is disclosed, and nothing waits for an
+answer. A development build never sends anything, and a pre-release of the manager (a
+version with a pre-release part, such as `0.4.0-rc.1`) sends no report, so test
+managers stay out of the numbers. **Settings > Anonymous report** says so on either,
+and the Worker's log notes the skipped report once.
 
 ## What it does for you
 
 Every manager runs in someone's own Cloudflare account, where the maintainers cannot
-see it. Usage data is how they find out what happens there. Leaving it on lets them:
+see it. The anonymous report is how they find out what happens there. Leaving it on lets them:
 
 - **Keep the versions you run working.** They see which versions of the manager are
   in use, so they know which ones to keep supporting and which upgrade paths to test
@@ -142,7 +143,7 @@ the same id. The manager sends from its Worker, not from your browser: there is 
 tracking script, no cookie and no page view. The installer sends from your machine,
 and gives up after 3 seconds so a run is never held up.
 
-**Preview** in **Settings > Usage data** shows the next daily report, built the
+**Preview** in **Settings > Anonymous report** shows the next daily report, built the
 same way the scheduled one is.
 
 ## Where it goes
@@ -171,7 +172,7 @@ A report contains:
   Cloudflare error code in the log;
 - the job's log (its last 400 lines at most);
 - a note, if the admin writes one;
-- the same random id as the usage data, and whether usage data is on.
+- the same random id as the anonymous report, and whether the anonymous report is on.
 
 Before the report leaves, the error, the step, the log and the note are passed once
 more through a filter that takes out anything that looks private: tokens, keys and
@@ -186,28 +187,28 @@ error codes and HTTP statuses, step names, versions, and the app's catalog slug.
 The dialog's **See exactly what is sent** shows the report exactly as it will leave,
 after that filter.
 
-A report goes the same way as usage data: from the manager's Worker to the Appflare
-PostHog project in the EU, as an event called `job_failure_report`. It is sent even
-when usage data is turned off, because the admin chose to send it; the dialog says
+A failure report goes the same way as the anonymous report: from the manager's Worker
+to the Appflare PostHog project in the EU, as an event called `job_failure_report`. It
+is sent even when the anonymous report is turned off, because the admin chose to send it; the dialog says
 so. A development build never sends one.
 
 ## Turning it off
 
 Any one of these stops everything:
 
-- The **Send anonymous usage data** switch in **Settings > Usage data**
+- The **Send the anonymous report** switch in **Settings > Anonymous report**
   (admins).
 - The installer's flag: `npx create-appflare --no-telemetry`.
 - `APPFLARE_TELEMETRY=off` (`0` and `false` work too) or `DO_NOT_TRACK=1` in the
   installer's environment.
 - The same variables on the manager's Worker, set in the Cloudflare dashboard under
-  the Worker's **Settings**, **Variables and Secrets**. Either one locks usage data
-  off: **Settings > Usage data** shows the switch off and disabled, with "Turned off by the
+  the Worker's **Settings**, **Variables and Secrets**. Either one locks the anonymous
+  report off: **Settings > Anonymous report** shows the switch off and disabled, with "Turned off by the
   APPFLARE_TELEMETRY variable on this Worker. Remove the variable to change this
   here." (naming `DO_NOT_TRACK` when that is the one set). Updates of the manager
   keep the variable.
 
-When the installer's usage data is off by the flag or a variable, it deploys the
+When the installer's report is off by the flag or a variable, it deploys the
 manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too.
 
 When it is off, nothing is sent, not even the fact that it is off, apart from a
@@ -219,5 +220,5 @@ reported.
 
 The installer runs wrangler to deploy the manager. Wrangler has usage metrics and
 error reports of its own, which go to Cloudflare. The installer turns both off for
-every wrangler command it runs, whether Appflare's usage data is on or off, unless
+every wrangler command it runs, whether Appflare's anonymous report is on or off, unless
 you set `WRANGLER_SEND_METRICS` or `WRANGLER_SEND_ERROR_REPORTS` yourself.

@@ -1,4 +1,11 @@
-import { Button, Collapsible, LinkButton, Text, useKumoToastManager } from "@cloudflare/kumo";
+import {
+  Badge,
+  Button,
+  Collapsible,
+  LinkButton,
+  Text,
+  useKumoToastManager,
+} from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   ArrowCounterClockwiseIcon,
@@ -10,7 +17,7 @@ import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { RECONNECT_COPY } from "../cloudflare/connection-view";
 import { reconnectDialogHref } from "../cloudflare/reconnect-outcome";
-import { appLink } from "../components/app-links";
+import { appLink, appTabLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
 import { settingsLink } from "../components/settings-links";
@@ -22,6 +29,7 @@ import { checkInstallHealth } from "../installs/health.functions";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
 import { type UpdateAllOutcome, updateAllSummary } from "../installs/update-all";
 import { startAllUpdates } from "../installs/update-all.functions";
+import { usageAttentionCopy } from "../usage/attention";
 import { accountRowLink } from "./account-attention";
 import {
   type AccountAttentionRow,
@@ -29,7 +37,8 @@ import {
   UPDATE_ALL_MIN,
   updateAllTargets,
 } from "./attention";
-import { attentionCopy } from "./attention-copy";
+import { attentionCopy, readerClock } from "./attention-copy";
+import { PauseAppButton, ResumeAppButton } from "./pause-resume-buttons";
 
 /** Reconnect Cloudflare on the connection settings, opened at once. */
 const RECONNECT_HREF = reconnectDialogHref();
@@ -148,8 +157,9 @@ function AttentionRow({
   update: StartUpdateHandle;
   onDismissAccountRow(row: AccountAttentionRow): void;
 }) {
-  const { title, description } = attentionCopy(item);
   if (item.kind === "deploy-copy") return <DeployCopyRow item={item} />;
+  if (item.kind === "usage") return <UsageRow item={item} isAdmin={isAdmin} />;
+  const { title, description } = attentionCopy(item);
   let action: ReactNode;
   switch (item.kind) {
     case "connection":
@@ -249,6 +259,60 @@ function AttentionRow({
 }
 
 /**
+ * A spend protection row: what is happening with the app's usage, "See
+ * usage", and for admins Pause app or Resume. Members read it and follow
+ * the link; only admins pause and resume.
+ */
+function UsageRow({
+  item,
+  isAdmin,
+}: {
+  item: Extract<AttentionItem, { kind: "usage" }>;
+  isAdmin: boolean;
+}) {
+  const { usage, installId, label } = item;
+  const { badge, title, description } = usageAttentionCopy(usage, label, readerClock);
+  let control: ReactNode = null;
+  if (isAdmin && (usage.kind === "unusual" || usage.kind === "limit-used-up")) {
+    control = <PauseAppButton installId={installId} label={label} />;
+  } else if (isAdmin && usage.kind === "paused") {
+    control = (
+      <ResumeAppButton installId={installId} label={label} stillPastCap={usage.stillPastCap} />
+    );
+  }
+  return (
+    <AttentionRowLayout
+      title={
+        badge === null ? (
+          title
+        ) : (
+          <span className="flex items-start gap-2">
+            {/* Kumo: an inline mark sits centred on the first line of text. */}
+            <span className="flex h-lh shrink-0 items-center">
+              <Badge variant={badge.variant}>{badge.label}</Badge>
+            </span>
+            <span>{title}</span>
+          </span>
+        )
+      }
+      description={description}
+      actions={
+        <>
+          <LinkButton
+            href={appTabLink(installId, "usage")}
+            variant="secondary"
+            icon={usage.kind === "limit-near" ? <ArrowRightIcon /> : undefined}
+          >
+            See usage
+          </LinkButton>
+          {control}
+        </>
+      }
+    />
+  );
+}
+
+/**
  * One row: the title and its line, with the actions at the right; on a
  * phone, the actions go full width under the text.
  */
@@ -258,7 +322,7 @@ function AttentionRowLayout({
   actions,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   description: string;
   actions: ReactNode;
   children?: ReactNode;

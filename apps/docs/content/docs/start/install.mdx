@@ -120,7 +120,7 @@ directory, and no git repository is created.
 | `--name <name>` | Worker name. Defaults to `appflare`. The D1 database and KV namespace follow it. |
 | `-y`, `--yes` | Never ask. Fail where a question would be needed: several accounts, no `workers.dev` subdomain, or a Workflow name that another Worker owns. |
 | `--artifact-dir <dir>` | Install from a downloaded release in `<dir>` instead of fetching it. The signature is still required. |
-| `--no-telemetry` | Send no [usage data](/telemetry/), and install the manager with its usage data turned off. |
+| `--no-telemetry` | Send no [anonymous usage data](/telemetry/), and install the manager with its anonymous report turned off. |
 | `-v`, `--version` | Print the installer's version. `--version` followed by a value picks the release instead. |
 | `-h`, `--help` | Print the options. |
 
@@ -261,6 +261,8 @@ The token template requests:
 | Hyperdrive | Edit | Only for [apps with a database elsewhere](/guides/install-apps/#apps-with-a-database-elsewhere): creating a Hyperdrive configuration from the connection string you enter, replacing it when you change the string, and deleting it on uninstall. |
 | Pipelines | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events): creating a Pipelines stream, sink and pipeline for each stream the app uses, and deleting them on uninstall. |
 | Workers R2 Data Catalog | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events), and added by hand (the template link cannot select it): removing a bucket's R2 Data Catalog when an uninstall deletes the bucket. Without it the bucket is still deleted. |
+| Account Analytics | Read | Only for usage and spend protection: reading how much each app uses of Workers, storage and the other services it runs on, to show its usage, send the usage alerts you set, and pause an app that runs away. |
+| Workers Observability | Read | Only for usage and spend protection: reading an app's Workers Logs when you turn them on for it, to show its usage in the first minutes after you install it. |
 
 The permissions marked "Only for" are optional: you can remove them from the form if
 you will not use that feature, and everything else works without them.

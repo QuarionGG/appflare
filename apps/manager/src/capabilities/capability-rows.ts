@@ -1,5 +1,10 @@
 import type { CapabilityUnknown } from "@appflare/cf-api/capabilities";
 import {
+  MANAGER_OAUTH_ONLY_GROUPS,
+  MANAGER_OAUTH_SCOPE_BY_GROUP,
+  SPEND_PROTECTION_OAUTH_SCOPES,
+} from "@appflare/cf-api/oauth";
+import {
   type IndexApp,
   indexAccessNeededOnlyIfProtected,
   isServiceId,
@@ -173,6 +178,21 @@ const RECONNECT: CapabilityAction = {
 
 /** What a Cloudflare sign-in missing permissions tells the admin to do. */
 const SIGN_IN_AGAIN = "Reconnect Cloudflare and allow every permission Appflare asks for.";
+
+/**
+ * The scopes Cloudflare sign-in first asked for with usage and spend
+ * protection. A manager connected before then was never asked for them, so
+ * missing them is not something the person refused.
+ */
+const USAGE_SIGN_IN_SCOPES: ReadonlySet<string> = new Set([
+  ...SPEND_PROTECTION_OAUTH_SCOPES,
+  ...MANAGER_OAUTH_ONLY_GROUPS.map((group) => MANAGER_OAUTH_SCOPE_BY_GROUP[group]),
+]);
+
+/** True when a sign-in lacks something, and all it lacks is what usage and spend protection added. */
+export function onlyUsageScopesMissing(missingScopes: readonly string[]): boolean {
+  return missingScopes.length > 0 && missingScopes.every((s) => USAGE_SIGN_IN_SCOPES.has(s));
+}
 
 /** The services an index row names that this version knows. */
 function servicesOf(app: Pick<IndexApp, "services">): Set<ServiceId> {
@@ -794,9 +814,11 @@ function signInPermissionsRow(input: CapabilityRowsInput): CapabilityRow {
       details: details(view, {
         found: "Some permissions are missing",
         problem:
-          notGranted.length > 0
-            ? `These were not allowed when you signed in with Cloudflare: ${listWords(notGranted)}. ${SIGN_IN_AGAIN}`
-            : `Cloudflare refused reads that need ${listWords(refusedReads)}. ${SIGN_IN_AGAIN}`,
+          notGranted.length === 0
+            ? `Cloudflare refused reads that need ${listWords(refusedReads)}. ${SIGN_IN_AGAIN}`
+            : onlyUsageScopesMissing(input.connection?.missingScopes ?? [])
+              ? `Usage and spend protection need new permissions, which Appflare did not ask for when you signed in: ${listWords(notGranted)}. Reconnect Cloudflare to see each app's usage and turn on spend protection.`
+              : `These were not allowed when you signed in with Cloudflare: ${listWords(notGranted)}. ${SIGN_IN_AGAIN}`,
       }),
     };
   }
