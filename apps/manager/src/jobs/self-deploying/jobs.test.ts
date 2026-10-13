@@ -975,6 +975,25 @@ describe("uninstalling a self-deploying app", () => {
     );
   });
 
+  it("warns on Workers Paid when Cloudflare answers 401 for Containers, and goes on", async () => {
+    const s = setup();
+    await install(s);
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    // Cloudflare answers 401, as it does to an account off Workers Paid.
+    s.w.account.state.containerApps = null;
+    s.w.account.state.doNamespaces = [{ id: "ns-box", script: MAIN, class: "Box" }];
+    const r = await uninstall(s);
+    expect(r.error).toBeNull();
+    const logs = await logsOf("x1");
+    expect(logs.map((l) => l.message)).not.toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+    expect(logs.filter((l) => l.level === "warn").map((l) => l.message)).toEqual([
+      "Cloudflare answered 401 when asked for the account's container applications: on Workers Paid that means it did not accept Appflare's API token for Containers, so Appflare could not check whether a container application runs behind the app's Durable Objects (Box). If Workers > Containers in the Cloudflare dashboard lists one for this app, delete it there: it keeps running, and billing, once the Worker is gone.",
+    ]);
+    expect((await installRow("id1"))?.status).toBe("uninstalled");
+  });
+
   it("deletes and logs each secret once when its step runs again after it finished", async () => {
     const s = setup();
     await install(s);

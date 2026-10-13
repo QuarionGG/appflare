@@ -11,8 +11,9 @@ import { isNotFound, type JobSteps } from "../steps";
  * namespace names its Worker (`script`) only while that Worker exists.
  *
  * Containers need Workers Paid: Cloudflare answers 401 on any other account,
- * which has none to delete. A token without the optional Containers
- * permission gets 403 whatever the plan.
+ * which has none to delete. On Workers Paid a 401 is a credential problem
+ * instead, and the account may well run the app's containers. A token
+ * without the optional Containers permission gets 403 whatever the plan.
  */
 
 /** A container application of the app, to delete. */
@@ -24,7 +25,10 @@ export interface AppContainer {
 /** What the account's container applications say about the app's. */
 export type ContainerLookup =
   | { kind: "found"; apps: AppContainer[] }
-  /** Cloudflare refuses Containers to the account: it is not on Workers Paid. */
+  /**
+   * Cloudflare answered 401: off Workers Paid it refuses Containers to the
+   * account; on Workers Paid it did not accept the token for them.
+   */
   | { kind: "no-containers" }
   /** The token cannot read Containers. */
   | { kind: "refused" };
@@ -100,26 +104,31 @@ export async function findContainersPhase(
       );
       return { apps: none };
     }
-    if (lookup.kind === "no-containers") {
+    if (lookup.kind === "no-containers" && !accountPaid) {
       log.info(
         "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
       );
       return { apps: none };
     }
-    if (lookup.kind === "refused") {
-      if (!accountPaid) {
-        log.info(
-          "Appflare's API token cannot read Containers, which Cloudflare runs only on Workers Paid; this account is not on it as far as Appflare knows, so the app has no container applications.",
-        );
-        return { apps: none };
-      }
-      // Only a Durable Object runs a container.
+    if (lookup.kind === "refused" && !accountPaid) {
+      log.info(
+        "Appflare's API token cannot read Containers, which Cloudflare runs only on Workers Paid; this account is not on it as far as Appflare knows, so the app has no container applications.",
+      );
+      return { apps: none };
+    }
+    if (lookup.kind !== "found") {
+      // On Workers Paid the app may run containers Appflare cannot see, and
+      // only a Durable Object runs one, so the log names the app's classes.
       const classes = (await namespacesOf(api, workers)).map((ns) => ns.class ?? ns.name ?? ns.id);
       if (classes.length === 0) {
         log.info("The app has no Durable Objects, so no container application runs for it.");
       } else {
+        const cause =
+          lookup.kind === "refused"
+            ? "Appflare's API token cannot read Containers (Account > Containers)"
+            : "Cloudflare answered 401 when asked for the account's container applications: on Workers Paid that means it did not accept Appflare's API token for Containers";
         log.warn(
-          `Appflare's API token cannot read Containers (Account > Containers), so it could not check whether a container application runs behind the app's Durable Objects (${classes.join(", ")}). If ${DASHBOARD_PLACE} lists one for this app, delete it there: it keeps running, and billing, once the Worker is gone.`,
+          `${cause}, so Appflare could not check whether a container application runs behind the app's Durable Objects (${classes.join(", ")}). If ${DASHBOARD_PLACE} lists one for this app, delete it there: it keeps running, and billing, once the Worker is gone.`,
         );
       }
       return { apps: none };

@@ -2180,8 +2180,40 @@ describe("uninstall job: what outlives the Worker", () => {
     const warnings = r.logs.filter((l) => l.level === "warn").map((l) => l.message);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(
-      /^Appflare's API token cannot read Containers \(Account > Containers\), so it could not check whether a container application runs behind the app's Durable Objects \(Counter\)\./,
+      /^Appflare's API token cannot read Containers \(Account > Containers\), so Appflare could not check whether a container application runs behind the app's Durable Objects \(Counter\)\./,
     );
+  });
+
+  it("warns, without failing, when Cloudflare answers 401 for Containers on Workers Paid", async () => {
+    await seedInstall();
+    await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+    // Cloudflare answers 401, as it does to an account off Workers Paid.
+    const fake = containerWorld({ containers: undefined });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(fake.world.scripts).toEqual(new Set(["appflare", "other"]));
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).not.toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+    const warnings = r.logs.filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toEqual([
+      "Cloudflare answered 401 when asked for the account's container applications: on Workers Paid that means it did not accept Appflare's API token for Containers, so Appflare could not check whether a container application runs behind the app's Durable Objects (Counter). If Workers > Containers in the Cloudflare dashboard lists one for this app, delete it there: it keeps running, and billing, once the Worker is gone.",
+    ]);
+  });
+
+  it("only notes a 401 for Containers on Workers Free, where none runs", async () => {
+    await seedInstall();
+    const fake = containerWorld({ containers: undefined });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.logs.filter((l) => l.level === "warn")).toEqual([]);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Cloudflare runs containers only on Workers Paid and refuses them to this account, so the app has no container applications.",
+    );
+    expect(fake.world.calls.some((c) => c.startsWith("GET /workers/durable_objects"))).toBe(false);
   });
 
   it("never fails on Workers Free when the Containers API errs, and retries it on Workers Paid", async () => {
