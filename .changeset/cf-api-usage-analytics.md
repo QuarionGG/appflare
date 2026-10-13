@@ -6,4 +6,4 @@
 
 New calls to pause and resume an app's parts: `workers.getScriptSettings` and `workers.setObservability` (`/workers/scripts/{name}/script-settings`: turns Workers Logs on or off without a new version, and changes no other setting), `containers.setMaxInstances`, `queues.getQueue` and `queues.setDeliveryPaused`, and `workflows.listInstances` (every page, optionally by status), `workflows.pauseInstance` and `workflows.resumeInstance`.
 
-Every manager sign-in now also asks for `account-analytics.read`, `notifications.read`, `notifications.write` and `workers-observability.read`. The two notification scopes have no API token group yet (`MANAGER_OAUTH_ONLY_GROUPS`): nothing uses them in this version. `missingSpendProtectionScopes` lists which of the scopes usage reads with (`account-analytics.read`, `workers-observability.read`) a grant lacks, so a manager connected before can ask for a reconnect.
+Every manager sign-in now also asks for `account-analytics.read`. `missingSpendProtectionScopes` says whether a grant lacks it, the one scope usage reads with, so a manager connected before can ask for a reconnect.

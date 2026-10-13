@@ -107,12 +107,7 @@ describe("accountAttentionRows", () => {
   });
 
   it("asks a sign-in from before usage to reconnect for usage, not for refused permissions", () => {
-    const usageScopes = [
-      "account-analytics.read",
-      "notifications.write",
-      "notifications.read",
-      "workers-observability.read",
-    ];
+    const usageScopes = ["account-analytics.read"];
     const before = {
       ...input({}),
       connection: { kind: "oauth" as const, missingScopes: usageScopes },

@@ -60,7 +60,7 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [PIPELINES_FEATURE]:
     "Installing an app that streams events into R2 (Workers Paid): Appflare creates a Pipelines stream, sink and pipeline for each stream the app uses, and deletes them on uninstall",
   [SPEND_PROTECTION_FEATURE]:
-    "Showing each app's usage, sending the usage alerts you set, and pausing an app that runs away: Appflare reads each app's usage from Cloudflare's analytics. Workers Observability is for reading an app's Workers Logs, which this version does not do yet: it is asked for now so a later version can without a new token",
+    "Showing each app's usage, sending the usage alerts you set, and pausing an app that runs away: Appflare reads each app's usage from Cloudflare's analytics",
 };
 
 /** What a rotation saved. */

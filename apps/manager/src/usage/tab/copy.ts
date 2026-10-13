@@ -108,7 +108,7 @@ export function statusLine(
         tone: "muted",
         text:
           status.via === "token"
-            ? "Appflare can't read this app's usage: the Cloudflare API token lacks the usage permissions."
+            ? "Appflare can't read this app's usage: the Cloudflare API token lacks the Account Analytics permission."
             : "Appflare can't read this app's usage until Cloudflare is reconnected.",
       };
     case "fresh":

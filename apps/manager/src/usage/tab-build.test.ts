@@ -248,7 +248,7 @@ describe("buildUsageTab", () => {
       via: "token",
     });
     // A grant lacking the scopes asks for a reconnect before the watcher has run.
-    expect(buildUsageTab(bare({ missingScopes: ["workers-observability.read"] })).status).toEqual({
+    expect(buildUsageTab(bare({ missingScopes: ["account-analytics.read"] })).status).toEqual({
       kind: "reconnect",
       via: "oauth",
     });

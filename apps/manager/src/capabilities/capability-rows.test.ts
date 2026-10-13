@@ -584,19 +584,14 @@ describe("capabilityRows", () => {
       );
     });
 
-    it("says a sign-in from before usage was never asked for its new permissions", () => {
-      const usageScopes = [
-        "account-analytics.read",
-        "notifications.write",
-        "notifications.read",
-        "workers-observability.read",
-      ];
+    it("says a sign-in from before usage was never asked for its new permission", () => {
+      const usageScopes = ["account-analytics.read"];
       const row = rows(EVERYTHING, {
         connection: { kind: "oauth", missingScopes: usageScopes },
       })["token-permissions"];
       expect(row).toMatchObject({ state: "needs-action", action: RECONNECT });
       expect(row.details.problem).toBe(
-        "Usage and spend protection need new permissions, which Appflare did not ask for when you signed in: Account Analytics, Notifications: Edit, Notifications: Read and Workers Observability. Reconnect Cloudflare to see each app's usage and turn on spend protection.",
+        "Usage and spend protection need a new permission, which Appflare did not ask for when you signed in: Account Analytics. Reconnect Cloudflare to see each app's usage and turn on spend protection.",
       );
       expect(row.details.problem).not.toContain("not allowed");
       // Any other missing permission keeps the usual words.

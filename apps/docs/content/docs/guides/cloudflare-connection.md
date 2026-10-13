@@ -46,10 +46,9 @@ install, update or remove apps, or update itself, until an admin reconnects.
 
 An Appflare that connected with Cloudflare sign-in before it could show
 [usage](/guides/spend-protection/#permissions) lacks Account Analytics, which usage
-reads with, and the permissions asked for ahead of time with it. It keeps working, but
-it shows no usage, and the **Sign-in permissions** row under **What this account can
-run**, Home's **Usage** section and each app's **Usage** tab ask you to reconnect.
-Signing in again adds them.
+reads with. It keeps working, but it shows no usage, and the **Sign-in permissions**
+row under **What this account can run**, Home's **Usage** section and each app's
+**Usage** tab ask you to reconnect. Signing in again adds it.
 
 Select **Reconnect Cloudflare**. It offers two ways, and Appflare never picks one for
 you.

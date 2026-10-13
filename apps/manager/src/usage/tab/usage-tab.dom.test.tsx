@@ -338,7 +338,6 @@ describe("UsageTab", () => {
     await show(scenario("reconnect", { via: "token" }));
     expect(text()).toContain("Give the token access to usage");
     expect(text()).toContain("the Account Analytics (Read) permission");
-    expect(text()).not.toContain("Workers Observability");
     const link = [...container.querySelectorAll("a")].find(
       (a) => a.textContent === "Cloudflare connection",
     );

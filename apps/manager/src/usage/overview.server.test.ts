@@ -262,7 +262,6 @@ describe("readSpendOverview", () => {
       }),
     );
     const { overview } = await readSpendOverview(env.DB, NOW);
-    // Workers Observability is asked for ahead of time; nothing reads with it yet.
     expect(overview.missingScopes).toEqual([]);
   });
 
@@ -271,7 +270,7 @@ describe("readSpendOverview", () => {
       replaceGrantStatements(env.DB, {
         id: "g1",
         clientId: "client",
-        scopes: ["workers-scripts.write", "workers-observability.read"],
+        scopes: ["workers-scripts.write"],
         refreshToken: "sealed",
         accessToken: "sealed",
         accessExpiresAt: NOW + HOUR,

@@ -131,7 +131,7 @@ export function ReconnectUsage({ isAdmin, via }: { isAdmin: boolean; via: "oauth
     <SectionEmpty
       icon={<PlugsIcon size={48} className="text-kumo-inactive" />}
       title="Reconnect to see usage"
-      description="Appflare reads usage with Cloudflare permissions this connection doesn't have yet. Reconnecting Cloudflare adds them; spend protection starts with the first numbers."
+      description="Appflare reads usage with a Cloudflare permission this connection doesn't have yet. Reconnecting Cloudflare adds it; spend protection starts with the first numbers."
       contents={
         isAdmin ? (
           <Link href={reconnectDialogHref()}>Reconnect Cloudflare</Link>

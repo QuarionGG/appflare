@@ -263,7 +263,6 @@ The token template requests:
 | Workers R2 Data Catalog | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events), and added by hand (the template link cannot select it): removing a bucket's R2 Data Catalog when an uninstall deletes the bucket. Without it the bucket is still deleted. |
 | Workers Tail | Read | Not used by the current version. |
 | Account Analytics | Read | Only for [usage and spend protection](/guides/spend-protection/): reading how much each app uses of Workers, storage and the other services it runs on, to show its usage, send the usage alerts you set, and pause an app that runs away. |
-| Workers Observability | Read | Only for [usage and spend protection](/guides/spend-protection/): reading an app's Workers Logs, to show a new app's usage before Cloudflare's usage numbers arrive. This version does not use it yet; the template asks for it now so a later version can without a new token. |
 
 The permissions marked "Only for" are optional: you can remove them from the form if
 you will not use that feature, and everything else works without them.

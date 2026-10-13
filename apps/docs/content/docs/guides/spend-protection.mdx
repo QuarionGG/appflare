@@ -23,11 +23,6 @@ outlives a deleted Durable Object namespace, whose analytics Cloudflare deletes 
 Cloudflare's analytics are a few minutes behind, and they can still change for a
 while. Each check reads the last 3 hours again.
 
-Right after Appflare updates to a version that checks every 5 minutes, the new
-schedule can take a while to reach Cloudflare's scheduler (we have seen 14 to 70
-minutes). Until it does, Appflare may still check every 30 minutes, for up to about an
-hour.
-
 **A new app shows up after about an hour.** Appflare starts reading an app 15 minutes
 after it is installed, from the moment it was installed, but Cloudflare's analytics
 name a new Worker only after 40 to 50 minutes. Until its usage appears, for up to an
@@ -363,24 +358,15 @@ be billed** shows what R2 costs when an app is past it.
 
 ## Permissions
 
-Usage needs one Cloudflare permission: **Account Analytics: Read**. Appflare also asks
-for two more that this version does not use yet, so that a later version can use them
-without asking you to sign in again:
+Usage needs one Cloudflare permission: **Account Analytics: Read**. How you get it
+depends on [how Appflare connects](/guides/cloudflare-connection/):
 
-- **Workers Observability: Read**, to read an app's Workers Logs and show a new app's
-  usage before Cloudflare's usage numbers arrive;
-- **Notifications** (read and edit, Cloudflare sign-in only), to add Cloudflare's own
-  alerts about your bill.
-
-How you get them depends on [how Appflare connects](/guides/cloudflare-connection/):
-
-- **Cloudflare sign-in** asks for all of them. An Appflare connected before this
-  version lacks them, and the **Sign-in permissions** row under **What this account
-  can run** asks an admin to
-  [Reconnect Cloudflare](/guides/cloudflare-connection/#reconnect-cloudflare).
-- **An API token** lists Account Analytics and Workers Observability in the token form
-  under **Usage and spend protection**, and the template link selects them. They are
-  optional. See [the token's permissions](/start/install/#1-connect-cloudflare).
+- **Cloudflare sign-in** asks for it. An Appflare connected before this version lacks
+  it, and the **Sign-in permissions** row under **What this account can run** asks an
+  admin to [Reconnect Cloudflare](/guides/cloudflare-connection/#reconnect-cloudflare).
+- **An API token** lists Account Analytics in the token form under **Usage and spend
+  protection**, and the template link selects it. It is optional. See
+  [the token's permissions](/start/install/#1-connect-cloudflare).
 
 Without Account Analytics, Appflare reads no usage, so it sends no usage alerts and
 pauses nothing on its own. Home's **Usage** section asks you to reconnect Cloudflare
@@ -388,8 +374,7 @@ pauses nothing on its own. Home's **Usage** section asks you to reconnect Cloudf
 cards leave out their usage, each app's **Usage** tab says **Reconnect to see usage**
 or **Give the token access to usage**, and **Settings > Your account > Spend
 protection** says it has nothing to act on yet. Installing, updating and everything
-else work as before. A connection with Account Analytics but without the other
-permissions shows usage as usual.
+else work as before.
 
 Once it has the permission, spend protection starts with the first numbers it reads.
 

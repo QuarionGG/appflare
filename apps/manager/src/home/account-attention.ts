@@ -42,7 +42,7 @@ export interface InstallNeeds {
 
 /** The sign-in row's words when all it lacks is what usage and spend protection added. */
 export const USAGE_RECONNECT = {
-  found: "New permissions for usage",
+  found: "New permission for usage",
   why: "Reconnect to Cloudflare to see each app's usage and turn on spend protection.",
 } as const;
 
