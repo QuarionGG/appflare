@@ -664,6 +664,8 @@ describe("usage: batched", () => {
     httpError?: boolean;
     /** Combined queries are answered with errors Cloudflare never sends. */
     malformed?: boolean;
+    /** Combined queries are answered with no errors and a null account. */
+    nullAccount?: boolean;
   }
 
   /** Answers one-dataset and combined queries as Cloudflare does, or as `options` say. */
@@ -683,6 +685,9 @@ describe("usage: batched", () => {
         });
       if (fields.length > 1 && options.httpError) {
         return json({ success: false, errors: [{ code: 10000, message: "busy" }] }, 503);
+      }
+      if (fields.length > 1 && options.nullAccount) {
+        return json({ data: { viewer: { accounts: [null] } }, errors: null });
       }
       if (fields.length > 1 && options.malformed) {
         return json({ data: null, errors: [null, { message: "odd", path: "r1" }] });
@@ -782,6 +787,14 @@ describe("usage: batched", () => {
     const { usage, bodies } = combined({ malformed: true });
     const results = await readBoth(usage.batched());
     // The errors name no field it can tell: each read on its own, which answers.
+    expect(bodies).toHaveLength(1 + 3);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+  });
+
+  it("sends each read on its own when a combined answer has no errors and no account", async () => {
+    const { usage, bodies } = combined({ nullAccount: true });
+    const results = await readBoth(usage.batched());
+    // Not the same combined query again, which would get the same answer.
     expect(bodies).toHaveLength(1 + 3);
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
   });

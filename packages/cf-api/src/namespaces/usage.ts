@@ -355,7 +355,7 @@ function usageReads(http: HttpApi, options: UsageOptions) {
       const errors: unknown[] = Array.isArray(answer?.errors) ? answer.errors : [];
       const account = answer?.data?.viewer?.accounts?.[0];
       const fields = errors.map((e) => fieldOf(e, group.length));
-      if (fields.some((f) => f === null) || (errors.length === 0 && account === undefined)) {
+      if (fields.some((f) => f === null) || (errors.length === 0 && (account === undefined || account === null))) {
         await Promise.all(group.map(alone));
         return;
       }
