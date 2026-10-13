@@ -21,3 +21,10 @@ export const workspaceSourceResolution = {
   resolve: { conditions },
   ssr: { resolve: { conditions } },
 } satisfies ViteUserConfig;
+
+/**
+ * Local runs use at most three Vitest workers, each its own workerd or Node
+ * process, so a full check on a developer machine does not exhaust its
+ * memory. CI keeps Vitest's default.
+ */
+export const localWorkerCap: { maxWorkers?: number } = process.env.CI ? {} : { maxWorkers: 3 };

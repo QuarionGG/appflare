@@ -136,8 +136,8 @@ export async function buildRelease(opts: ReleaseOptions = {}): Promise<ReleaseFi
     },
     assets: {
       config: {
-        not_found_handling: "single-page-application",
-        run_worker_first: ["/*", "!/assets/*"],
+        not_found_handling: "none",
+        run_worker_first: ["/"],
       },
       binding: "ASSETS",
       files: assets,

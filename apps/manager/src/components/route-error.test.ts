@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ACCESS_DENIED_MESSAGE, isAccessDenied } from "../access/denied";
-import { RouteError } from "./route-error";
+import { RouteError, STALE_BUILD_MESSAGE } from "./route-error";
 
 /** What TanStack Start's client throws for a server function call Access refused. */
 const refused = new Error(
@@ -31,6 +31,17 @@ describe("RouteError", () => {
     expect(html).toMatch(/<button[^>]*>.*Reload.*<\/button>/);
     expect(html).not.toContain("access_denied");
     expect(html).not.toContain("Something went wrong");
+  });
+
+  it("explains a file of the page that failed to load and offers a reload", () => {
+    const html = render(
+      new TypeError(
+        "Failed to fetch dynamically imported module: https://appflare.example.com/assets/settings-0ld.js",
+      ),
+    );
+    expect(html).toContain(STALE_BUILD_MESSAGE);
+    expect(html).toMatch(/<button[^>]*>.*Reload.*<\/button>/);
+    expect(html).not.toContain("settings-0ld.js");
   });
 
   it("keeps showing other errors as before", () => {

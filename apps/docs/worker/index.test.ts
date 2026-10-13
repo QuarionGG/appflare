@@ -80,4 +80,61 @@ describe("the site's Worker", () => {
       expect(response.headers.get("Vary"), path).toBe("Accept");
     }
   });
+
+  it("answers a missing build file with a 404 browsers never keep", async () => {
+    const bindings = env();
+    const response = await worker.fetch(
+      new Request("https://appflare.dev/assets/main-0ld.js"),
+      bindings,
+    );
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.text()).toBe("Not found\n");
+    // Not the 404 page: a script asked for it.
+    expect(bindings.ASSETS.seen.map((r) => new URL(r.url).pathname)).toEqual([
+      "/assets/main-0ld.js",
+    ]);
+  });
+
+  it("serves a build file the static files have, as they answer it", async () => {
+    const response = await worker.fetch(
+      new Request("https://appflare.dev/assets/main-n3w.js"),
+      env({ "/assets/main-n3w.js": "code" }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("code");
+  });
+
+  it("answers any other path without a file with the 404 page, as a 404", async () => {
+    for (const path of ["/no-such-page/", "/no-such-page", "/no-such-file.png"]) {
+      const bindings = notFoundSite();
+      const response = await worker.fetch(new Request(`https://appflare.dev${path}`), bindings);
+      expect(response.status, path).toBe(404);
+      expect(await response.text(), path).toBe("the 404 page");
+      expect(response.headers.get("Content-Type"), path).toBe("text/html");
+    }
+    const head = await worker.fetch(
+      new Request("https://appflare.dev/no-such-page/", { method: "HEAD" }),
+      notFoundSite(),
+    );
+    expect(head.status).toBe(404);
+  });
 });
+
+/** Static files with only the 404 page, at `/404`, as html_handling answers it. */
+function notFoundSite(): Env & { ASSETS: { seen: Request[] } } {
+  const seen: Request[] = [];
+  return {
+    ASSETS: {
+      seen,
+      async fetch(request) {
+        seen.push(request);
+        if (new URL(request.url).pathname !== "/404") return new Response(null, { status: 404 });
+        return new Response(request.method === "HEAD" ? null : "the 404 page", {
+          headers: { "Content-Type": "text/html" },
+        });
+      },
+    },
+    INSTALLER: recorder("installer"),
+  };
+}

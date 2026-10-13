@@ -1,6 +1,7 @@
 import { globSync, readFileSync } from "node:fs";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { localWorkerCap } from "../../vitest.shared.ts";
 
 // Three test projects, run by one `vitest run` so that `--shard` (CI) splits all
 // of them: `worker` and `worker-isolated` run inside workerd with the manager's
@@ -58,6 +59,7 @@ export default defineConfig({
   resolve: { conditions },
   ssr: { resolve: { conditions } },
   test: {
+    ...localWorkerCap,
     setupFiles: ["./src/test/between-files.ts"],
     projects: [
       { extends: true, test: { name: "worker", include, exclude: isolated, isolate: false } },

@@ -17,10 +17,11 @@ import { accessRecoverySteps } from "./recovery";
  * calls `invalidate()` in the isolate that did it; other isolates follow
  * within `configTtlMs`.
  *
- * The hashed bundles under /assets/ are served before the Worker runs, so
- * this check covers what reaches the Worker: pages, server functions and
- * server routes, which carry all data. Access itself guards the bundles at
- * the edge.
+ * Existing static files (the hashed bundles under /assets/, the icons and
+ * the web manifest) are served before the Worker runs, and a missing bundle
+ * is answered before this check, so this check covers what carries data:
+ * pages, server functions and server routes. Access itself guards the static
+ * files at the edge.
  */
 
 /**

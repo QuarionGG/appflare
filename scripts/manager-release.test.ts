@@ -158,7 +158,8 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))("the packed manager artif
     const manifest = JSON.parse(manifestText);
     manifest.worker.compatibilityFlags = ["nodejs_compat"];
     manifest.worker.bindings.push({ type: "kv_namespace", name: "EXTRA", id: "abc" });
-    manifest.assets.config.not_found_handling = "none";
+    manifest.assets.config.not_found_handling = "single-page-application";
+    manifest.assets.config.run_worker_first = ["/*", "!/assets/*"];
     const first = manifest.worker.modules[0];
     for (let i = 1; i <= MANAGER_MAX_MODULES; i++) {
       manifest.worker.modules.push({ ...first, name: `chunk-${i}.js` });
@@ -177,7 +178,8 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))("the packed manager artif
         'keyId is "appflare-2026-09", expected "unsigned"',
         "compatibility flag global_fetch_strictly_public is missing",
         "binding EXTRA carries id",
-        'assets not_found_handling is "none"',
+        'assets not_found_handling is "single-page-application"',
+        'assets run_worker_first is ["/*","!/assets/*"]',
         "manifest.json contains an account-specific id",
         expect.stringMatching(
           new RegExp(

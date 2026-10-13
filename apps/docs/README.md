@@ -6,15 +6,20 @@ browser. Fumadocs on TanStack Start, prerendered in full and served as static
 files. `_headers` sets the response headers; the build adds the deploy pages' own
 (see below).
 
-`worker/index.ts` runs before the static files for the pages and
-`/api/install/*` (`run_worker_first`; the build's assets, screenshots, OpenGraph
-images and agent files skip it). It forwards `/api/install/*`, unchanged, to the
-hosted installer (`apps/installer`, the Worker `appflare-installer`) through a
-service binding, so the deploy page and the installer's API share one origin. The
-Worker keeps no logs, since those requests carry the visitor's Cloudflare access
-token. A page asked for with `Accept: text/markdown` gets its Markdown (the `.md`
-the build writes next to it, `llms.txt` for the front page) instead of its HTML;
-every other request gets the static files' own answer.
+`worker/index.ts` runs before the static files for the pages (`/` and every
+address ending in `/`) and `/api/install/*` (`run_worker_first`), and for any path
+that matches no file; existing files (the build's assets, screenshots, OpenGraph
+images, agent files) are served without it. It forwards `/api/install/*`,
+unchanged, to the hosted installer (`apps/installer`, the Worker
+`appflare-installer`) through a service binding, so the deploy page and the
+installer's API share one origin. The Worker keeps no logs, since those requests
+carry the visitor's Cloudflare access token. A page asked for with
+`Accept: text/markdown` gets its Markdown (the `.md` the build writes next to it,
+`llms.txt` for the front page) instead of its HTML. A path with no file gets the
+site's 404 page, except under `/assets/`: there it is a plain 404 with
+`Cache-Control: no-store`, because `_headers` lets browsers keep `/assets/*` for a
+year and a deploy must never leave a kept 404 behind. Every other request gets the
+static files' own answer.
 
 ## For search engines and agents
 

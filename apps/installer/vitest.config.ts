@@ -1,5 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { localWorkerCap } from "../../vitest.shared.ts";
 
 // Worker test project: tests run inside workerd with wrangler.jsonc's bindings
 // (a local D1 as DB, the development vars). Every outgoing request goes to the
@@ -30,6 +31,7 @@ export default defineConfig({
   resolve: { conditions },
   ssr: { resolve: { conditions } },
   test: {
+    ...localWorkerCap,
     include: ["src/**/*.test.ts"],
   },
 });
