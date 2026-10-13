@@ -2,7 +2,7 @@ import { Banner } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon } from "@phosphor-icons/react";
 import type { ErrorComponentProps } from "@tanstack/react-router";
 import { ACCESS_DENIED_MESSAGE, isAccessDenied } from "../access/denied";
-import { isStaleBuildError } from "../stale-build-reload";
+import { isStaleBuildError } from "../stale-build";
 import { BANNER_ICON, MessageText } from "./message-text";
 
 /** Shown when a file of the page did not load and the automatic reload did not help. */
@@ -13,7 +13,7 @@ export const STALE_BUILD_MESSAGE =
  * Default route error: the message only (server functions never put secrets in
  * errors). A call Cloudflare Access refused gets a plain explanation and a
  * reload, which sends the browser through the Access sign-in again. So does a
- * file of the page that failed to load (stale-build-reload.ts), when the page
+ * file of the page that failed to load (stale-build.ts), when the page
  * has already reloaded once for it.
  */
 export function RouteError({ error }: ErrorComponentProps) {

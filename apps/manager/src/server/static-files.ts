@@ -26,14 +26,8 @@ export function isServerPath(pathname: string): boolean {
   return pathname.startsWith("/api/") || pathname.startsWith("/_serverFn/");
 }
 
-/**
- * The answer to a request for a build file that does not exist, or null for
- * any other path. Existing build files are served before the Worker runs, so
- * a request under /assets/ that reaches it has no file. Never asks the static
- * files: their answer would carry `_headers`' one-year rule for /assets/*.
- */
-export function missingBuildFile(request: Pick<Request, "url">): Response | null {
-  if (!new URL(request.url).pathname.startsWith(BUILD_FILES_PREFIX)) return null;
+/** A 404 that no browser or cache keeps: the next request asks again. */
+function notFound(): Response {
   return new Response("Not found\n", {
     status: 404,
     headers: {
@@ -44,15 +38,41 @@ export function missingBuildFile(request: Pick<Request, "url">): Response | null
 }
 
 /**
+ * The answer to a request for a build file that does not exist, or null for
+ * any other path. Existing build files are served before the Worker runs, so
+ * a request under /assets/ that reaches it has no file. Never asks the static
+ * files: their answer would carry `_headers`' one-year rule for /assets/*.
+ */
+export function missingBuildFile(request: Pick<Request, "url">): Response | null {
+  if (!new URL(request.url).pathname.startsWith(BUILD_FILES_PREFIX)) return null;
+  return notFound();
+}
+
+/**
+ * Whether a request is for a page, which gets the SPA shell: a browser
+ * navigation (`Sec-Fetch-Mode: navigate`), or, from a client that does not
+ * send `Sec-Fetch-Mode`, one that names HTML in `Accept`. A script,
+ * stylesheet, image or `fetch()` from a browser is never a page, whatever its
+ * path looks like; `/apps/some.app` is one when the browser navigates to it.
+ */
+export function isPageRequest(request: Pick<Request, "headers">): boolean {
+  const mode = request.headers.get("sec-fetch-mode");
+  if (mode !== null) return mode === "navigate";
+  return (request.headers.get("accept") ?? "").toLowerCase().includes("text/html");
+}
+
+/**
  * Serves a request that is neither a missing build file nor refused by the
- * checks before it. A GET or HEAD outside the server paths is a page: the
- * static file at that path when there is one (the shell at `/`, or a public
- * file in development, where every request reaches the Worker), otherwise the
- * SPA shell, which the static files answer at `/`. The shell keeps the
- * static files' own headers: revalidated on every load. Everything else goes
- * to `app`, TanStack Start: server routes and functions, and a page while
- * the shell does not exist yet (the build renders it through the Worker, and
- * development serves it from Vite).
+ * checks before it. A GET or HEAD outside the server paths gets the static
+ * file at its path when there is one (the shell at `/`, or a public file in
+ * development, where every request reaches the Worker). Otherwise a page
+ * request ({@link isPageRequest}) gets the SPA shell, which the static files
+ * answer at `/`, with their own headers: revalidated on every load. Any other
+ * request with no file gets a 404 nobody keeps, never the shell: HTML kept as
+ * a missing script or image is what this module exists to prevent.
+ * Everything else goes to `app`, TanStack Start: server routes and
+ * functions, and a page while the shell does not exist yet (the build renders
+ * it through the Worker, and development serves it from Vite).
  */
 export async function serveRequest(
   request: Request,
@@ -66,6 +86,7 @@ export async function serveRequest(
   if (file.status !== 404) return file;
   await file.body?.cancel();
   if (url.pathname === "/") return app(request);
+  if (!isPageRequest(request)) return notFound();
   // The shell, asked for as `/`: `/index.html` itself answers a redirect to
   // `/` (html_handling). Same method and headers, so a HEAD stays a HEAD and
   // a browser holding the shell gets its 304.

@@ -5,18 +5,13 @@ import { RouteError } from "./components/route-error";
 import { NOT_FOUND_MODE } from "./router-not-found";
 import { PENDING_MIN_MS, PENDING_MS } from "./router-timing";
 import { routeTree } from "./routeTree.gen";
-import { browserStaleBuildReloadDeps, installStaleBuildReload } from "./stale-build-reload";
 
 export function getRouter() {
-  // A tab still on an older build reloads once when a file of a page fails
-  // to load (stale-build-reload.ts). Browser only: the build renders the
-  // shell through this function too.
-  if (typeof window !== "undefined") {
-    installStaleBuildReload(window, browserStaleBuildReloadDeps());
-  }
   return createRouter({
     routeTree,
     scrollRestoration: true,
+    // A route's code that fails to load on a hover is only remembered; the
+    // navigation that needs it reloads the page once (stale-build.ts).
     defaultPreload: "intent",
     defaultPendingMs: PENDING_MS,
     defaultPendingMinMs: PENDING_MIN_MS,
