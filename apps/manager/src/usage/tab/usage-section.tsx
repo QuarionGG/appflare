@@ -116,7 +116,7 @@ export function ReconnectUsage({ isAdmin, via }: { isAdmin: boolean; via: "oauth
       <SectionEmpty
         icon={<PlugsIcon size={48} className="text-kumo-inactive" />}
         title="Give the token access to usage"
-        description="Appflare reads usage with the Account Analytics (Read) and Workers Observability (Read) permissions, which its Cloudflare API token doesn't have. Add them to the token in the Cloudflare dashboard; spend protection starts with the first numbers."
+        description="Appflare reads usage with the Account Analytics (Read) permission, which its Cloudflare API token doesn't have. Add it to the token in the Cloudflare dashboard; spend protection starts with the first numbers."
         contents={
           isAdmin ? (
             <Link href={settingsLink("account", "connection")}>Cloudflare connection</Link>

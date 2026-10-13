@@ -2,6 +2,7 @@ import { Banner, InputGroup, Link, Select, Switch, Text } from "@cloudflare/kumo
 import { useRouter } from "@tanstack/react-router";
 import { Fragment, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { reconnectDialogHref } from "../../cloudflare/reconnect-outcome";
+import { DocsLink } from "../../components/docs-link";
 import { BANNER_ICON, bannerRole } from "../../components/message-text";
 import { Section, SectionRow, SectionRows } from "../../components/section";
 import { settingsSection } from "../../components/settings-links";
@@ -133,6 +134,7 @@ export function SpendProtectionSection({
     return (
       <Section
         {...settingsSection("account", "spend-protection")}
+        titleAction={<DocsLink topic="spendProtectionAccount" />}
         description={SPEND_PROTECTION_COPY.description}
         error={SPEND_PROTECTION_COPY.readFailed}
       />
@@ -160,6 +162,7 @@ function SpendProtectionSettings({
   return (
     <Section
       {...settingsSection("account", "spend-protection")}
+      titleAction={<DocsLink topic="spendProtectionAccount" />}
       description={SPEND_PROTECTION_COPY.description}
       error={error}
     >

@@ -111,6 +111,10 @@ describe("SpendProtectionSection", () => {
     expect(page).toContain(
       "What every app in this account follows. An app's Usage tab can change it for that app.",
     );
+    const docs = container.querySelector('a[aria-label="Learn more in the docs"]');
+    expect(docs?.getAttribute("href")).toContain(
+      "/guides/spend-protection/?utm_source=appflare-manager&utm_medium=app&utm_content=spendProtectionAccount#pause-apps-automatically",
+    );
   });
 
   it("shows the paid account's triggers live: the app looping, the app over the cap, and the apps with their own", () => {

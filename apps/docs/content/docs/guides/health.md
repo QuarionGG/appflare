@@ -96,7 +96,9 @@ dashboard.
 Apps are checked on their own only while a
 [notification channel](/guides/notifications/#health-check-failing) wants **Health
 check failing**. The scheduled run then checks installed apps every 30 minutes, the
-same way **Check now** does, and records the result. A server error is checked once
+same way **Check now** does, and records the result. It skips an app that is
+[paused](/guides/spend-protection/#pause-an-app), whose paused page is not an app
+that is down, and **Check now** waits until it is resumed. A server error is checked once
 more a few seconds later, and only two in a row start a failing episode and a
 message.
 

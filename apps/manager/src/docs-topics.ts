@@ -44,6 +44,9 @@ export const DOCS_TOPICS = {
   forgotPassword: "guides/forgot-password",
   passwordResetEmails: "guides/forgot-password#turn-on-password-reset-emails",
   accessLockedOut: "security#if-you-are-locked-out",
+  spendProtection: "guides/spend-protection",
+  spendProtectionAccount: "guides/spend-protection#pause-apps-automatically",
+  pauseJob: "guides/spend-protection#if-a-pause-or-resume-fails",
 } as const satisfies Record<string, string>;
 
 export type DocsTopic = keyof typeof DOCS_TOPICS;
@@ -93,6 +96,9 @@ export function jobFailureTopic(job: {
       return "sourceBuildJob";
     case "move_address":
       return "appflareAddressMove";
+    case "pause":
+    case "resume":
+      return "pauseJob";
     default:
       return null;
   }

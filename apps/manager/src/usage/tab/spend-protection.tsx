@@ -1,6 +1,7 @@
 import { Badge, Button, Checkbox, Link, Select, Text } from "@cloudflare/kumo";
 import { PlusIcon } from "@phosphor-icons/react";
 import { type ReactElement, useEffect, useState } from "react";
+import { DocsLink } from "../../components/docs-link";
 import { Section, SectionRow, SectionRows } from "../../components/section";
 import { settingsLink } from "../../components/settings-links";
 import type { AlertRuleFields } from "../alert-rules";
@@ -99,6 +100,7 @@ export function SpendProtectionSection({
     <Section
       id="spend-protection"
       title="Spend protection"
+      titleAction={<DocsLink topic="spendProtection" />}
       badge={
         <span className="flex gap-1.5">
           {sent > 0 && (

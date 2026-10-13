@@ -186,6 +186,7 @@ const SIGN_IN_AGAIN = "Reconnect Cloudflare and allow every permission Appflare 
  */
 const USAGE_SIGN_IN_SCOPES: ReadonlySet<string> = new Set([
   ...SPEND_PROTECTION_OAUTH_SCOPES,
+  MANAGER_OAUTH_SCOPE_BY_GROUP.workers_observability,
   ...MANAGER_OAUTH_ONLY_GROUPS.map((group) => MANAGER_OAUTH_SCOPE_BY_GROUP[group]),
 ]);
 

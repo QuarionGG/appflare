@@ -241,7 +241,7 @@ describe("watchSpend: access", () => {
       state: "needs_access",
       at: NOW,
       via: "oauth",
-      missing: ["account-analytics.read", "workers-observability.read"],
+      missing: ["account-analytics.read"],
     });
   });
 

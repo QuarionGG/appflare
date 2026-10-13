@@ -14,8 +14,9 @@ back as it was.
 
 ![Installed app settings with a home page field and a saved secret](/screenshots/apps-installed-settings.png)
 
-Saving is refused while another job of the app is queued or running, and while
-Appflare updates itself. While a job of the app runs, the tab says so, with
+Saving is refused while another job of the app is queued or running, while
+Appflare updates itself, and while the app is
+[paused](/guides/spend-protection/#while-an-app-is-paused). While a job of the app runs, the tab says so, with
 **View log** to follow it.
 
 For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), a

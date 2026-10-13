@@ -172,15 +172,16 @@ export function missingManagerScopes(granted: readonly string[]): string[] {
 }
 
 /**
- * The scopes usage and spend protection read with: analytics and Workers
- * Logs, the two an API token can carry too. Every sign-in asks for them
- * with the rest; a manager connected before they were added holds a grant
- * without them until it reconnects. The notification scopes every sign-in
- * also asks for are not among them: nothing reads with them yet.
+ * The scopes usage and spend protection need to read usage: analytics
+ * alone. Every sign-in asks for it with the rest; a manager connected
+ * before it was added holds a grant without it until it reconnects. Workers
+ * Observability and the notification scopes are asked for too, so a later
+ * version can use them without a new sign-in, but nothing reads with them
+ * yet, so a grant without them still shows usage. `missingManagerScopes`
+ * still lists them, so Reconnect asks for them.
  */
 export const SPEND_PROTECTION_OAUTH_SCOPES: readonly string[] = Object.freeze([
   MANAGER_OAUTH_SCOPE_BY_GROUP.account_analytics,
-  MANAGER_OAUTH_SCOPE_BY_GROUP.workers_observability,
 ]);
 
 /**

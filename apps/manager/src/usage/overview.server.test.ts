@@ -244,7 +244,7 @@ describe("readSpendOverview", () => {
     expect(overview.apps[0]?.spend.day.spent).toBeCloseTo(90_000 * 0.3e-6, 9);
   });
 
-  it("names the usage permissions a Cloudflare sign-in lacks", async () => {
+  it("needs only Account Analytics from a Cloudflare sign-in to read usage", async () => {
     await env.DB.batch(
       replaceGrantStatements(env.DB, {
         id: "g1",
@@ -262,7 +262,29 @@ describe("readSpendOverview", () => {
       }),
     );
     const { overview } = await readSpendOverview(env.DB, NOW);
-    expect(overview.missingScopes).toEqual(["workers-observability.read"]);
+    // Workers Observability is asked for ahead of time; nothing reads with it yet.
+    expect(overview.missingScopes).toEqual([]);
+  });
+
+  it("names the usage permission a Cloudflare sign-in lacks", async () => {
+    await env.DB.batch(
+      replaceGrantStatements(env.DB, {
+        id: "g1",
+        clientId: "client",
+        scopes: ["workers-scripts.write", "workers-observability.read"],
+        refreshToken: "sealed",
+        accessToken: "sealed",
+        accessExpiresAt: NOW + HOUR,
+        keyId: "k1",
+        status: "connected",
+        problem: null,
+        problemAt: null,
+        connectedAt: NOW - HOUR,
+        refreshedAt: NOW - HOUR,
+      }),
+    );
+    const { overview } = await readSpendOverview(env.DB, NOW);
+    expect(overview.missingScopes).toEqual(["account-analytics.read"]);
   });
 });
 

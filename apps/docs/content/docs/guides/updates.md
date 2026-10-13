@@ -52,6 +52,10 @@ Admins select **Update**. A dialog opens first when:
 
 ![Update review asking for a new secret before the app changes](/screenshots/updates-review.png)
 
+While an app is [paused](/guides/spend-protection/#while-an-app-is-paused), updates
+and rollbacks are refused: resume it first. A new version would run the app again
+without anyone resuming it.
+
 The update job:
 
 1. Fetches and verifies the new version's signed manifest.

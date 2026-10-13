@@ -80,13 +80,14 @@ Whichever way you install, these are created in your account:
 | D1 database | `appflare` |
 | KV namespace | `appflare-kv` (with the button, named after the project) |
 | Workflow | `appflare-jobs` |
-| Cron trigger | every 30 minutes |
+| Cron trigger | every 5 minutes |
 | Custom domain | only when you give Appflare [its own address](/guides/appflare-address/), during setup or later |
 
 The D1 database holds users, settings, install records, and job logs. The KV
 namespace caches the catalog. The Workflow runs installs, updates, rollbacks, and
-uninstalls as durable jobs. The cron trigger refreshes the catalog and checks for new
-releases. It starts update jobs on its own only when you turn on
+uninstalls as durable jobs. The cron trigger reads each app's
+[usage](/guides/spend-protection/) every 5 minutes, and every 30 minutes refreshes the
+catalog and checks for new releases. It starts update jobs on its own only when you turn on
 [automatic updates](/guides/updates/#automatic-updates).
 
 ## The parts

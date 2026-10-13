@@ -61,8 +61,10 @@ uninstall deletes every Worker of the app this way, each with its queue consumer
 detached and its container applications deleted first, before it deletes any
 resource.
 
-When the uninstall finishes, Appflare forgets the app's spend protection: its usage
-alerts, its automatic pause settings, and a pause that is still in place. The app's
+When the uninstall finishes, Appflare forgets the app's
+[spend protection](/guides/spend-protection/): its usage alerts, its automatic pause
+settings, and a pause that is still in place. A paused app can be uninstalled without
+resuming it first. The app's
 usage history stays, since this month's bill still counts what it used.
 
 ## What you choose

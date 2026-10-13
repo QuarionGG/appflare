@@ -14,11 +14,12 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 | --- | --- |
 | 50 subrequests per invocation | The manager installs apps from a Workflow, which runs its steps in one invocation until it sleeps for 5 minutes. It reads a Worker's modules with one request per 8 MiB of adjacent modules, so the number of modules does not matter, and it uploads at most 32 MiB of modules per Worker, which one upload holds in memory at once. A job for an app of several Workers that needs more than 50 requests pauses for 5 minutes and continues in a fresh invocation. |
 | 64 MiB Worker size, uncompressed (on every plan) | No plan difference: Cloudflare no longer limits the compressed size. Appflare's own cap is lower, 32 MiB of module bytes per Worker, because one upload holds them all in memory. |
-| 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or chosen in **Settings > Your account > What this account can run**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
+| 5 cron triggers per account | The manager uses one (every 5 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or chosen in **Settings > Your account > What this account can run**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
 | 10 D1 databases per account | The manager uses one. Each app that binds D1 uses one per database, per install. |
 
 Other free plan quotas, such as requests per day and KV writes per day, apply to
-your apps as usual. The manager keeps its own use low: job logs go to D1, not KV,
+your apps as usual. Every app shares them, and Appflare warns you before one runs out
+(see [Usage and spend protection](/guides/spend-protection/#free-daily-limit-running-out)). The manager keeps its own use low: job logs go to D1, not KV,
 and the job page polls only while a job runs.
 
 ## Why does a health check say "Not verified yet"?

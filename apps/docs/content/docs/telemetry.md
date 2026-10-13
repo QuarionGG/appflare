@@ -31,6 +31,11 @@ see it. The anonymous report is how they find out what happens there. Leaving it
 
 Turning it off changes nothing about how Appflare works for you.
 
+The anonymous report is not the usage Appflare shows you. What each of your apps uses
+of Cloudflare, and what it costs, stays in your Appflare; the report only counts
+pausing and resuming an app as jobs, like the others below. See
+[Usage and spend protection](/guides/spend-protection/).
+
 ## What is sent
 
 Every event carries the Appflare version, whether it came from the manager or the
@@ -67,15 +72,15 @@ Once a day, the manager sends one report with:
 ### Jobs (manager)
 
 For each install, update, settings change, rollback, database restore, uninstall,
-deletion of a removed app's kept data, build for review, manager self-update, and
-manager rollback, one event when it starts and one when it ends, with:
+deletion of a removed app's kept data, build for review, pause, resume, manager
+self-update, and manager rollback, one event when it starts and one when it ends, with:
 
 - the kind of job, the app's catalog slug (`custom` for an app from a custom
   catalog or from a repository), the version it moves from and to (none for a custom
   catalog's app, an app from a repository, or an app built from source), the build
   type, where the app comes from (`catalog`, `repository` or `source`), how many
   Workers the app installs, and what started it (an admin, or the schedule for
-  automatic updates); a manager rollback
+  automatic updates and automatic pauses); a manager rollback
   carries its kind only, never the versions it moves between. Nothing about a
   repository is sent: not its address, owner, name, branch or commit;
 - when it ends: whether it succeeded, how long it took, and for a failure, its

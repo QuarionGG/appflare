@@ -326,12 +326,19 @@ describe("UsageTab", () => {
     );
     expect(link?.getAttribute("href")).toBe("/settings/account?reconnect=1#connection");
     expect(text()).toContain("Spend protection");
+    const docs = [...container.querySelectorAll('a[aria-label="Learn more in the docs"]')].map(
+      (a) => a.getAttribute("href"),
+    );
+    expect(docs).toContain(
+      "https://appflare.dev/guides/spend-protection/?utm_source=appflare-manager&utm_medium=app&utm_content=spendProtection",
+    );
   });
 
   it("reconnect with an API token: names the permissions the token needs", async () => {
     await show(scenario("reconnect", { via: "token" }));
     expect(text()).toContain("Give the token access to usage");
-    expect(text()).toContain("Account Analytics (Read) and Workers Observability (Read)");
+    expect(text()).toContain("the Account Analytics (Read) permission");
+    expect(text()).not.toContain("Workers Observability");
     const link = [...container.querySelectorAll("a")].find(
       (a) => a.textContent === "Cloudflare connection",
     );

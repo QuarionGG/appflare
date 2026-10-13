@@ -23,11 +23,8 @@ describe("OAuth scopes of usage and spend protection", () => {
     for (const scope of NEW_SCOPES) expect(MANAGER_OAUTH_API_SCOPES).toContain(scope);
   });
 
-  it("counts for usage only the scopes it reads with, which a token can carry too", () => {
-    expect([...SPEND_PROTECTION_OAUTH_SCOPES]).toEqual([
-      "account-analytics.read",
-      "workers-observability.read",
-    ]);
+  it("counts for usage only the scope it reads with, which a token can carry too", () => {
+    expect([...SPEND_PROTECTION_OAUTH_SCOPES]).toEqual(["account-analytics.read"]);
     const tokenless = MANAGER_OAUTH_ONLY_GROUPS.map((g) => MANAGER_OAUTH_SCOPE_BY_GROUP[g]);
     expect(tokenless.sort()).toEqual(["notifications.read", "notifications.write"]);
     for (const scope of SPEND_PROTECTION_OAUTH_SCOPES) expect(tokenless).not.toContain(scope);
@@ -35,23 +32,15 @@ describe("OAuth scopes of usage and spend protection", () => {
 
   it("names the ones a grant made before they were asked for lacks", () => {
     const older = MANAGER_OAUTH_API_SCOPES.filter((s) => !NEW_SCOPES.includes(s));
-    expect(missingSpendProtectionScopes(older)).toEqual([
-      "account-analytics.read",
-      "workers-observability.read",
-    ]);
+    expect(missingSpendProtectionScopes(older)).toEqual(["account-analytics.read"]);
     // The manager's own check lists all four, so its reconnect prompt names them.
     expect(missingManagerScopes(older)).toEqual(NEW_SCOPES);
-    // Without the notification scopes, usage still works.
-    expect(
-      missingSpendProtectionScopes([
-        ...older,
-        "account-analytics.read",
-        "workers-observability.read",
-      ]),
-    ).toEqual([]);
-    expect(missingSpendProtectionScopes([...older, "account-analytics.read"])).toEqual([
+    // Without Workers Observability and the notification scopes, which nothing
+    // reads with yet, usage still works; Reconnect still asks for them.
+    expect(missingSpendProtectionScopes([...older, "account-analytics.read"])).toEqual([]);
+    expect(missingManagerScopes([...older, "account-analytics.read"])).toContain(
       "workers-observability.read",
-    ]);
+    );
   });
 });
 
