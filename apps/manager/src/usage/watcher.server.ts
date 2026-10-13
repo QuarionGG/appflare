@@ -17,6 +17,7 @@ import {
 } from "./collect";
 import { addAccountResources, changedHours, readWatchedApps, storedIndex } from "./collect.server";
 import { DAY_MS, HOUR_MS, type ProductKey, type Usage } from "./math";
+import { resumeWindows } from "./resume.server";
 import { pruneActivity } from "./store/activity.server";
 import { pruneAlertFirings } from "./store/alert-rules.server";
 import {
@@ -359,6 +360,15 @@ export async function watchSpend(
       for (const c of changes) if (c.hour < cutoff) rewritten.add(c.installId);
     }
     const recent = recentRows(stored, changes, cutoff);
+    // The apps resumed lately, each judged on what it did since: the resume
+    // hour's base comes from the rows as stored before this check wrote any.
+    const resumes = await resumeWindows(db, env.KV, {
+      now,
+      installIds: apps.map((a) => a.installId),
+      usage: usageByInstall([], recent),
+      before,
+      keep: true,
+    });
     const sharded = plan === "free" && shardUnit(env) !== null;
     const history = await loadHistory(db, env.KV, now, sharded ? SUMS_HISTORY : ALL_HISTORY, {
       fresh: rewritten,
@@ -382,12 +392,13 @@ export async function watchSpend(
           sums: usageByInstall(history.series, recent),
           fresh: rewritten,
           budget,
+          resumes,
         },
         report,
       );
     } else {
       const usage = usageByInstall(history.series, recent);
-      const paused = await judge(
+      const { paused } = await judge(
         env,
         db,
         {
@@ -398,12 +409,14 @@ export async function watchSpend(
           states,
           alarms: collected.alarms,
           incomplete: collected.incomplete,
+          installed: new Set(all.map((a) => a.installId)),
+          resumes,
         },
         deps,
         budget,
         report,
       );
-      await writeOverview(env, db, { now, all, plan, usage, paused });
+      await writeOverview(env, db, { now, all, plan, usage, paused, resumes });
     }
     return await finish({ state: "watching", at: now });
   } catch (error) {

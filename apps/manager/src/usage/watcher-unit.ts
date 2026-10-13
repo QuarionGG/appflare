@@ -69,10 +69,25 @@ export function selfSpendWatcher(env: { SELF?: unknown }): SpendWatcherUnitsApi 
   return self === undefined || self === null ? undefined : (self as SpendWatcherUnitsApi);
 }
 
-/** Whether a run scheduled at `scheduledTime` (epoch ms) is a half-hour run (minute 0 or 30). */
+/** The cron's step: runs are five minutes apart. */
+const RUN_STEP_MS = 5 * 60_000;
+
+/**
+ * Whether a run scheduled at `scheduledTime` (epoch ms) is a half-hour run
+ * (minute 0 or 30). Cloudflare's `scheduledTime` is not always the cron's
+ * minute: runs of the minute-0 slot were seen with a scheduled time 13 to 44
+ * seconds past it (rounding to the minute took a run at :00:44 for minute 1
+ * and skipped the half-hour work). A run belongs to the five-minute slot it
+ * falls in, from 30 seconds before the slot to 4.5 minutes after it, so a
+ * late run still does the half-hour work, and the next slot's run never
+ * does it a second time.
+ */
 export function isHalfHourRun(scheduledTime: number): boolean {
-  return new Date(Math.round(scheduledTime / 60_000) * 60_000).getUTCMinutes() % 30 === 0;
+  return Math.floor((scheduledTime + EARLY_MS) / RUN_STEP_MS) % 6 === 0;
 }
+
+/** A run this early is still taken for its slot (a clock a little ahead). */
+const EARLY_MS = 30_000;
 
 /**
  * One scheduled run: the spend watcher, then on half-hour runs the rest of

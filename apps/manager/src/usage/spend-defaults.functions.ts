@@ -19,7 +19,7 @@ export interface SpendProtectionData {
 export const getSpendProtection = createServerFn({ method: "GET" }).handler(
   async (): Promise<SpendProtectionData> => {
     await requireSession();
-    return readSpendOverview(env.DB);
+    return readSpendOverview(env.DB, Date.now(), env.KV);
   },
 );
 

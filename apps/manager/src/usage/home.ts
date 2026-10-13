@@ -1,6 +1,6 @@
 import type { AccountPlan } from "../account/plan";
 import type { UsageAttention } from "./attention";
-import { count, percent, productLabel, usd } from "./attention-format";
+import { count, percent, productLabel, usd, withUnit } from "./attention-format";
 import {
   billedPrice,
   DAY_MS,
@@ -29,8 +29,12 @@ import {
 /** Whole UTC days before today on the charts; with today, 7 days. */
 export const CHART_PAST_DAYS = 6;
 
-/** How long after install an app has no usage yet: Cloudflare's analytics show it about 15 minutes later. */
-export const FRESH_MS = 15 * 60_000;
+/**
+ * How long after install an app has no usage yet: Cloudflare's analytics
+ * name a new Worker only 40 to 50 minutes after its first request (until
+ * then its use is reported under no name), so about an hour.
+ */
+export const FRESH_MS = 60 * 60_000;
 
 /**
  * The current hour is drawn only once this much of it has passed, as a rate
@@ -300,7 +304,7 @@ export function productTabLabel(key: ProductKey): string {
 /** An amount of a product in an hour: "4.4M requests", "0.3 requests". */
 export function productAmount(key: ProductKey, value: number): string {
   const n = value > 0 && value < 10 && !Number.isInteger(value) ? value.toFixed(1) : count(value);
-  return `${n} ${PRODUCTS[key].unit}`;
+  return withUnit(n, PRODUCTS[key].unit);
 }
 
 /**
@@ -402,15 +406,17 @@ export function homeUsageView(input: {
   for (const app of apps) {
     const n = numbers.get(app.id) as HomeUsageApp;
     const rows = attentionOf(attention, app.id);
+    // Fresh only while nothing of it shows yet: a new app that loops shows red, with Pause.
+    const used = [...(byApp.get(app.id)?.values() ?? [])].some((s) => usedInWindow(s) > 0);
     const state: CardState =
       n.paused || rows.paused !== undefined
         ? "paused"
-        : data.now - n.installedAt < FRESH_MS
-          ? "fresh"
-          : rows.usedUp !== undefined
-            ? "capped"
-            : rows.unusual !== undefined
-              ? "runaway"
+        : rows.usedUp !== undefined
+          ? "capped"
+          : rows.unusual !== undefined
+            ? "runaway"
+            : data.now - n.installedAt < FRESH_MS && !used
+              ? "fresh"
               : rows.near !== undefined || (n.ratio !== null && n.ratio >= BUSY_RATIO)
                 ? "busy"
                 : "normal";
@@ -437,6 +443,13 @@ export function homeUsageView(input: {
     const share =
       requestsToday > 0 ? usedToday(seriesOf(app.id, "workers_requests")) / requestsToday : null;
     const busy = state === "busy" ? " · busier than usual" : "";
+    // With no normal yet it is not "far above" one: it uses a lot.
+    const how =
+      rows.unusual?.newApp === true
+        ? rows.unusual.installedRecently === true
+          ? `${label}: a lot for a new app`
+          : `${label}: a lot, no usual usage yet`
+        : `${label} far above normal`;
     const line =
       state === "fresh"
         ? "Just installed"
@@ -444,8 +457,8 @@ export function homeUsageView(input: {
           ? "Paused · no usage since"
           : state === "runaway"
             ? data.plan === "paid" && n.burnPerHour > 0
-              ? `${usd(n.burnPerHour)}/h · ${label} far above normal`
-              : `${label} far above normal`
+              ? `${usd(n.burnPerHour)}/h · ${how}`
+              : how
             : state === "capped"
               ? `${label}: today's free limit used up`
               : share === null
@@ -571,7 +584,8 @@ function burningNow(
   apps: readonly HomeUsageAppName[],
   runaway: boolean,
 ): UsageTile {
-  const burn = new Map(data.apps.map((a) => [a.installId, a.burnPerHour]));
+  // A paused app burns nothing, whatever its last hour's numbers say.
+  const burn = new Map(data.apps.map((a) => [a.installId, a.paused ? 0 : a.burnPerHour]));
   const top = [...apps].sort((a, b) => (burn.get(b.id) ?? 0) - (burn.get(a.id) ?? 0))[0];
   return {
     label: "Burning now",

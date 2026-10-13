@@ -11,10 +11,16 @@ import {
   type ObjectAlarms,
   PERIODS,
   periodEnd,
+  type ResumeWindow,
   spendInPeriod,
   type Usage,
 } from "./math";
-import { type SnapshotApp, type SpendSnapshot, spendSnapshotSchema } from "./overview.server";
+import {
+  type SnapshotApp,
+  type SpendSnapshot,
+  spendSnapshotSchema,
+  stoppedApps,
+} from "./overview.server";
 import { listOpenPauses } from "./store/pauses.server";
 import { readUsage } from "./store/series.server";
 import { readUsageStates } from "./store/usage-state.server";
@@ -89,6 +95,10 @@ export const shardInputSchema = z.object({
   alarms: z.record(z.string(), alarmsSchema),
   /** The account's free daily limit warnings for the part's apps. */
   limitWarnings: z.record(z.string(), warningSchema),
+  /** The resume windows of its apps resumed lately (math/resume.ts), as the check worked them out. */
+  resumes: z
+    .record(z.string(), z.object({ at: z.number(), base: z.record(z.string(), z.number()) }))
+    .default({}),
 });
 export type ShardInput = z.infer<typeof shardInputSchema>;
 
@@ -136,8 +146,9 @@ export async function runShard(
     pruned: null,
   };
   const judged = input.apps.filter((a) => input.judge.includes(a.installId));
+  let resumes = new Map(Object.entries(input.resumes) as Array<[string, ResumeWindow]>);
   if (judged.length > 0) {
-    await judge(
+    ({ resumes } = await judge(
       env,
       db,
       {
@@ -154,11 +165,12 @@ export async function runShard(
         limitWarnings: new Map(
           Object.entries(input.limitWarnings) as Array<[string, LimitWarning]>,
         ),
+        resumes,
       },
       deps,
       SUBREQUEST_BUDGET,
       report,
-    );
+    ));
   }
   return {
     alerts: report.alerts,
@@ -172,6 +184,7 @@ export async function runShard(
         usage.get(app.installId) ?? {},
         app.installedAt,
         app.installId,
+        resumes.get(app.installId),
       ),
     ),
     history: history.source,
@@ -189,9 +202,12 @@ export function appNumbers(
   usage: Usage,
   installedAt: number,
   installId?: string,
+  resume?: ResumeWindow,
 ): SnapshotApp {
   const since = installedAt > 0 && installedAt < now ? installedAt : undefined;
-  const checks = LOOP_LEVEL_NAMES.map((level) => loopCheck({ plan, level, usage, now, since }));
+  const checks = LOOP_LEVEL_NAMES.map((level) =>
+    loopCheck({ plan, level, usage, now, since, ...(resume === undefined ? {} : { resume }) }),
+  );
   const loop = Object.fromEntries(
     LOOP_LEVEL_NAMES.map((level, i) => {
       const c = checks[i];
@@ -261,12 +277,30 @@ export function mergeSnapshot(input: {
   const { plan, now } = input;
   const all = Object.fromEntries(input.sums);
   const soFar = accountOverage(all, plan, now);
-  const ahead = accountOverage(all, plan, now, { projected: true, stopped: input.paused });
+  const ahead = accountOverage(all, plan, now, {
+    projected: true,
+    stopped: stoppedApps(input.sums.keys(), input.apps, input.paused),
+  });
   return {
     computedAt: now,
     plan,
     bill: { now: monthBill(plan, soFar.usd), projected: monthBill(plan, ahead.usd) },
-    apps: input.apps.map((app) => ({ ...app, overageUsd: ahead.byApp[app.installId]?.usd ?? 0 })),
+    apps: input.apps.map((app) => {
+      const paused = input.paused.has(app.installId);
+      // A paused app burns nothing and spends nothing more (as spendSnapshot has it).
+      const spend = paused
+        ? (Object.fromEntries(
+            Object.entries(app.spend).map(([period, s]) => [period, { ...s, projected: s.spent }]),
+          ) as SnapshotApp["spend"])
+        : app.spend;
+      return {
+        ...app,
+        burnPerHour: paused ? 0 : app.burnPerHour,
+        spend,
+        overageUsd: ahead.byApp[app.installId]?.usd ?? 0,
+      };
+    }),
+    stopped: [...input.paused].sort(),
   };
 }
 
@@ -314,6 +348,8 @@ export async function checkInShards(
     fresh: ReadonlySet<string>;
     /** Subrequests the check may make in all; each part takes one. */
     budget: number;
+    /** The apps resumed lately, as the check worked them out (resume.server.ts). */
+    resumes?: ReadonlyMap<string, ResumeWindow>;
   },
   report: SpendWatchReport,
 ): Promise<void> {
@@ -350,6 +386,7 @@ export async function checkInShards(
         incomplete: ids.filter((id) => input.incomplete.has(id)),
         alarms: pick(input.alarms) as Record<string, ObjectAlarms[]>,
         limitWarnings: pick(warnings),
+        resumes: pick(input.resumes ?? new Map()),
       };
       try {
         return await unit.spendShard(shard);

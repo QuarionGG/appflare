@@ -124,6 +124,15 @@ describe("Home's usage totals", () => {
     ]);
   });
 
+  it("Paid: a paused app burns nothing, whatever its last hour's numbers say", () => {
+    const v = view(
+      data({
+        apps: [app("a", { burnPerHour: 0.02 }), app("b", { burnPerHour: 1.66, paused: true })],
+      }),
+    );
+    expect(v.tiles[2]).toMatchObject({ label: "Burning now", value: "$0.02/h" });
+  });
+
   it("Paid: burning now is red and names the app most of it is while one runs away", () => {
     const v = view(data({ apps: [app("a"), app("b", { burnPerHour: 1.02 })] }), [unusual("b")]);
     expect(v.tiles[2]).toMatchObject({
@@ -493,13 +502,43 @@ describe("Home's usage on an app card", () => {
   });
 
   it("a brand-new app: no chart yet, and nothing to press", () => {
-    const d = data({ apps: [app("a", { installedAt: NOW - 6 * 60_000 }), app("b")] });
+    const d = data({
+      apps: [app("a", { installedAt: NOW - 6 * 60_000 }), app("b")],
+      series: [series("b", "workers_requests", 72_000)],
+    });
     expect(view(d).cards.get("a")).toMatchObject({
       state: "fresh",
       points: [],
       line: "Just installed",
       action: null,
     });
+  });
+
+  it("a new app with usage already is not fresh, and one that loops shows red with Pause", () => {
+    const young = { installedAt: NOW - 30 * 60_000 };
+    const d = data({ apps: [app("a", young), app("b")] });
+    expect(view(d).cards.get("a")?.state).toBe("normal");
+    const looping = data({
+      apps: [app("a", { ...young, burnPerHour: 2 }), app("b")],
+      series: [...data().series, series("a", "do_rows_written", 0, 1_000_000)],
+    });
+    const fresh: Extract<UsageAttention, { kind: "unusual" }> = {
+      ...(unusual("a", "do_rows_written") as Extract<UsageAttention, { kind: "unusual" }>),
+      times: null,
+      newApp: true,
+      installedRecently: true,
+    };
+    expect(view(looping, [fresh]).cards.get("a")).toMatchObject({
+      state: "runaway",
+      tone: { kind: "alert" },
+      line: "$2.00/h · Durable Objects rows written: a lot for a new app",
+      action: "pause",
+    });
+    // Installed long ago but with no normal: not "new", and never "far above normal".
+    const rare = { ...fresh, installedRecently: false };
+    expect(view(looping, [rare]).cards.get("a")?.line).toBe(
+      "$2.00/h · Durable Objects rows written: a lot, no usual usage yet",
+    );
   });
 
   it("an app with no requests today says so", () => {

@@ -35,6 +35,7 @@ export function PauseAppButton({
   label,
   size = "base",
   text = "Pause app",
+  calm = false,
 }: {
   installId: string;
   /** What Home calls the app. */
@@ -42,6 +43,11 @@ export function PauseAppButton({
   size?: "sm" | "base";
   /** The button's words: "Pause app" in a row, "Pause" on an app's card. */
   text?: string;
+  /**
+   * The app is running as usual: a secondary button, for pausing it by
+   * choice. Filled and destructive (the default) while it runs away.
+   */
+  calm?: boolean;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -53,7 +59,7 @@ export function PauseAppButton({
         <Button
           {...props}
           size={size}
-          variant="destructive"
+          variant={calm ? "secondary" : "destructive"}
           icon={<PauseIcon />}
           aria-label={`Pause ${label}`}
         >

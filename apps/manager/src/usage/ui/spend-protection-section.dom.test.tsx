@@ -326,6 +326,30 @@ describe("SpendProtectionSection, saving", () => {
     });
   });
 
+  it("saves the budget once its field is left, without Enter", async () => {
+    server.setSpendDefaults.mockImplementation(async ({ data }) => ({
+      ...DEFAULT_SPEND_DEFAULTS,
+      ...data,
+    }));
+    show(BUSY);
+    const field = input("budget");
+    type(field, "80");
+    expect(server.setSpendDefaults).not.toHaveBeenCalled();
+    await leave(field);
+    expect(server.setSpendDefaults).toHaveBeenCalledWith({
+      data: { budget: { on: true, amount: 80 } },
+    });
+  });
+
+  it("refuses a cap of less than a cent, saying the smallest it takes", async () => {
+    show(BUSY);
+    const field = input("cap-amount");
+    type(field, "0.0005");
+    await leave(field);
+    expect(server.setSpendDefaults).not.toHaveBeenCalled();
+    expect(text()).toContain("Enter an amount of dollars from $0.01 to $100,000.");
+  });
+
   it("does not save an amount that is not one, and says what is wrong", async () => {
     show(BUSY);
     const field = input("budget");

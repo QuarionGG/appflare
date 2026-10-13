@@ -127,7 +127,13 @@ describe("buildUsageTab", () => {
     expect(status.pause).toMatchObject({
       by: null,
       cause: { reason: "cap", amount: 2, period: "day" },
-      stillPastCap: { amount: 2, period: "day", spent: 2.31, resetsAt: Date.UTC(2026, 9, 13) },
+      // What it spent today by the latest numbers, past the $2 cap.
+      stillPastCap: {
+        amount: 2,
+        period: "day",
+        spent: expect.closeTo(2.37, 2),
+        resetsAt: Date.UTC(2026, 9, 13),
+      },
     });
     expect(tab.pause).toEqual(status.pause);
   });

@@ -49,6 +49,54 @@ describe("the parts' numbers", () => {
         ),
       });
       expect(merged).toEqual(whole);
+      // The paused app burns nothing, and the numbers name it as stopped.
+      expect(whole.apps.find((a) => a.installId === "b")?.burnPerHour).toBe(0);
+      expect(whole.apps.find((a) => a.installId === "a")?.burnPerHour).toBeGreaterThan(0);
+      expect(whole.stopped).toEqual(["b"]);
     }
+  });
+
+  it("project nothing more for removed and paused apps: the bill ends at what they used", () => {
+    const all = new Map([
+      ["a", usage(1)],
+      ["gone", usage(50)],
+    ]);
+    const installs = [{ installId: "a", installedAt: NOW - 30 * DAY_MS }];
+    const withGone = spendSnapshot({
+      plan: "paid",
+      now: NOW,
+      usage: all,
+      installs,
+      paused: new Set(),
+    });
+    // The same usage with "gone" still installed: its pace is projected.
+    const stillThere = spendSnapshot({
+      plan: "paid",
+      now: NOW,
+      usage: all,
+      installs: [...installs, { installId: "gone", installedAt: NOW - 30 * DAY_MS }],
+      paused: new Set(),
+    });
+    // The removed app's use this month is in the bill; its pace is not.
+    expect(withGone.bill.now).toBeCloseTo(stillThere.bill.now, 6);
+    expect(withGone.bill.projected).toBeLessThan(stillThere.bill.projected - 100);
+    const paused = spendSnapshot({
+      plan: "paid",
+      now: NOW,
+      usage: all,
+      installs,
+      paused: new Set(["a"]),
+    });
+    expect(paused.bill.projected).toBeCloseTo(paused.bill.now, 6);
+    const a = paused.apps[0];
+    expect(a?.spend.month.projected).toBe(a?.spend.month.spent);
+    const merged = mergeSnapshot({
+      plan: "paid",
+      now: NOW,
+      sums: all,
+      paused: new Set(["a"]),
+      apps: [appNumbers("paid", NOW, usage(1), NOW - 30 * DAY_MS, "a")],
+    });
+    expect(merged).toEqual(paused);
   });
 });

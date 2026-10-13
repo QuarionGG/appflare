@@ -311,7 +311,7 @@ describe("usage on Home's app cards", () => {
   it("a brand-new app says when its usage shows up", () => {
     render(usage());
     const fresh = card("new");
-    expect(fresh?.textContent).toContain("Usage shows up about 15 minutes after install");
+    expect(fresh?.textContent).toContain("Usage shows up about an hour after install");
     expect(fresh?.textContent).toContain("Just installed");
     expect(fresh?.querySelector("[data-card-chart]")).toBeNull();
   });

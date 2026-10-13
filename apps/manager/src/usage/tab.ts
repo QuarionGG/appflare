@@ -23,8 +23,12 @@ export const usageTabInput = z.strictObject({ installId: z.string().min(1).max(6
 export const USAGE_RANGES = ["24h", "7d", "30d"] as const;
 export type UsageRange = (typeof USAGE_RANGES)[number];
 
-/** Cloudflare's analytics show a new app's usage about this long after it is installed. */
-export const FRESH_MS = 15 * 60_000;
+/**
+ * Cloudflare's analytics show a new app's usage about this long after it is
+ * installed: a new Worker's use is reported under no name for 40 to 50
+ * minutes (the watcher fills those hours in once it is named).
+ */
+export const FRESH_MS = 60 * 60_000;
 
 /** An hour this many times its normal or more makes a product stand out ("4× normal"). */
 export const HOT_RATIO = 3;
@@ -106,6 +110,10 @@ export type UsageStatus =
       product: ProductKey;
       perHour: number;
       ratio: number | null;
+      /** A new app (no normal yet) using a lot, rather than one far above its normal. */
+      newApp?: boolean;
+      /** With `newApp`: installed within the last 7 days, so "new". */
+      installedRecently?: boolean;
       since: number | null;
       burnPerHour: number;
       spentToday: number;
@@ -143,7 +151,15 @@ export type UsageEvent = { id: string; at: number } & (
       /** What changed, as the job recorded it: "Check interval set to 10", "API key changed". */
       changes: string[];
     }
-  | { kind: "unusual_started"; product: string | null; times: number | null }
+  | {
+      kind: "unusual_started";
+      product: string | null;
+      times: number | null;
+      /** A new app (no normal yet) using a lot. */
+      newApp?: boolean;
+      /** With `newApp`: installed within the last 7 days, so "new". */
+      installedRecently?: boolean;
+    }
   | { kind: "unusual_ended"; startedAt: number }
   | { kind: "alert_sent"; sentence: string }
   | { kind: "limit_near"; product: string; share: number; runsOutAt: number | null }

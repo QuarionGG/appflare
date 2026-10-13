@@ -69,7 +69,7 @@ describe("statusLine", () => {
       [
         { kind: "fresh", installedAt: NOW - 6 * 60_000 },
         "muted",
-        "Installed 6 minutes ago. Cloudflare reports a new app's usage after about 15 minutes.",
+        "Installed 6 minutes ago. Cloudflare reports a new app's usage after about an hour.",
       ],
       [
         { kind: "reconnect", via: "oauth" },
@@ -226,6 +226,43 @@ describe("eventCopy", () => {
         true,
       ],
       [
+        {
+          ...base,
+          kind: "unusual_started",
+          product: "do_rows_written",
+          times: null,
+          newApp: true,
+          installedRecently: true,
+        },
+        "Unusual usage",
+        "Durable Objects rows written: a lot for a new app, with no usual week yet to compare with.",
+        true,
+      ],
+      [
+        {
+          ...base,
+          kind: "unusual_started",
+          product: "do_rows_written",
+          times: null,
+          newApp: true,
+          installedRecently: false,
+        },
+        "Unusual usage",
+        "Durable Objects rows written: a lot, with no usual usage to compare against yet.",
+        true,
+      ],
+      [
+        {
+          ...base,
+          kind: "pause_failed",
+          error:
+            "Cloudflare refused the change: a binding points to something that no longer exists. The job log has the details.",
+        },
+        "Pause failed",
+        "Cloudflare refused the change: a binding points to something that no longer exists. The job log has the details.",
+        true,
+      ],
+      [
         { ...base, kind: "alert_sent", sentence: "When it has spent $6.00 this month" },
         "Usage alert sent",
         "When it has spent $6.00 this month.",
@@ -323,6 +360,14 @@ describe("amounts", () => {
     expect(amount(3.42, "r2_storage")).toBe("3.4 GB");
     expect(usedText(4_200_000, "do_requests")).toBe("4.2M Durable Objects requests");
     expect(usedText(300, "do_duration")).toBe("300 GB-s of Durable Objects duration");
+  });
+
+  it("is singular after 1", () => {
+    expect(amount(1, "workers_requests")).toBe("1 request");
+    expect(amount(1, "workflow_steps")).toBe("1 step");
+    expect(amount(1, "r2_class_a")).toBe("1 operation");
+    expect(amount(1, "do_duration")).toBe("1 GB-s");
+    expect(usedText(1, "do_requests")).toBe("1 Durable Objects request");
   });
 
   it("says how fresh the numbers are", () => {

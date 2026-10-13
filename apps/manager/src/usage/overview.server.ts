@@ -26,12 +26,14 @@ import {
   type ProductKey,
   periodEnd,
   periodStart,
+  type ResumeWindow,
   spendInPeriod,
   type Usage,
 } from "./math";
 import { NORMAL_DAYS } from "./math/projection";
 import type { HourValue } from "./math/series";
 import type { SpendApp, SpendOverview } from "./overview";
+import { recentResumes, resumeWindows } from "./resume.server";
 import { readCustomizedAppSpendSettings } from "./store/app-settings.server";
 import { readSpendDefaults } from "./store/defaults.server";
 import { listOpenPauses } from "./store/pauses.server";
@@ -92,6 +94,12 @@ export const spendSnapshotSchema = z.object({
   bill: z.object({ now: finite, projected: finite }),
   /** Every app in the account (not removed) when they were computed. */
   apps: z.array(snapshotAppSchema),
+  /**
+   * The paused apps they treat as stopped (no burn, nothing more projected).
+   * Once the open pauses differ (a pause or resume since), they are stale.
+   * Missing in numbers stored before this was kept: read as matching.
+   */
+  stopped: z.array(z.string()).optional(),
 });
 export type SpendSnapshot = z.infer<typeof spendSnapshotSchema>;
 export type SnapshotApp = z.infer<typeof snapshotAppSchema>;
@@ -176,21 +184,52 @@ async function readListedInstalls(d1: D1Database): Promise<ListedInstall[]> {
  * the math), so the hours before it existed do not count as idle ones. Paused
  * apps are projected as using nothing more (storage aside).
  */
-export async function computeSpendOverview(d1: D1Database, now: number): Promise<SpendSnapshot> {
+export async function computeSpendOverview(
+  d1: D1Database,
+  now: number,
+  kv?: KVNamespace,
+): Promise<SpendSnapshot> {
   const db = createDb(d1);
-  const [listed, plan, pauses, usage] = await Promise.all([
+  const [listed, plan, pauses, usage, resumed] = await Promise.all([
     readListedInstalls(d1),
     readAccountPlan(db),
     listOpenPauses(db),
     readAccountUsage(db, now),
+    recentResumes(db, now),
   ]);
+  // Apps resumed lately are judged on what they did since, as the watcher
+  // judges them; the bases the watcher kept are read, none are written.
+  const resumes = await resumeWindows(db, kv, {
+    now,
+    installIds: listed.map((i) => i.id),
+    usage,
+    resumes: resumed,
+    keep: false,
+  });
   return spendSnapshot({
     plan,
     now,
     usage,
     installs: listed.map((i) => ({ installId: i.id, installedAt: i.installedAt })),
     paused: new Set(pauses.map((p) => p.installId)),
+    resumes,
   });
+}
+
+/**
+ * The apps whose use has stopped, for the month's projection: the paused
+ * ones, and the removed ones (their use this month counts toward the bill,
+ * but they use nothing more, however busy their last day was).
+ */
+export function stoppedApps(
+  withUsage: Iterable<string>,
+  installs: readonly { installId: string }[],
+  paused: ReadonlySet<string>,
+): Set<string> {
+  const listed = new Set(installs.map((i) => i.installId));
+  const out = new Set(paused);
+  for (const id of withUsage) if (!listed.has(id)) out.add(id);
+  return out;
 }
 
 /** The snapshot from the series. Pure. */
@@ -201,16 +240,25 @@ export function spendSnapshot(input: {
   usage: ReadonlyMap<string, Usage>;
   /** The apps to give numbers for, with their install times (epoch ms). */
   installs: readonly { installId: string; installedAt: number }[];
+  /** Paused apps: stopped, so they burn nothing and their projections end at what they used. */
   paused: ReadonlySet<string>;
+  /** Apps resumed lately: their loop numbers count only what they did after (math/resume.ts). */
+  resumes?: ReadonlyMap<string, ResumeWindow>;
 }): SpendSnapshot {
   const { plan, now } = input;
   const all = Object.fromEntries(input.usage);
   const soFar = accountOverage(all, plan, now);
-  const ahead = accountOverage(all, plan, now, { projected: true, stopped: input.paused });
+  const ahead = accountOverage(all, plan, now, {
+    projected: true,
+    stopped: stoppedApps(input.usage.keys(), input.installs, input.paused),
+  });
   const apps = input.installs.map(({ installId, installedAt }): SnapshotApp => {
     const usage = input.usage.get(installId) ?? {};
     const since = installedAt > 0 && installedAt < now ? installedAt : undefined;
-    const checks = LOOP_LEVEL_NAMES.map((level) => loopCheck({ plan, level, usage, now, since }));
+    const resume = input.resumes?.get(installId);
+    const checks = LOOP_LEVEL_NAMES.map((level) =>
+      loopCheck({ plan, level, usage, now, since, ...(resume === undefined ? {} : { resume }) }),
+    );
     const loop = Object.fromEntries(
       LOOP_LEVEL_NAMES.map((level, i) => {
         const c = checks[i];
@@ -220,16 +268,21 @@ export function spendSnapshot(input: {
         ];
       }),
     ) as SnapshotApp["loop"];
+    const paused = input.paused.has(installId);
     const spend = Object.fromEntries(
       PERIODS.map((period) => {
         const s = spendInPeriod(usage, period, now, { since });
-        return [period, { spent: s.spent, projected: s.projected, resetsAt: s.resetsAt }];
+        // Paused: it spends nothing more this period.
+        return [
+          period,
+          { spent: s.spent, projected: paused ? s.spent : s.projected, resetsAt: s.resetsAt },
+        ];
       }),
     ) as SnapshotApp["spend"];
     return {
       installId,
-      // Burn and ratio do not depend on the level.
-      burnPerHour: checks[0]?.burn ?? 0,
+      // Burn and ratio do not depend on the level. A paused app burns nothing.
+      burnPerHour: input.paused.has(installId) ? 0 : (checks[0]?.burn ?? 0),
       ratio: checks[0]?.ratio ?? null,
       loop,
       spend,
@@ -241,6 +294,7 @@ export function spendSnapshot(input: {
     plan,
     bill: { now: monthBill(plan, soFar.usd), projected: monthBill(plan, ahead.usd) },
     apps,
+    stopped: [...input.paused].sort(),
   };
 }
 
@@ -253,14 +307,23 @@ export function spendSnapshot(input: {
 export async function writeSpendOverviewSnapshot(
   d1: D1Database,
   now: number = Date.now(),
+  kv?: KVNamespace,
 ): Promise<SpendSnapshot> {
-  const snapshot = await computeSpendOverview(d1, now);
+  const snapshot = await computeSpendOverview(d1, now, kv);
   await writeSettings(
     createDb(d1),
     { [SETTING.spendOverview]: JSON.stringify(snapshot) },
     new Date(now),
   );
   return snapshot;
+}
+
+/**
+ * The numbers the watcher stored last, however old: one settings read. Null
+ * when there are none.
+ */
+export async function readStoredSnapshot(db: Database): Promise<SpendSnapshot | null> {
+  return parseSnapshot((await readSettings(db, [SETTING.spendOverview]))[SETTING.spendOverview]);
 }
 
 /** The stored snapshot, or null when there is none or it does not read as one. */
@@ -271,6 +334,22 @@ function parseSnapshot(raw: string | undefined): SpendSnapshot | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the numbers treat as stopped exactly the apps paused now. After a
+ * pause or a resume they do not, until the next check (or a page) works
+ * them out again: until then Home would project a paused app's pace to the
+ * month's end, or none for one resumed. Numbers stored before they named
+ * their stopped apps count as matching.
+ */
+export function sameStopped(snapshot: SpendSnapshot, paused: ReadonlySet<string>): boolean {
+  if (snapshot.stopped === undefined) return true;
+  const listed = new Set(snapshot.apps.map((a) => a.installId));
+  // Only the apps the numbers are for: a removed app's open pause changes nothing shown.
+  const stopped = snapshot.stopped.filter((id) => listed.has(id));
+  const now = [...paused].filter((id) => listed.has(id));
+  return stopped.length === now.length && now.every((id) => stopped.includes(id));
 }
 
 /** A snapshot computed for another plan, too long ago, or (by a skewed clock) later than now is stale. */
@@ -304,6 +383,8 @@ function emptyNumbers(installId: string, now: number): SnapshotApp {
 export async function readSpendOverview(
   d1: D1Database,
   now: number = Date.now(),
+  /** The watcher's KV, for the resume bases it kept; without it the bases are taken as now. */
+  kv?: KVNamespace,
 ): Promise<{ defaults: SpendDefaults; overview: SpendOverview }> {
   const db = createDb(d1);
   const [listed, plan, defaults, customized, pauses, grant, stored] = await Promise.all([
@@ -315,14 +396,14 @@ export async function readSpendOverview(
     readGrant(d1),
     readSettings(db, [SETTING.spendOverview]),
   ]);
+  const paused = new Set(pauses.map((p) => p.installId));
   let snapshot = parseSnapshot(stored[SETTING.spendOverview]);
-  if (snapshot === null || !isFresh(snapshot, plan, now)) {
-    snapshot = await writeSpendOverviewSnapshot(d1, now);
+  if (snapshot === null || !isFresh(snapshot, plan, now) || !sameStopped(snapshot, paused)) {
+    snapshot = await writeSpendOverviewSnapshot(d1, now, kv);
   }
   const numbers = new Map(snapshot.apps.map((a) => [a.installId, a]));
   const labels = distinctLabels(listed);
   const own = new Map(customized.map((s) => [s.installId, s]));
-  const paused = new Set(pauses.map((p) => p.installId));
 
   const apps: SpendApp[] = listed.map((install) => {
     const settings = resolveSpendSettings(
@@ -332,6 +413,8 @@ export async function readSpendOverview(
     const n = numbers.get(install.id) ?? emptyNumbers(install.id, now);
     return {
       ...n,
+      // Paused: nothing of it runs, whatever the numbers were computed from.
+      burnPerHour: paused.has(install.id) ? 0 : n.burnPerHour,
       installId: install.id,
       label: labels.get(install.id) ?? install.name,
       paused: paused.has(install.id),

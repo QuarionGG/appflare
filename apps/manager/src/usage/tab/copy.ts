@@ -3,11 +3,13 @@ import { pauseCauseSentence } from "../attention-cause";
 import {
   count,
   fullCount,
+  labelAfter,
   percent,
   productLabel,
   productRate,
   times,
   usd,
+  withUnit,
 } from "../attention-format";
 import { PRODUCTS, type ProductKey } from "../math";
 import type { ProductUsage, UsageEvent, UsageRange, UsageStatus } from "../tab";
@@ -46,7 +48,7 @@ function levelNumber(value: number): string {
 /** An amount of a product: "48K requests", "3.4 GB". */
 export function amount(value: number, key: ProductKey): string {
   const p = PRODUCTS[key];
-  return `${p.measure === "level" ? levelNumber(value) : count(value)} ${p.unit}`;
+  return withUnit(p.measure === "level" ? levelNumber(value) : count(value), p.unit);
 }
 
 /** What it used of a product, in a sentence: "4.2M Durable Objects requests", "300 GB-s of Durable Objects duration". */
@@ -54,8 +56,8 @@ export function usedText(value: number, key: ProductKey): string {
   const p = PRODUCTS[key];
   const n = p.measure === "level" ? levelNumber(value) : count(value);
   return p.label.toLowerCase().includes(p.unit.toLowerCase())
-    ? `${n} ${p.label}`
-    : `${n} ${p.unit} of ${p.label}`;
+    ? `${n} ${labelAfter(n, p.label, p.unit)}`
+    : `${withUnit(n, p.unit)} of ${p.label}`;
 }
 
 const RANGE_WORDS: Record<UsageRange, string> = {
@@ -112,7 +114,7 @@ export function statusLine(
     case "fresh":
       return {
         tone: "muted",
-        text: `Installed ${minutesWord(context.now - status.installedAt)} ago. Cloudflare reports a new app's usage after about 15 minutes.`,
+        text: `Installed ${minutesWord(context.now - status.installedAt)} ago. Cloudflare reports a new app's usage after about an hour.`,
       };
     case "empty":
       return { tone: "muted", text: "No usage recorded for this app in the last 30 days." };
@@ -142,7 +144,11 @@ export function statusLine(
           : ` About ${usd(status.burnPerHour)} an hour.`;
       return {
         tone: "bad",
-        text: `Far above normal: ${productRate(status.product, status.perHour)}${since}${ratio}.${money}`,
+        text: status.newApp
+          ? status.installedRecently === true
+            ? `New and already using a lot: ${productRate(status.product, status.perHour)}${since}.${money}`
+            : `Already using a lot, with no usual usage to compare against yet: ${productRate(status.product, status.perHour)}${since}.${money}`
+          : `Far above normal: ${productRate(status.product, status.perHour)}${since}${ratio}.${money}`,
       };
     }
     case "busy":
@@ -197,8 +203,9 @@ export function stateBanner(status: UsageStatus, autoPause: boolean): BannerCopy
             : " It started right after a settings change.";
       return {
         variant: "error",
-        title:
-          status.since === null
+        title: status.newApp
+          ? `${status.installedRecently === true ? "New and already using a lot" : "Using a lot"}${status.since === null ? "" : ` since ${clock(status.since)}`}`
+          : status.since === null
             ? "Far above normal"
             : `Far above normal since ${clock(status.since)}`,
         description: `${productRate(status.product, status.perHour)}. ${money}${after} Auto-pause is ${autoPause ? "on" : "off"} for this app.`,
@@ -319,8 +326,15 @@ export function eventCopy(
         alert: false,
       };
     case "unusual_started": {
-      const what =
-        event.product !== null && event.times !== null
+      const lot =
+        event.installedRecently === true
+          ? "a lot for a new app, with no usual week yet to compare with."
+          : "a lot, with no usual usage to compare against yet.";
+      const what = event.newApp
+        ? event.product !== null
+          ? `${productLabel(event.product)}: ${lot}`
+          : `${lot.charAt(0).toUpperCase()}${lot.slice(1)}`
+        : event.product !== null && event.times !== null
           ? `${productLabel(event.product)} at about ${times(event.times)} this app's normal.`
           : "Far above this app's normal.";
       const sent =

@@ -23,7 +23,7 @@ import { Sparkline } from "./sparkline";
  * "Usage by product": how the app is doing in one line, the range, a large
  * chart of the product picked in the table under it, and the table of every
  * product the app uses. A brand-new app (Cloudflare reports nothing for
- * about 15 minutes) and a connection without the usage permissions show
+ * about an hour) and a connection without the usage permissions show
  * why there is nothing yet instead.
  */
 
@@ -88,7 +88,7 @@ export function FreshUsage({
   return (
     <SectionEmpty
       icon={<ClockIcon size={48} className="text-kumo-inactive" />}
-      title="Usage shows up about 15 minutes after install"
+      title="Usage shows up about an hour after install"
       description={`Installed ${minutes === 1 ? "1 minute" : `${minutes} minutes`} ago. Until Cloudflare reports its usage, alerts and auto-pause can't see this app; they start with the first numbers. ${logsOn ? "Workers Logs are on, so its requests show in Cloudflare's logs already." : "Workers Logs show it within a couple of minutes."}`}
       contents={
         isAdmin && !logsOn ? (

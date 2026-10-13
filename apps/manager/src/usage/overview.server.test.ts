@@ -17,7 +17,7 @@ import {
 } from "./overview.server";
 import { writeAppSpendSettings } from "./store/app-settings.server";
 import { writeSpendDefaults } from "./store/defaults.server";
-import { openPause } from "./store/pauses.server";
+import { closePause, openPause } from "./store/pauses.server";
 import { type HourlyUsage, recordHourlyUsage } from "./store/series.server";
 
 /**
@@ -191,6 +191,29 @@ describe("readSpendOverview", () => {
     expect(loopingNow(after.overview.apps, "standard")).toEqual([]);
   });
 
+  it("counts only what an app did since its resume, when a page works the numbers out", async () => {
+    await install("loop", "Service status");
+    await record(loopRows("loop"));
+    // Paused for the loop, then resumed ten minutes ago, quiet since.
+    await openPause(db(), {
+      installId: "loop",
+      pausedBy: "auto",
+      reason: "loop",
+      pausedAt: new Date(NOW - HOUR),
+    });
+    await closePause(db(), "loop", {
+      resumedBy: "u1",
+      resumedAt: new Date(NOW - 10 * 60_000),
+      resumeJobId: "job-1",
+    });
+    const snapshot = await computeSpendOverview(env.DB, NOW, env.KV);
+    const app = snapshot.apps.find((a) => a.installId === "loop");
+    expect(app?.burnPerHour).toBe(0);
+    expect(app?.loop.strict.trips).toBe(false);
+    // The day's spend still counts the loop.
+    expect(app?.spend.day.spent).toBeCloseTo(4.5, 6);
+  });
+
   it("tells apps on the account's triggers from apps with their own", async () => {
     await install("a", "Bookmarks");
     await install("b", "Journal");
@@ -289,7 +312,15 @@ describe("the stored numbers", () => {
     await openPause(db(), { installId: "a", pausedBy: "u1", reason: "manual" });
     await install("c", "Files");
     const { overview } = await readSpendOverview(env.DB, NOW + 60_000);
-    expect(overview.computedAt).toBe(NOW);
+    // A pause since: the numbers are worked out again, with the paused app stopped.
+    expect(overview.computedAt).toBe(NOW + 60_000);
+    expect((await stored()).stopped).toEqual(["a"]);
+    expect(overview.apps.find((app) => app.installId === "a")).toMatchObject({
+      paused: true,
+      burnPerHour: 0,
+    });
+    // Read again with nothing changed: the stored numbers serve.
+    expect((await readSpendOverview(env.DB, NOW + 120_000)).overview.computedAt).toBe(NOW + 60_000);
     expect(overview.budgetPick).toBe("b");
     const files = overview.apps.find((app) => app.installId === "c");
     expect(files).toMatchObject({ label: "Files", burnPerHour: 0, overageUsd: 0, paused: false });

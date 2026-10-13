@@ -5,12 +5,14 @@ import { usd } from "./attention-format";
 import {
   accountOverage,
   budgetReached,
-  burnPerHour,
   capStatus,
+  DAY_MS,
   dayStart,
   freeDailyLimit,
   HOUR_MS,
+  heavyNewUse,
   type LoopCheck,
+  lastHourRate,
   loopCheck,
   monthBill,
   nextLoopStreak,
@@ -23,12 +25,16 @@ import {
   type ProductKey,
   periodStart,
   project,
+  type ResumeWindow,
+  resumeMatters,
   spendInPeriod,
   type UnusualSetting,
   type Usage,
   unusualUsage,
   usageAlertStatus,
+  usageSinceResume,
 } from "./math";
+import { NORMAL_DAYS } from "./math/projection";
 import { addSeries, sumBetween } from "./math/series";
 import type { ActivityFacts } from "./store/activity";
 import type { AlertRule } from "./store/alert-rules.server";
@@ -88,6 +94,12 @@ export interface WatchedAppInput {
   /** Alarms of each namespace's busiest object over the last 60 minutes. */
   objectAlarms: readonly ObjectAlarms[];
   rules: readonly AlertRule[];
+  /**
+   * Its last resume, while it still shapes the last hour's window
+   * (`resumeMatters`): the loop check and unusual usage judge only what it
+   * did after it. Spend, caps and the budget count the whole period.
+   */
+  resume?: ResumeWindow | null;
 }
 
 /** How long a failed pause holds off the next automatic pause of the app. */
@@ -103,6 +115,12 @@ export interface EvaluateInput {
    * free daily limits are the account's.
    */
   accountUsage: ReadonlyMap<string, Usage>;
+  /**
+   * The installs not removed (new ones too young to judge included): the
+   * month's projection leaves the others' pace out. Without it, every
+   * install in `accountUsage` is projected.
+   */
+  installed?: ReadonlySet<string>;
   /** The account's monthly budget in dollars including the $5 plan; null when off. */
   budget: number | null;
   /** A `budget_reached` entry was recorded this month already. */
@@ -196,15 +214,22 @@ function unusualSetting(factor: number | null): UnusualSetting {
 
 /**
  * Whether some product is still at least half the factor above its normal:
- * an open episode stays open until it is not.
+ * an open episode stays open until it is not. After a resume only the use
+ * since it counts.
  */
-function stillUnusual(usage: Usage, now: number, factor: number): boolean {
+function stillUnusual(
+  usage: Usage,
+  now: number,
+  factor: number,
+  resume: ResumeWindow | undefined,
+): boolean {
+  const recent = resume === undefined ? usage : usageSinceResume(usage, resume);
   for (const key of PRODUCT_KEYS) {
     const series = usage[key];
     if (series === undefined || PRODUCTS[key].measure !== "count") continue;
     const normal = normalHour(series, now);
     if (normal === null || normal <= 0) continue;
-    if (sumBetween(series, now - HOUR_MS, now, now) >= (normal * factor) / 2) return true;
+    if (lastHourRate(recent[key] ?? [], now, resume?.at) >= (normal * factor) / 2) return true;
   }
   return false;
 }
@@ -348,36 +373,93 @@ export function evaluate(input: EvaluateInput): Decisions {
     const { installId, usage, settings, state } = app;
     // Projections start at the install, as the pages' numbers do (overview.server.ts).
     const since = app.installedAt > 0 && app.installedAt < now ? app.installedAt : undefined;
+    const resume = app.resume != null && resumeMatters(app.resume.at, now) ? app.resume : undefined;
+    // First check since a resume: the app starts over. Its loop streak and
+    // an episode still open from before the pause end here.
+    const freshResume =
+      resume !== undefined && (state.lastCheckedAt === null || resume.at > state.lastCheckedAt);
+    const before = {
+      loopChecks: freshResume ? 0 : state.loopChecks,
+      unusualSince: freshResume ? null : state.unusualSince,
+    };
     const next: Omit<UsageState, "lastCheckedAt"> = {
       installId,
-      loopChecks: state.loopChecks,
-      unusualSince: state.unusualSince,
+      loopChecks: before.loopChecks,
+      unusualSince: before.unusualSince,
       limitWarnedDay: state.limitWarnedDay,
       lastBurn: state.lastBurn,
       normalBurn: state.normalBurn,
     };
+    if (freshResume && state.unusualSince !== null) {
+      out.activities.push({
+        installId,
+        kind: "unusual_ended",
+        facts: { startedAt: state.unusualSince },
+      });
+    }
 
-    // Unusual usage.
+    // Loop check, every check, so the streak and the burn are always current.
+    const level = settings.triggers.loop.level;
+    const check = loopCheck({
+      plan,
+      level,
+      usage,
+      now,
+      objectAlarms: app.objectAlarms,
+      since,
+      ...(resume === undefined ? {} : { resume }),
+    });
+
+    // Unusual usage; for an app with no normal yet, using a lot.
     const setting = unusualSetting(settings.unusual.factor);
-    const unusual = unusualUsage({ plan, setting, usage, now });
-    if (unusual !== null && state.unusualSince === null && setting !== "off") {
-      const burn = burnPerHour(usage, now);
-      const spentToday = spendInPeriod(usage, "day", now, { since }).spent;
-      const limit = freeDailyLimit(unusual.product);
-      const freeShare =
-        plan === "free" && limit !== null
-          ? project(usage[unusual.product] ?? [], "day", now, { since }).projected / limit
+    const scope = {
+      plan,
+      usage,
+      now,
+      ...(since === undefined ? {} : { since }),
+      ...(resume === undefined ? {} : { resume }),
+    };
+    const unusual = unusualUsage({ ...scope, setting });
+    const heavy = unusual === null && setting !== "off" ? heavyNewUse(scope) : null;
+    const started =
+      unusual !== null
+        ? {
+            product: unusual.product,
+            perHour: unusual.lastHour,
+            times: unusual.ratio as number | null,
+            freeShare: null as number | null,
+          }
+        : heavy !== null
+          ? {
+              product: heavy.product,
+              perHour: heavy.lastHour,
+              times: null,
+              freeShare: heavy.freeShare,
+            }
           : null;
+    if (started !== null && before.unusualSince === null && setting !== "off") {
+      const spentToday = spendInPeriod(usage, "day", now, { since }).spent;
+      const limit = freeDailyLimit(started.product);
+      const freeShare =
+        started.freeShare ??
+        (plan === "free" && limit !== null
+          ? project(usage[started.product] ?? [], "day", now, { since }).projected / limit
+          : null);
       next.unusualSince = now;
+      // No normal yet: "new" only for an app installed within the normal's week.
+      const installedRecently =
+        started.times === null && app.installedAt > now - NORMAL_DAYS * DAY_MS;
       out.activities.push({
         installId,
         kind: "unusual_started",
         facts: {
           factor: setting,
-          times: unusual.ratio,
-          product: unusual.product,
-          perHour: unusual.lastHour,
-          burnPerHour: burn,
+          // An app with no normal has none to be a multiple of: 0, and `newApp`.
+          times: started.times ?? 0,
+          ...(started.times === null ? { newApp: true, installedRecently } : {}),
+          product: started.product,
+          perHour: started.perHour,
+          burnPerHour: check.burn,
           spentToday,
           ...(freeShare === null ? {} : { freeShare }),
         },
@@ -387,25 +469,27 @@ export function evaluate(input: EvaluateInput): Decisions {
         installId,
         plan,
         since: now,
-        product: unusual.product,
-        perHour: unusual.lastHour,
-        times: unusual.ratio,
+        product: started.product,
+        perHour: started.perHour,
+        times: started.times,
+        ...(started.times === null ? { installedRecently } : {}),
         factor: setting,
-        burnPerHour: burn,
+        burnPerHour: check.burn,
         spentToday,
         freeShare,
       });
     } else if (
-      state.unusualSince !== null &&
-      unusual === null &&
+      before.unusualSince !== null &&
+      started === null &&
       !app.incomplete &&
-      (setting === "off" || !stillUnusual(usage, now, setting))
+      (setting === "off" ||
+        (!stillUnusual(usage, now, setting, resume) && heavyNewUse(scope, 0.5) === null))
     ) {
       next.unusualSince = null;
       out.activities.push({
         installId,
         kind: "unusual_ended",
-        facts: { startedAt: state.unusualSince },
+        facts: { startedAt: before.unusualSince },
       });
     }
 
@@ -479,13 +563,10 @@ export function evaluate(input: EvaluateInput): Decisions {
       }
     }
 
-    // Loop check, every check, so the streak and the burn are always current.
-    const level = settings.triggers.loop.level;
-    const check = loopCheck({ plan, level, usage, now, objectAlarms: app.objectAlarms, since });
     const streak =
       app.incomplete && !check.trips && !app.paused
-        ? { streak: state.loopChecks, pause: false }
-        : nextLoopStreak(state.loopChecks, check.trips && !app.paused);
+        ? { streak: before.loopChecks, pause: false }
+        : nextLoopStreak(before.loopChecks, check.trips && !app.paused);
     next.loopChecks = streak.streak;
     next.lastBurn = check.burn;
     next.normalBurn = check.normal;
@@ -517,7 +598,12 @@ export function evaluate(input: EvaluateInput): Decisions {
   // The monthly budget (Workers Paid only).
   if (plan === "paid" && input.budget !== null && input.budget > 0) {
     const apps = Object.fromEntries(input.accountUsage);
-    const overage = accountOverage(apps, plan, now, { projected: true, stopped });
+    // Removed apps count toward the bill so far, but use nothing more.
+    const ended = new Set(stopped);
+    if (input.installed !== undefined) {
+      for (const id of input.accountUsage.keys()) if (!input.installed.has(id)) ended.add(id);
+    }
+    const overage = accountOverage(apps, plan, now, { projected: true, stopped: ended });
     const projected = monthBill(plan, overage.usd);
     if (budgetReached(projected, input.budget)) {
       const monthStart = periodStart("month", now) / 1000;

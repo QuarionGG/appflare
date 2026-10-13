@@ -247,7 +247,7 @@ export async function readHomeUsage(
   now: number = Date.now(),
 ): Promise<HomeUsageData> {
   const [{ overview }, batch, watch, all] = await Promise.all([
-    readSpendOverview(d1, now),
+    readSpendOverview(d1, now, kv),
     readBatch(d1, now),
     readSpendWatchStatus(createDb(d1)),
     readCachedHistory(kv, now, ALL_HISTORY),

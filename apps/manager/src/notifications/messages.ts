@@ -105,8 +105,11 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     product,
     /** How much of it the app used in the last hour, in the product's unit. */
     perHour: z.number().nonnegative(),
-    /** How many times its normal hour. */
-    times: z.number().positive(),
+    /**
+     * How many times its normal hour; null for an app with no normal yet
+     * (new, or rarely used) that uses a lot.
+     */
+    times: z.number().positive().nullable(),
     /** The alert's setting: an hour at this many times normal alerts. */
     factor: z.number().positive(),
     /** Its activity's cost an hour, and today so far. */
@@ -114,6 +117,8 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     spentToday: dollars,
     /** Free: the share of the product's free daily limit it is on pace to use today. */
     freeShare: z.number().nonnegative().nullable().optional(),
+    /** With no normal (`times` null): installed within the last 7 days, so "new". */
+    installedRecently: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("usage_alert"),
@@ -437,13 +442,15 @@ function usageMessage(facts: UsageFacts, managerUrl: string | null): Message {
           : facts.freeShare != null
             ? `At this pace it uses ${percent(facts.freeShare)} of today's free ${productLabel(facts.product)}.`
             : null;
+      const what =
+        facts.times === null
+          ? facts.installedRecently === true
+            ? `${instance} is new and already using a lot: ${productRate(facts.product, facts.perHour)} since ${utcClock(facts.since)}.`
+            : `${instance} has no usual usage to compare against yet and is already using a lot: ${productRate(facts.product, facts.perHour)} since ${utcClock(facts.since)}.`
+          : `${instance} is using far more than usual: ${productRate(facts.product, facts.perHour)} since ${utcClock(facts.since)}, ${times(facts.times)} its normal.`;
       return {
         title: `Unusual usage: ${instance}`,
-        lines: [
-          `${instance} is using far more than usual: ${productRate(facts.product, facts.perHour)} since ${utcClock(facts.since)}, ${times(facts.times)} its normal.`,
-          ...(cost === null ? [] : [cost]),
-          PAUSE_HINT,
-        ],
+        lines: [what, ...(cost === null ? [] : [cost]), PAUSE_HINT],
         url: usageUrl(facts.app.installId),
       };
     }

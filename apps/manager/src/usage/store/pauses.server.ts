@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { z } from "zod";
 import type { Database } from "../../db/client";
@@ -174,6 +174,25 @@ export async function listOpenPauses(db: Database): Promise<AppPause[]> {
     .where(isNull(app_pauses.resumed_at))
     .orderBy(app_pauses.paused_at);
   return rows.map(fromRow);
+}
+
+/**
+ * Each install's latest resume since `since` (epoch ms), by install id. Only
+ * resumes a resume job ran count: a pause that failed closes its row too,
+ * but the app never stopped.
+ */
+export async function latestResumes(db: Database, since: Date): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ installId: app_pauses.install_id, resumedAt: app_pauses.resumed_at })
+    .from(app_pauses)
+    .where(and(gt(app_pauses.resumed_at, since), isNotNull(app_pauses.resume_job_id)));
+  const out = new Map<string, number>();
+  for (const row of rows) {
+    const at = row.resumedAt?.getTime();
+    if (at === undefined) continue;
+    if (at > (out.get(row.installId) ?? 0)) out.set(row.installId, at);
+  }
+  return out;
 }
 
 /** The install's pauses, newest first (for its recent activity). */

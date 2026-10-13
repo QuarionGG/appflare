@@ -1,6 +1,6 @@
 import { Badge, Button, Checkbox, Link, Select, Text } from "@cloudflare/kumo";
 import { PlusIcon } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { type ReactElement, useEffect, useState } from "react";
 import { Section, SectionRow, SectionRows } from "../../components/section";
 import { settingsLink } from "../../components/settings-links";
 import type { AlertRuleFields } from "../alert-rules";
@@ -69,11 +69,14 @@ export function SpendProtectionSection({
   isAdmin,
   error,
   actions,
+  pauseAction,
 }: {
   data: UsageTabData;
   isAdmin: boolean;
   error: string | null;
   actions: SpendActions;
+  /** The section's action: pausing the app by choice, when nothing above offers it. */
+  pauseAction?: ReactElement | null;
 }) {
   const { spend, plan } = data;
   const { defaults } = spend;
@@ -107,6 +110,7 @@ export function SpendProtectionSection({
         </span>
       }
       description={<AlertsGoTo channels={spend.channels} />}
+      action={pauseAction ?? null}
       error={error}
     >
       <SectionRows>

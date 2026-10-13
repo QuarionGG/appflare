@@ -45,6 +45,13 @@ export type UsageAttention =
       perHour: number | null;
       /** How many times its normal; null without a normal to compare with. */
       times: number | null;
+      /**
+       * It had no normal yet (new, or rarely used) and passed the Standard
+       * loop level's money bar: "new and using a lot", with no multiple.
+       */
+      newApp?: boolean;
+      /** With `newApp`: installed within the last 7 days, so "new". */
+      installedRecently?: boolean;
       /** Dollars an hour at list price; null when not known. */
       burnPerHour: number | null;
       spentToday: number | null;
@@ -130,9 +137,20 @@ export function usageAttentionCopy(
     case "unusual": {
       const normal =
         item.times !== null ? `${times(item.times)} its normal` : "far above its normal";
-      const first =
+      const rate =
         item.product !== null && item.perHour !== null
-          ? `${productRate(item.product, item.perHour)} since ${clock(item.since)}, ${normal}.`
+          ? `${productRate(item.product, item.perHour)} since ${clock(item.since)}`
+          : null;
+      const noNormal =
+        item.installedRecently === true
+          ? "with no usual week yet to compare with"
+          : "with no usual usage to compare against yet";
+      const first = item.newApp
+        ? rate !== null
+          ? `${rate}, ${noNormal}.`
+          : `Since ${clock(item.since)}, ${noNormal}.`
+        : rate !== null
+          ? `${rate}, ${normal}.`
           : `Since ${clock(item.since)}, its usage is ${normal}.`;
       const cost =
         item.plan === "paid" && item.burnPerHour !== null
@@ -143,7 +161,11 @@ export function usageAttentionCopy(
       const sent = item.sentTo.length > 0 ? ` Sent to ${listWords(item.sentTo)}.` : "";
       return {
         badge: { label: "Unusual usage", variant: "error" },
-        title: `${label} is using far more than usual`,
+        title: item.newApp
+          ? item.installedRecently === true
+            ? `${label} is new and already using a lot`
+            : `${label} is already using a lot`
+          : `${label} is using far more than usual`,
         description: `${first}${cost}${sent}`,
       };
     }

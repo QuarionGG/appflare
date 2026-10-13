@@ -148,7 +148,57 @@ describe("readUsageAttention", () => {
     expect((await read())[0]).toMatchObject({ kind: "unusual", installId: "a" });
   });
 
+  it("offers to set the cap aside for an app paused for a loop that is past its cap too", async () => {
+    await writeSettings(db(), { [SETTING.accountPlan]: "paid" });
+    await writeSpendDefaults(db(), {
+      autoPause: true,
+      cap: { on: true, amount: 0.5, period: "day" },
+    });
+    await openPause(db(), {
+      installId: "b",
+      pausedBy: "auto",
+      reason: "loop",
+      pausedAt: new Date(NOW - 600_000),
+      detailJson: JSON.stringify({ level: "strict", plan: "paid", burnPerHour: 0.8 }),
+    });
+    // The watcher's latest numbers: $1.66 spent today.
+    await writeSettings(db(), {
+      [SETTING.spendOverview]: JSON.stringify({
+        computedAt: NOW - 60_000,
+        plan: "paid",
+        bill: { now: 5, projected: 5 },
+        apps: [
+          {
+            installId: "b",
+            burnPerHour: 0,
+            ratio: null,
+            loop: {
+              relaxed: { money: false, abnormal: false, trips: false },
+              standard: { money: false, abnormal: false, trips: false },
+              strict: { money: false, abnormal: false, trips: false },
+            },
+            spend: {
+              day: { spent: 1.66, projected: 1.66, resetsAt: Date.UTC(2026, 9, 13) },
+              week: { spent: 1.66, projected: 1.66, resetsAt: Date.UTC(2026, 9, 19) },
+              month: { spent: 1.66, projected: 1.66, resetsAt: Date.UTC(2026, 10, 1) },
+            },
+            overageUsd: 0,
+          },
+        ],
+      }),
+    });
+    expect((await read())[0]).toMatchObject({
+      kind: "paused",
+      cause: { reason: "loop" },
+      stillPastCap: { amount: 0.5, period: "day", spent: 1.66, resetsAt: Date.UTC(2026, 9, 13) },
+    });
+    // On Workers Free there is no dollar cap to be past.
+    await writeSettings(db(), { [SETTING.accountPlan]: "free" });
+    expect((await read())[0]).toMatchObject({ stillPastCap: null });
+  });
+
   it("offers to set the cap aside while a capped app is still past its cap", async () => {
+    await writeSettings(db(), { [SETTING.accountPlan]: "paid" });
     await writeSpendDefaults(db(), {
       autoPause: true,
       cap: { on: true, amount: 2, period: "day" },

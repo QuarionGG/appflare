@@ -18,9 +18,32 @@ describe("isHalfHourRun", () => {
     }
   });
 
-  it("goes by the scheduled time, to the nearest minute", () => {
+  it("goes by the scheduled time, by the five-minute slot it falls in", () => {
     expect(isHalfHourRun(at("2026-10-12T16:29:59.600Z"))).toBe(true);
     expect(isHalfHourRun(at("2026-10-12T16:05:00.200Z"))).toBe(false);
+  });
+
+  it("finds the half-hour run when Cloudflare schedules it seconds late", () => {
+    // Scheduled times seen on live managers for the minute-0 and minute-30 runs.
+    expect(isHalfHourRun(at("2026-10-12T23:00:44Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T22:30:39Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T20:00:13Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T23:05:44Z"))).toBe(false);
+    expect(isHalfHourRun(at("2026-10-12T22:55:44Z"))).toBe(false);
+  });
+
+  it("takes a run up to 4.5 minutes late for its slot, and never does the work twice", () => {
+    expect(isHalfHourRun(at("2026-10-12T23:02:40Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T23:04:20Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T23:34:29Z"))).toBe(true);
+    // Past 4.5 minutes it is the next slot's run.
+    expect(isHalfHourRun(at("2026-10-12T23:04:31Z"))).toBe(false);
+    // Half a minute early still counts; a minute early is the slot before.
+    expect(isHalfHourRun(at("2026-10-12T22:59:31Z"))).toBe(true);
+    expect(isHalfHourRun(at("2026-10-12T22:59:00Z"))).toBe(false);
+    // One run a slot: of a run at 23:04:20 and the next at 23:05:10, only the first.
+    const runs = ["23:04:20", "23:05:10", "23:10:00", "23:15:00", "23:20:00", "23:25:00"];
+    expect(runs.filter((t) => isHalfHourRun(at(`2026-10-12T${t}Z`)))).toEqual(["23:04:20"]);
   });
 });
 

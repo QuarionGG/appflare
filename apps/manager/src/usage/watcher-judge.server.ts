@@ -14,9 +14,10 @@ import {
   PAUSE_RETRY_MS,
   type PauseDraft,
 } from "./evaluate";
-import { DAY_MS, HOUR_MS, periodStart, type Usage } from "./math";
+import { DAY_MS, HOUR_MS, periodStart, type ResumeWindow, type Usage } from "./math";
 import { spendSnapshot, spendSnapshotSchema } from "./overview.server";
 import { PauseActionError, startPause } from "./pause.server";
+import { resumeWindows } from "./resume.server";
 import { countActivity, listActivity, recordActivity } from "./store/activity.server";
 import { listAlertRules, recordAlertFiring } from "./store/alert-rules.server";
 import { effectiveSpendSettingsOf } from "./store/app-settings.server";
@@ -110,6 +111,13 @@ export interface Judged {
   incomplete: ReadonlySet<string>;
   /** The account's free daily limit warnings, when worked out for the whole account already. */
   limitWarnings?: ReadonlyMap<string, LimitWarning>;
+  /** Every install not removed, when `usage` holds removed ones too (the budget's projection). */
+  installed?: ReadonlySet<string>;
+  /**
+   * The resume windows, when the check worked them out already (from the
+   * rows as stored before it wrote any); read here otherwise.
+   */
+  resumes?: ReadonlyMap<string, ResumeWindow>;
 }
 
 /**
@@ -129,6 +137,7 @@ export async function writeOverview(
     plan?: AccountPlan;
     usage?: ReadonlyMap<string, Usage>;
     paused?: ReadonlySet<string>;
+    resumes?: ReadonlyMap<string, ResumeWindow>;
   },
 ): Promise<void> {
   const { now } = input;
@@ -144,6 +153,7 @@ export async function writeOverview(
       usage,
       installs: input.all.map((a) => ({ installId: a.installId, installedAt: a.installedAt })),
       paused,
+      ...(input.resumes === undefined ? {} : { resumes: input.resumes }),
     });
     await writeSettings(
       db,
@@ -171,9 +181,17 @@ export async function storedUsage(
   return usageByInstall(history.series, recent);
 }
 
+/** What {@link judge} leaves for the pages' numbers. */
+export interface JudgeResult {
+  /** The apps paused before this check, and the ones it started pausing. */
+  paused: Set<string>;
+  /** The apps resumed lately, judged on what they did after (resume.server.ts). */
+  resumes: Map<string, ResumeWindow>;
+}
+
 /**
  * Judges every app (evaluate.ts) and does what it decided, within the
- * subrequest budget. Returns the apps paused before this check.
+ * subrequest budget.
  */
 export async function judge(
   env: SpendWatchEnv,
@@ -182,16 +200,19 @@ export async function judge(
   deps: SpendWatchDeps,
   budget: number,
   report: SpendWatchReport,
-): Promise<Set<string>> {
+): Promise<JudgeResult> {
   const { now, plan } = input;
   const ids = input.apps.map((a) => a.installId);
   const today = new Date(Math.floor(now / DAY_MS) * DAY_MS);
   const monthStart = new Date(periodStart("month", now));
-  const [settings, defaults, rules, pauses] = await Promise.all([
+  const [settings, defaults, rules, pauses, resumes] = await Promise.all([
     effectiveSpendSettingsOf(db, ids),
     readSpendDefaults(db),
     listAlertRules(db),
     listOpenPauses(db),
+    input.resumes !== undefined
+      ? Promise.resolve(new Map(input.resumes))
+      : resumeWindows(db, env.KV, { now, installIds: ids, usage: input.usage, keep: true }),
   ]);
   const budgetOn = plan === "paid" && defaults.budget.on ? defaults.budget.amount : null;
   const [limitEntries, budgetTold, failedPauses] = await Promise.all([
@@ -238,6 +259,7 @@ export async function judge(
         incomplete: input.incomplete.has(a.installId),
         objectAlarms: input.alarms.get(a.installId) ?? [],
         rules: rules.filter((r) => r.installId === a.installId),
+        resume: resumes.get(a.installId) ?? null,
       };
     }),
     accountUsage: input.usage,
@@ -245,6 +267,7 @@ export async function judge(
     budgetToldThisMonth: budgetTold > 0,
     limitSharesToday,
     ...(input.limitWarnings === undefined ? {} : { limitWarnings: input.limitWarnings }),
+    ...(input.installed === undefined ? {} : { installed: input.installed }),
   });
 
   // Checked now: the apps whose usage was all read. The others keep their
@@ -297,6 +320,8 @@ export async function judge(
         by: null,
       } as Parameters<typeof startPause>[1]);
       report.pauses += 1;
+      // Stopped from now on: the numbers this check stores project nothing more for it.
+      paused.add(draft.installId);
       return true;
     } catch (error) {
       // Already being paused, another job of it is running, or not installed:
@@ -327,5 +352,5 @@ export async function judge(
     await record(firing.activity);
     await send(firing.event);
   }
-  return paused;
+  return { paused, resumes };
 }

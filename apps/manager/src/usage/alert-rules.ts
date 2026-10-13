@@ -15,7 +15,7 @@ import { MAX_CAP_USD, parseDollars } from "./spend-defaults";
 export const MAX_ALERT_PERCENT = 10_000;
 
 export const ALERT_AMOUNT_ERRORS = {
-  usd: `Enter an amount of dollars, more than $0 and at most $${MAX_CAP_USD.toLocaleString("en")}.`,
+  usd: `Enter an amount of dollars from $0.01 to $${MAX_CAP_USD.toLocaleString("en")}.`,
   pct: `Enter a percent, more than 0 and at most ${MAX_ALERT_PERCENT.toLocaleString("en")}.`,
   /** The Free plan bills nothing for Workers: its alerts watch a free daily limit, today. */
   free: "On the Free plan an alert watches a share of a free daily limit, today.",

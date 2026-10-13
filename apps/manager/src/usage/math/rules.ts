@@ -3,6 +3,7 @@ import { activityCostSeries, costSeries, type PeriodSpend, spendInPeriod } from 
 import { daysIn, HOUR_MS, type Period, periodStart } from "./periods";
 import { billedPrice, freeDailyLimit, PRODUCT_KEYS, PRODUCTS, type ProductKey } from "./products";
 import { normalHour, project, type WindowOptions } from "./projection";
+import { lastHourRate, type ResumeWindow, usageSinceResume } from "./resume";
 import { sumBetween, type Usage } from "./series";
 
 // ---------- Shares of what the plan allows ----------
@@ -136,6 +137,13 @@ export interface LoopCheckInput extends WindowOptions {
   now: number;
   /** Alarm counts per Durable Object over the last hour, when known. */
   objectAlarms?: readonly ObjectAlarms[];
+  /**
+   * A resume within the window: only what the app did after it counts
+   * (resume.ts). The normal still comes from all of its history, and the
+   * alarm counts, which cover the last 60 minutes, are left out until an
+   * hour after the resume.
+   */
+  resume?: ResumeWindow;
 }
 
 export interface LoopCheck {
@@ -163,44 +171,143 @@ export interface LoopCheck {
  * runaway right after install still trips.
  */
 export function loopCheck(input: LoopCheckInput): LoopCheck {
-  const { plan, usage, now } = input;
+  const { plan, usage, now, resume } = input;
   const rule = LOOP_LEVELS[input.level];
-  const activity = activityCostSeries(usage, now);
-  const burn = sumBetween(activity, now - HOUR_MS, now, now);
-  const normal = normalHour(activity, now);
-  const ratio = ratioTo(burn, normal);
-  const alarm = alarmLoop(input.objectAlarms ?? []);
-
-  let money: boolean;
-  let freeShare: ProductShare | null = null;
-  if (plan === "paid") {
-    money = burn > rule.usdPerHour;
-  } else {
-    freeShare = freeDailyShare(usage, now, { ...input, projected: true });
-    // R2 bills past its free amount even on Free, so its activity's dollars
-    // are real money there too, measured against the same `usdPerHour`.
-    const billed = sumBetween(
-      costSeries(
-        usage,
-        now,
-        (key) => PRODUCTS[key].billedOnFree && PRODUCTS[key].measure === "count",
-      ),
-      now - HOUR_MS,
-      now,
-      now,
-    );
-    money = (freeShare !== null && freeShare.share >= rule.freeShare) || billed > rule.usdPerHour;
-  }
+  const rate = spendRate(input);
+  const normal = normalHour(activityCostSeries(usage, now), now);
+  const ratio = ratioTo(rate.burn, normal);
+  // The alarm counts cover the last 60 minutes: they wait out the hour after a resume.
+  const alarm =
+    resume === undefined || resume.at <= now - HOUR_MS ? alarmLoop(input.objectAlarms ?? []) : null;
+  const money = plan === "paid" ? rate.burn > rule.usdPerHour : freeMoney(rate, rule, 1);
   const abnormal = (ratio !== null && ratio >= rule.factor) || alarm !== null;
   return {
-    burn,
+    burn: rate.burn,
     normal,
     ratio,
-    freeShare,
+    freeShare: rate.freeShare,
     money,
     abnormal,
     alarmLoop: alarm,
     trips: money && (abnormal || normal === null),
+  };
+}
+
+/** What an app spends now: the money half of the loop rule measures it. */
+interface SpendRate {
+  /** List-price dollars of activity an hour, over the last 60 minutes. */
+  burn: number;
+  /** Free: the free daily limit it is on pace to use most of today. */
+  freeShare: ProductShare | null;
+  /** Free: dollars an hour of what Free bills (R2 past its free amount). */
+  billed: number;
+  /** The usage the rates come from (since the resume, when there was one). */
+  recent: Usage;
+}
+
+function spendRate(input: {
+  plan: AccountPlan;
+  usage: Usage;
+  now: number;
+  since?: number;
+  resume?: ResumeWindow;
+}): SpendRate {
+  const { plan, usage, now, resume } = input;
+  const recent = resume === undefined ? usage : usageSinceResume(usage, resume);
+  const resumeAt = resume?.at;
+  const burn = lastHourRate(activityCostSeries(recent, now), now, resumeAt);
+  if (plan === "paid") return { burn, freeShare: null, billed: 0, recent };
+  const since = resumeAt === undefined ? input.since : Math.max(input.since ?? resumeAt, resumeAt);
+  const freeShare = freeDailyShare(recent, now, {
+    ...(since === undefined ? {} : { since }),
+    projected: true,
+  });
+  // R2 bills past its free amount even on Free, so its activity's dollars
+  // are real money there too, measured against the same `usdPerHour`.
+  const billed = lastHourRate(
+    costSeries(
+      recent,
+      now,
+      (key) => PRODUCTS[key].billedOnFree && PRODUCTS[key].measure === "count",
+    ),
+    now,
+    resumeAt,
+  );
+  return { burn, freeShare, billed, recent };
+}
+
+/** Free: the money half at `scale` times the level's bar. */
+function freeMoney(
+  rate: SpendRate,
+  rule: { usdPerHour: number; freeShare: number },
+  scale: number,
+): boolean {
+  return (
+    (rate.freeShare !== null && rate.freeShare.share >= rule.freeShare * scale) ||
+    rate.billed > rule.usdPerHour * scale
+  );
+}
+
+/** A new app using a lot, before it has a normal to be unusual against. */
+export interface HeavyNewUse {
+  /** The product that costs the most (Paid), or comes closest to a free daily limit (Free). */
+  product: ProductKey;
+  /** Used of it over the last 60 minutes (as a rate an hour after a resume). */
+  lastHour: number;
+  /** List-price dollars of the app's activity an hour. */
+  burn: number;
+  /** Free: the share of the product's free daily limit it is on pace to use today. */
+  freeShare: number | null;
+}
+
+/**
+ * An app with no normal yet (installed under a week ago, or used too rarely)
+ * cannot be "far above its normal", but a new app that loops must not go
+ * unnoticed until it has one. It counts as using a lot when it passes the
+ * Standard loop level's money bar: over $1 an hour on Paid; on Free, on pace
+ * to use 25% of a free daily limit within the day (or R2 over $1 an hour).
+ * `scale` lowers the bar (an open episode stays open down to half of it).
+ * Null when it has a normal, or stays under the bar.
+ */
+export function heavyNewUse(
+  input: {
+    plan: AccountPlan;
+    usage: Usage;
+    now: number;
+    since?: number;
+    resume?: ResumeWindow;
+  },
+  scale = 1,
+): HeavyNewUse | null {
+  const { plan, usage, now, resume } = input;
+  if (normalHour(activityCostSeries(usage, now), now) !== null) return null;
+  const rule = LOOP_LEVELS.standard;
+  const rate = spendRate(input);
+  const heavy =
+    plan === "paid" ? rate.burn > rule.usdPerHour * scale : freeMoney(rate, rule, scale);
+  if (!heavy) return null;
+  const byLimit =
+    plan === "free" && rate.freeShare !== null && rate.freeShare.share >= rule.freeShare * scale
+      ? rate.freeShare
+      : null;
+  let product: ProductKey | null = byLimit?.product ?? null;
+  if (product === null) {
+    let most = -1;
+    for (const key of countKeys(usage)) {
+      if (plan === "free" && !PRODUCTS[key].billedOnFree) continue;
+      const usd = lastHourRate(rate.recent[key] ?? [], now, resume?.at) * billedPrice(key);
+      if (usd > most) {
+        most = usd;
+        product = key;
+      }
+    }
+  }
+  if (product === null) return null;
+  return {
+    product,
+    lastHour: lastHourRate(rate.recent[product] ?? [], now, resume?.at),
+    burn: rate.burn,
+    freeShare: byLimit?.share ?? null,
   };
 }
 
@@ -244,6 +351,8 @@ export interface UnusualInput {
   setting: UnusualSetting;
   usage: Usage;
   now: number;
+  /** A resume within the window: only the use after it counts (resume.ts). */
+  resume?: ResumeWindow;
 }
 
 /**
@@ -256,11 +365,12 @@ export interface UnusualInput {
 export function unusualUsage(input: UnusualInput): UnusualUsage | null {
   if (input.setting === "off") return null;
   const factor = input.setting;
-  const { plan, usage, now } = input;
+  const { plan, usage, now, resume } = input;
+  const recent = resume === undefined ? usage : usageSinceResume(usage, resume);
   let best: UnusualUsage | null = null;
   for (const key of countKeys(usage)) {
     const series = usage[key] ?? [];
-    const lastHour = sumBetween(series, now - HOUR_MS, now, now);
+    const lastHour = lastHourRate(recent[key] ?? [], now, resume?.at);
     const normal = normalHour(series, now);
     const ratio = ratioTo(lastHour, normal);
     if (normal === null || ratio === null || ratio < factor) continue;

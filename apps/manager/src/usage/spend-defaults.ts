@@ -15,7 +15,7 @@ export const MAX_CAP_USD = 100_000;
 export const MAX_BUDGET_USD = 1_000_000;
 
 export const SPEND_AMOUNT_ERRORS = {
-  cap: `Enter an amount of dollars, more than $0 and at most $${MAX_CAP_USD.toLocaleString("en")}.`,
+  cap: `Enter an amount of dollars from $0.01 to $${MAX_CAP_USD.toLocaleString("en")}.`,
   budget: `Enter an amount of dollars, more than the $${PAID_PLAN_MONTHLY_USD} plan and at most $${MAX_BUDGET_USD.toLocaleString("en")}.`,
 } as const;
 

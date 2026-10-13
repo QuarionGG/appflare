@@ -2,10 +2,12 @@ import { AppflareLoader } from "@appflare/brand/loader";
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Section } from "../../components/section";
+import { PauseAppButton } from "../../home/pause-resume-buttons";
 import { createAlertRuleFn, deleteAlertRuleFn, updateAlertRuleFn } from "../alert-rules.functions";
 import { setObservabilityFn } from "../observability.functions";
 import type { UsageTabData } from "../tab";
 import { getUsageTab, setAppSpend } from "../tab.functions";
+import { stateBanner } from "./copy";
 import { RecentActivity } from "./recent-activity";
 import { type SpendActions, SpendProtectionSection } from "./spend-protection";
 import { StateBanner } from "./state-banner";
@@ -146,6 +148,14 @@ export function UsageTab({
       </Section>
     );
   }
+  // Admins can always pause the app: the banner's filled Pause while it runs
+  // away, else a quieter one here (none while it is paused).
+  const bannerPauses =
+    stateBanner(data.status, data.spend.effective.autoPause.on)?.action === "pause";
+  const pauseAction =
+    isAdmin && data.pause === null && !bannerPauses ? (
+      <PauseAppButton installId={installId} label={app} size="sm" calm />
+    ) : null;
   return (
     <>
       <StateBanner data={data} app={app} isAdmin={isAdmin} />
@@ -155,6 +165,7 @@ export function UsageTab({
         isAdmin={isAdmin}
         error={saveError ?? error}
         actions={actions}
+        pauseAction={pauseAction}
       />
       <RecentActivity events={data.events} channels={data.spend.channels} />
     </>

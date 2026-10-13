@@ -125,6 +125,10 @@ export interface UnusualFacts {
   product: string | null;
   times: number | null;
   freeShare: number | null;
+  /** The episode is a new app (no normal yet) using a lot. */
+  newApp?: boolean;
+  /** With `newApp`: installed within the last 7 days. */
+  installedRecently?: boolean;
 }
 
 export interface UsageTabInput {
@@ -369,7 +373,17 @@ export function buildUsageTab(input: UsageTabInput): UsageTabData {
             input.unusualSince !== null && input.unusualSince <= input.pause.pausedAt
               ? input.unusualSince
               : null,
-          stillPastCap: stillPastCap(input.pause, input.effective, now),
+          stillPastCap: stillPastCap(input.pause, input.effective, now, {
+            spent:
+              snap === null || snap === undefined
+                ? null
+                : {
+                    day: snap.spend.day.spent,
+                    week: snap.spend.week.spent,
+                    month: snap.spend.month.spent,
+                  },
+            plan,
+          }),
         };
 
   const unusual = input.unusualSince === null ? null : input.unusual;
@@ -439,6 +453,8 @@ export function buildUsageTab(input: UsageTabInput): UsageTabData {
         product,
         perHour: p.lastHour,
         ratio: p.ratio ?? unusual?.times ?? null,
+        newApp: unusual?.newApp === true && p.ratio === null,
+        installedRecently: unusual?.installedRecently === true,
         since: startedAt,
         burnPerHour: snap?.burnPerHour ?? 0,
         spentToday: snap?.spend.day.spent ?? 0,

@@ -109,6 +109,12 @@ function button(label: string, within: Element = container): HTMLButtonElement {
   return found;
 }
 
+function spendSection(): HTMLElement {
+  const found = container.querySelector<HTMLElement>("#spend-protection");
+  if (found === null) throw new Error("no spend protection section");
+  return found;
+}
+
 function banner(): HTMLElement | null {
   return container.querySelector<HTMLElement>('[role="alert"], [role="status"]');
 }
@@ -184,12 +190,23 @@ describe("UsageTab", () => {
     expect(chart().dataset.range).toBe("7d");
   });
 
-  it("busy: a quiet banner and a badge on the product, no Pause", async () => {
+  it("busy: a quiet banner and a badge on the product, Pause only by choice", async () => {
     await show(scenario("busy"), { app: "Short links" });
     expect(banner()?.textContent).toContain("Busier than usual");
     expect(text()).toMatch(/Busier than usual: .* its normal\. Not a loop\./);
     expect(container.querySelector('[data-tone="warn"]')).not.toBeNull();
     expect(text()).toMatch(/\d+(\.\d)?× normal/);
+    // Not in the banner: the spend protection section offers it, as a quiet button.
+    expect(banner()?.querySelector("button")).toBeNull();
+    const pause = button("Pause Short links", spendSection());
+    expect(pause.textContent?.trim()).toBe("Pause app");
+    expect(buttons().filter((b) => b === "Pause app")).toHaveLength(1);
+  });
+
+  it("calm: admins can pause the app by choice; members cannot", async () => {
+    await show(scenario("calm"), { app: "Short links" });
+    expect(button("Pause Short links", spendSection()).textContent?.trim()).toBe("Pause app");
+    await show(scenario("calm"), { app: "Short links", isAdmin: false });
     expect(buttons()).not.toContain("Pause app");
   });
 
@@ -282,9 +299,9 @@ describe("UsageTab", () => {
 
   it("fresh: says when usage shows up and turns Workers Logs on", async () => {
     await show(scenario("fresh"), { app: "Contact forms" });
-    expect(text()).toContain("Usage shows up about 15 minutes after install");
+    expect(text()).toContain("Usage shows up about an hour after install");
     expect(text()).toContain(
-      "Installed 6 minutes ago. Cloudflare reports a new app's usage after about 15 minutes.",
+      "Installed 6 minutes ago. Cloudflare reports a new app's usage after about an hour.",
     );
     expect(container.querySelector('[data-testid="chart"]')).toBeNull();
     expect(buttons()).not.toContain("24 hours");

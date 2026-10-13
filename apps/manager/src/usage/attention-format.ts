@@ -14,6 +14,43 @@ export function count(value: number): string {
   return value < 1000 ? whole.format(Math.round(value)) : compact.format(value);
 }
 
+/** The units that are plural nouns, and their singular. Measures ("GB-s", "CPU ms") stay as they are. */
+const SINGULAR: Readonly<Record<string, string>> = {
+  requests: "request",
+  rows: "row",
+  reads: "read",
+  writes: "write",
+  deletes: "delete",
+  lists: "list",
+  operations: "operation",
+  steps: "step",
+  neurons: "neuron",
+  dimensions: "dimension",
+  "data points": "data point",
+  hours: "hour",
+  events: "event",
+  times: "time",
+};
+
+/** `unit` as it reads after `shown` (a number as shown): singular after "1". */
+export function unitAfter(shown: string, unit: string): string {
+  return shown === "1" ? (SINGULAR[unit] ?? unit) : unit;
+}
+
+/** A number as shown with its unit: "1 request", "48K requests", "1 GB-s". */
+export function withUnit(shown: string, unit: string): string {
+  return `${shown} ${unitAfter(shown, unit)}`;
+}
+
+/**
+ * A product's name after a number, when the name ends in its unit:
+ * "1 Durable Objects request", "4.2M Durable Objects requests".
+ */
+export function labelAfter(shown: string, label: string, unit: string): string {
+  if (shown !== "1" || !label.endsWith(unit)) return label;
+  return `${label.slice(0, label.length - unit.length)}${unitAfter(shown, unit)}`;
+}
+
 /** A count in full, for a limit people may look up: "100,000". */
 export function fullCount(value: number): string {
   return whole.format(value);
@@ -68,8 +105,9 @@ export function productLabel(key: string): string {
 export function productRate(key: string, perHour: number): string {
   const label = productLabel(key);
   const unit = Object.hasOwn(PRODUCTS, key) ? PRODUCTS[key as ProductKey].unit : "";
-  const withUnit = unit === "" || label.endsWith(unit) ? "" : ` ${unit}`;
-  return `${label} at ${count(perHour)}${withUnit} an hour`;
+  const shown = count(perHour);
+  const after = unit === "" || label.endsWith(unit) ? "" : ` ${unitAfter(shown, unit)}`;
+  return `${label} at ${shown}${after} an hour`;
 }
 
 export const PERIOD_NOUN = { day: "today", week: "this week", month: "this month" } as const;

@@ -7,6 +7,7 @@ import { parsePauseCause } from "./attention-cause";
 import { HOUR_MS, hourStart, PERIODS, periodStart } from "./math";
 import { type AppObservability, readAppObservability } from "./observability.server";
 import { readSpendOverview } from "./overview.server";
+import { pauseErrorSummary } from "./pause-errors";
 import { ACTIVITY_FACTS } from "./store/activity";
 import { listAlertRules } from "./store/alert-rules.server";
 import { readAppSpendSettings } from "./store/app-settings.server";
@@ -92,6 +93,8 @@ const unusualStartFacts = z.looseObject({
   times: z.number().nonnegative(),
   product: z.string().min(1).optional(),
   freeShare: z.number().nonnegative().optional(),
+  newApp: z.boolean().optional(),
+  installedRecently: z.boolean().optional(),
 });
 
 const alertSentFacts = z.looseObject({
@@ -121,6 +124,9 @@ function activityEvent(row: ActivityRow, pauses: ReadonlyMap<string, PauseRow>):
         kind,
         product: u?.product ?? null,
         times: u !== undefined && u.times > 0 ? u.times : null,
+        ...(u?.newApp === true
+          ? { newApp: true, installedRecently: u.installedRecently === true }
+          : {}),
       };
     }
     case "unusual_ended":
@@ -151,7 +157,8 @@ function activityEvent(row: ActivityRow, pauses: ReadonlyMap<string, PauseRow>):
       return { ...base, kind, by };
     case "pause_failed":
     case "resume_failed":
-      return { ...base, kind, error: f.error as string };
+      // The API's own words stay in the job log: they name the account and its resources.
+      return { ...base, kind, error: pauseErrorSummary(String(f.error ?? "")) };
     case "settings_changed": {
       const alert = alertChangeFacts.safeParse(f).data;
       return {
@@ -283,6 +290,8 @@ export interface ReadUsageTabOptions {
   now?: number;
   /** Reads Workers Logs from Cloudflare; called only for an app installed minutes ago. */
   readLogs?: () => Promise<AppObservability | null>;
+  /** The watcher's KV, for the resume bases it kept (overview.server.ts). */
+  kv?: KVNamespace;
 }
 
 /** The app's Usage tab; null when there is no such install. */
@@ -317,7 +326,7 @@ export async function readUsageTab(
     channels,
     watch,
   ] = await Promise.all([
-    readSpendOverview(d1, now),
+    readSpendOverview(d1, now, options.kv),
     d1
       .prepare(
         `SELECT installed_at, origin, config_json,
@@ -425,6 +434,8 @@ export async function readUsageTab(
           product: startFacts?.product ?? null,
           times: startFacts !== undefined && startFacts.times > 0 ? startFacts.times : null,
           freeShare: startFacts?.freeShare ?? null,
+          newApp: startFacts?.newApp === true,
+          installedRecently: startFacts?.installedRecently === true,
         };
 
   const snapshot = overview.apps.find((a) => a.installId === installId);
@@ -481,6 +492,7 @@ export async function readUsageTab(
 export function readTabFor(installId: string, isAdmin: boolean): Promise<UsageTabData | null> {
   return readUsageTab(env.DB, installId, {
     isAdmin,
+    kv: env.KV,
     readLogs: () => readAppObservability({ db: env.DB, api: () => getCfClient(env) }, installId),
   });
 }

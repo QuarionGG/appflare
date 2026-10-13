@@ -7,7 +7,7 @@ import {
   evaluate,
   type WatchedAppInput,
 } from "./evaluate";
-import { DAY_MS, dayStart, HOUR_MS, periodStart, type Usage } from "./math";
+import { DAY_MS, dayStart, HOUR_MS, periodStart, resumeBase, type Usage } from "./math";
 import { hourly, NOW } from "./math/test-series";
 import type { AlertRule } from "./store/alert-rules.server";
 import {
@@ -434,5 +434,133 @@ describe("free daily limits", () => {
 
   it("does not warn on Paid", () => {
     expect(run(apps()).activities).toEqual([]);
+  });
+});
+
+describe("after a resume", () => {
+  const strict = (id: string) =>
+    onAuto(id, { customTriggers: true, loopOn: true, loopLevel: "strict" });
+  /** Resumed ten minutes ago, the loop it was paused for still in the last hour's numbers. */
+  const RESUMED = NOW - 10 * 60_000;
+  const resume = { at: RESUMED, base: resumeBase(LOOPING, RESUMED) };
+  /** Before the pause: one tripped check, and an unusual-usage episode open. */
+  const before: UsageState = {
+    ...initialUsageState("a"),
+    loopChecks: 1,
+    unusualSince: NOW - 2 * HOUR_MS,
+    lastCheckedAt: NOW - 30 * 60_000,
+  };
+
+  it("judges the app only on what it did since: no pause for the loop it was paused for", () => {
+    // Without the resume, the last hour's loop pauses it on this check.
+    const control = run([app("a", { usage: LOOPING, settings: strict("a"), state: before })]);
+    expect(control.pauses).toHaveLength(1);
+
+    const d = run([app("a", { usage: LOOPING, settings: strict("a"), state: before, resume })]);
+    expect(d.pauses).toEqual([]);
+    expect(stateAfter(d, "a").loopChecks).toBe(0);
+    expect(stateAfter(d, "a").lastBurn).toBe(0);
+  });
+
+  it("closes the episode still open from before the pause, without opening a new one", () => {
+    const d = run([app("a", { usage: LOOPING, settings: strict("a"), state: before, resume })]);
+    expect(d.activities).toEqual([
+      { installId: "a", kind: "unusual_ended", facts: { startedAt: NOW - 2 * HOUR_MS } },
+    ]);
+    expect(d.events).toEqual([]);
+    expect(stateAfter(d, "a").unusualSince).toBeNull();
+  });
+
+  it("keeps counting after the first check since the resume, and pauses a loop that is back", () => {
+    const later = { ...before, unusualSince: null, lastCheckedAt: NOW - 60_000 };
+    // 3M more rows since the resume: the loop is back.
+    const hour = RESUMED - (RESUMED % HOUR_MS);
+    const looping: Usage = {
+      ...LOOPING,
+      do_rows_written: LOOPING.do_rows_written?.map((p) =>
+        p.hour === hour ? { ...p, value: p.value + 3e6 } : p,
+      ),
+    };
+    const d = run([app("a", { usage: looping, settings: strict("a"), state: later, resume })]);
+    expect(stateAfter(d, "a").loopChecks).toBe(2);
+    expect(d.pauses).toHaveLength(1);
+  });
+
+  it("still counts the whole period against a cap", () => {
+    const capped = onAuto("a", {
+      customTriggers: true,
+      loopOn: false,
+      capOn: true,
+      capAmount: 5,
+      capPeriod: "day",
+    });
+    const d = run([app("a", { usage: LOOPING, settings: capped, state: before, resume })]);
+    expect(d.pauses).toEqual([expect.objectContaining({ installId: "a", reason: "cap" })]);
+  });
+});
+
+describe("a new app using a lot", () => {
+  /** Installed 40 minutes ago; 1.5M rows written since (about $1.50). */
+  const NEW = NOW - 40 * 60_000;
+  const thisHour = NOW - (NOW % HOUR_MS);
+  const busy: Usage = { do_rows_written: [{ hour: thisHour, value: 1.5e6 }] };
+
+  it("alerts, with no multiple of a normal it does not have yet", () => {
+    const d = run([app("a", { installedAt: NEW, usage: busy })]);
+    expect(d.activities).toEqual([
+      {
+        installId: "a",
+        kind: "unusual_started",
+        facts: expect.objectContaining({ times: 0, newApp: true, product: "do_rows_written" }),
+      },
+    ]);
+    expect(d.events).toEqual([
+      expect.objectContaining({
+        type: "usage_unusual",
+        installId: "a",
+        times: null,
+        installedRecently: true,
+      }),
+    ]);
+  });
+
+  it("is not called new once it was installed over a week ago, though it still has no normal", () => {
+    // Installed a month ago (INSTALLED), but no use until this hour.
+    const d = run([app("a", { usage: busy })]);
+    expect(d.events).toEqual([
+      expect.objectContaining({ type: "usage_unusual", times: null, installedRecently: false }),
+    ]);
+    expect(d.activities[0]?.facts).toMatchObject({ newApp: true, installedRecently: false });
+  });
+
+  it("does not alert under the Standard level's $1 an hour, or with the alert off", () => {
+    const small: Usage = { do_rows_written: [{ hour: thisHour, value: 4e5 }] };
+    expect(run([app("a", { installedAt: NEW, usage: small })]).events).toEqual([]);
+    const off = settings("a", { unusualFactor: 0 });
+    expect(run([app("a", { installedAt: NEW, usage: busy, settings: off })]).events).toEqual([]);
+  });
+
+  it("keeps the episode open while it stays busy, so it alerts once", () => {
+    const first = run([app("a", { installedAt: NEW, usage: busy })]);
+    const second = run([
+      app("a", { installedAt: NEW, usage: busy, state: stateAfter(first, "a") }),
+    ]);
+    expect(second.events).toEqual([]);
+    expect(second.activities).toEqual([]);
+  });
+
+  it("alerts on Free when on pace to use a quarter of a free daily limit", () => {
+    const requests: Usage = {
+      workers_requests: [
+        { hour: thisHour - HOUR_MS, value: 5_000 },
+        { hour: thisHour, value: 3_000 },
+      ],
+    };
+    const d = run([app("a", { installedAt: NOW - 90 * 60_000, usage: requests })], {
+      plan: "free",
+    });
+    expect(d.events).toEqual([
+      expect.objectContaining({ type: "usage_unusual", times: null, product: "workers_requests" }),
+    ]);
   });
 });

@@ -6,7 +6,7 @@ import { PRODUCTS } from "../usage/math";
 import { PauseAppButton, ResumeAppButton } from "./pause-resume-buttons";
 
 /** What a brand-new app's card says where its chart will be. */
-export const FRESH_CARD_NOTE = "Usage shows up about 15 minutes after install";
+export const FRESH_CARD_NOTE = "Usage shows up about an hour after install";
 
 /**
  * Usage on an app card, above its buttons: 7 days of its most telling
