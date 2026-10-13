@@ -57,7 +57,6 @@ export const MANAGER_OAUTH_SCOPE_BY_GROUP = {
   pipelines: "pipelines.write",
   workers_r2_data_catalog: "r2-catalog.write",
   account_settings: "account-settings.read",
-  workers_tail: "workers-tail.read",
   // Usage and spend protection: GraphQL Analytics for every product.
   account_analytics: "account-analytics.read",
   // Cloudflare's own alerts, for a later version: asked for now so it needs

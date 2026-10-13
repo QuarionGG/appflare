@@ -153,12 +153,6 @@ export const MANAGER_SCOPE_REASONS = {
     label: "Account Settings",
     text: "Account Settings lets Appflare read which Cloudflare account it is in and that account's name.",
   },
-  workers_tail: {
-    label: "Workers Tail",
-    // No version of Appflare reads live logs yet: asked for now so that a
-    // later one can, without a new sign-in.
-    text: "Workers Tail lets Appflare read a Worker's live logs. Appflare asks for it now so a later version can show them without asking you to sign in again.",
-  },
   account_analytics: {
     label: "Account Analytics",
     text: "Account Analytics lets Appflare read how much each app uses of Workers, storage and the other services it runs on, to show its usage, send the usage alerts you set, and pause an app that runs away.",

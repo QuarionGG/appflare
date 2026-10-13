@@ -6,8 +6,8 @@
  * URL format and permission keys: Cloudflare's "API token template URLs" page,
  * https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
  * (`permissionGroupKeys` = URL-encoded JSON array of `{ key, type }`). That page's
- * key table omits `vectorize` and `workers_tail`; both are the keys the dashboard
- * itself uses for those groups (seen in public template links using them). The
+ * key table omits `vectorize`; it is the key the dashboard itself uses for
+ * that group (seen in public template links using it). The
  * same page's "Access full management" template pairs `access` (the "Access:
  * Apps and Policies" group) with `access_acct` ("Access: Organizations,
  * Identity Providers, and Groups").
@@ -255,8 +255,6 @@ export const TOKEN_PERMISSION_GROUPS = [
   },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
-  // Stream a Worker's live logs while diagnosing an install or update.
-  { key: "workers_tail", type: "read", label: "Workers Tail" },
   // Read each app's usage over GraphQL Analytics (`POST /graphql`):
   // "Account Analytics Read" in the API's group list. Key
   // `account_analytics` is in the template page's key table.

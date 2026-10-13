@@ -14,6 +14,13 @@ describe("why Appflare holds each sign-in permission", () => {
     expect(scopeReasons(["offline_access"])[0]?.label).toBe("Offline access");
   });
 
+  it("says what Workers Tail is, for a sign-in an earlier version made with it", () => {
+    expect(MANAGER_OAUTH_SCOPES).not.toContain("workers-tail.read");
+    const [tail] = scopeReasons(["workers-tail.read"]);
+    expect(tail?.label).toBe("Workers Tail");
+    expect(tail?.text).toContain("does not use it");
+  });
+
   it("names a scope it has no reason for by its id", () => {
     expect(scopeReasons(["something.read"])).toEqual([
       { scope: "something.read", label: "something.read", text: "something.read" },
