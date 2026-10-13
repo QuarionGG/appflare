@@ -198,14 +198,14 @@ describe("UsageTab", () => {
     expect(text()).toMatch(/\d+(\.\d)?× normal/);
     // Not in the banner: the spend protection section offers it, as a quiet button.
     expect(banner()?.querySelector("button")).toBeNull();
-    const pause = button("Pause Short links", spendSection());
+    const pause = button("Pause app: Short links", spendSection());
     expect(pause.textContent?.trim()).toBe("Pause app");
     expect(buttons().filter((b) => b === "Pause app")).toHaveLength(1);
   });
 
   it("calm: admins can pause the app by choice; members cannot", async () => {
     await show(scenario("calm"), { app: "Short links" });
-    expect(button("Pause Short links", spendSection()).textContent?.trim()).toBe("Pause app");
+    expect(button("Pause app: Short links", spendSection()).textContent?.trim()).toBe("Pause app");
     await show(scenario("calm"), { app: "Short links", isAdmin: false });
     expect(buttons()).not.toContain("Pause app");
   });

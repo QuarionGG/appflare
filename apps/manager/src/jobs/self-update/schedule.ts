@@ -19,8 +19,8 @@ import { readSettings, SETTING, writeSettings } from "../../db/settings";
 
 /**
  * This build's cron schedule: the `triggers.crons` of apps/manager/wrangler.jsonc
- * (a test checks they match). One cron: the Workers Free plan allows three
- * per account.
+ * (a test checks they match). One cron: the Workers Free plan allows five
+ * per account, shared with the apps.
  */
 export const MANAGER_CRONS: readonly string[] = Object.freeze(["*/5 * * * *"]);
 

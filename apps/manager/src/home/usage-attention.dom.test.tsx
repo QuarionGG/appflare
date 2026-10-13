@@ -173,6 +173,10 @@ describe("spend protection in Needs attention", () => {
     expect(text).toContain("120× its normal. About $3.20 an hour at Cloudflare's prices");
     expect(text).toContain("Sent to Telegram.");
     expect(actions()).toEqual(["See usage", "Pause app"]);
+    // The accessible name starts with the visible words, then names the app.
+    expect(button(section(), "Pause app").getAttribute("aria-label")).toBe(
+      "Pause app: Service status",
+    );
     expect(link("See usage")?.getAttribute("href")).toBe("/apps/status?tab=usage");
   });
 
@@ -192,6 +196,7 @@ describe("spend protection in Needs attention", () => {
     expect(text).toContain("Appflare paused Service status");
     expect(text).toContain("It passed its $2.00 daily cap. Appflare paused it at");
     expect(actions()).toEqual(["See usage", "Resume"]);
+    expect(button(section(), "Resume").getAttribute("aria-label")).toBe("Resume: Service status");
   });
 
   it("shows a free daily limit about to run out, with See usage only", () => {

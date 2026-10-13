@@ -284,7 +284,7 @@ describe("usage on Home's app cards", () => {
     expect(buttons(status)).toEqual(["Pause", "Open", "Manage"]);
     // Named with the app, like Open and Manage.
     expect(
-      status?.querySelector('button[aria-label="Pause Service status"]')?.textContent?.trim(),
+      status?.querySelector('button[aria-label="Pause: Service status"]')?.textContent?.trim(),
     ).toBe("Pause");
     await act(async () =>
       [...(status?.querySelectorAll("button") ?? [])]
@@ -304,7 +304,7 @@ describe("usage on Home's app cards", () => {
     expect(buttons(status)).toEqual(["Resume", "Open", "Manage"]);
     // Named with the app, like Open and Manage.
     expect(
-      status?.querySelector('button[aria-label="Resume Service status"]')?.textContent?.trim(),
+      status?.querySelector('button[aria-label="Resume: Service status"]')?.textContent?.trim(),
     ).toBe("Resume");
   });
 

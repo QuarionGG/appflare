@@ -18,6 +18,10 @@ import { readerClock } from "./attention-copy";
  * A dialog changes the page only once it has finished closing
  * (`onOpenChangeComplete`): the reload that follows removes the button that
  * owns the dialog, and a dialog must not unmount while it animates.
+ *
+ * Each button's accessible name starts with its visible words and then names
+ * the app ("Pause app: Service status"), so a voice user saying what they see
+ * reaches it.
  */
 
 const dayAndTime = new Intl.DateTimeFormat(undefined, {
@@ -61,7 +65,7 @@ export function PauseAppButton({
           size={size}
           variant={calm ? "secondary" : "destructive"}
           icon={<PauseIcon />}
-          aria-label={`Pause ${label}`}
+          aria-label={`${text}: ${label}`}
         >
           {text}
         </Button>
@@ -131,7 +135,7 @@ export function ResumeAppButton({
         size={size}
         variant={variant}
         icon={<PlayIcon />}
-        aria-label={`Resume ${label}`}
+        aria-label={`Resume: ${label}`}
         onClick={async () => {
           setPending(true);
           try {
@@ -162,7 +166,7 @@ export function ResumeAppButton({
           size={size}
           variant={variant}
           icon={<PlayIcon />}
-          aria-label={`Resume ${label}`}
+          aria-label={`Resume: ${label}`}
         >
           Resume
         </Button>
