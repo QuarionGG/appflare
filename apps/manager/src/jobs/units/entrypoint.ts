@@ -9,6 +9,7 @@ import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
+import type { CheckUnitResult } from "../../usage/watcher-check.server";
 import type { ShardUnitResult } from "../../usage/watcher-shard.server";
 import { createSpendWatcherUnits, type SpendWatcherResult } from "../../usage/watcher-unit";
 import type { CronTriggerScan } from "../install/cron-limit";
@@ -161,6 +162,11 @@ export class JobUnits extends WorkerEntrypoint<Env> {
   // The spend watcher's check (src/usage/watcher-unit.ts), every scheduled run.
   watchSpend(input: unknown): Promise<SpendWatcherResult> {
     return createSpendWatcherUnits(this.env).watchSpend(input);
+  }
+
+  // The second half of a spend watcher check on Workers Free (src/usage/watcher-check.server.ts).
+  spendCheck(input: unknown): Promise<CheckUnitResult> {
+    return createSpendWatcherUnits(this.env).spendCheck(input);
   }
 
   // A part of a spend watcher check on Workers Free (src/usage/watcher-shard.server.ts).

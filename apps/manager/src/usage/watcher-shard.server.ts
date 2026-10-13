@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { ACCOUNT_PLANS, type AccountPlan } from "../account/plan";
+import { known, type Read, read, readTogether } from "../db/batch";
 import { createDb, type Database } from "../db/client";
-import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { SETTING, settingsRead } from "../db/settings";
 import { freeLimitWarnings, type LimitWarning } from "./evaluate";
 import {
   accountOverage,
@@ -18,15 +19,27 @@ import {
 import {
   type SnapshotApp,
   type SpendSnapshot,
+  snapshotText,
   spendSnapshotSchema,
   stoppedApps,
 } from "./overview.server";
-import { listOpenPauses } from "./store/pauses.server";
-import { readUsage } from "./store/series.server";
-import { readUsageStates } from "./store/usage-state.server";
-import { loadHistory, partHistory, usageByInstall } from "./watcher-history.server";
+import {
+  alarmsIn,
+  appsIn,
+  isRecord,
+  need,
+  numberIn,
+  recordIn,
+  resumesIn,
+  stringsIn,
+} from "./plain-input";
+import { openPausesRead } from "./store/pauses.server";
+import { usageRead } from "./store/series.server";
+import { type UsageState, usageStatesRead } from "./store/usage-state.server";
+import { historyBounds, loadHistory, partHistory, usageByInstall } from "./watcher-history.server";
 import {
   judge,
+  judgeReads,
   message,
   type SpendWatchDeps,
   type SpendWatchEnv,
@@ -43,10 +56,10 @@ import {
  * part runs in an invocation of its own, reads the stored usage of its apps,
  * judges them, does what follows (states, activity, notifications, pauses)
  * and works out their pages' numbers. What concerns the whole account is
- * worked out by the check itself from usage compacted for sums, which is
- * cheap: the free daily limits before the parts (each gets the warnings
- * for its apps), the bill and each app's share of the overage after, when
- * it stores the pages' numbers (`settings.spend_overview`), exactly what
+ * worked out from usage compacted for sums, by the `spendCheck` unit that
+ * runs the parts (watcher-check.server.ts): the free daily limits before the
+ * parts (each gets the warnings for its apps), the bill and each app's share
+ * of the overage after, for the pages' numbers (`settings.spend_overview`), exactly what
  * `spendSnapshot` gives for all the apps at once.
  *
  * Each part keeps the history of its apps under a KV key of its own (read
@@ -64,9 +77,11 @@ import {
  */
 
 /**
- * Apps per part: an app takes about 1 ms of CPU time to judge and to work
- * out its pages' numbers (measured warm, with a usage reported every hour),
- * so a part stays near 5 ms, half the Free plan's allowance.
+ * Apps per part: an app with eight days of usage reported every hour takes
+ * about 1 ms of CPU time to judge and to work out its pages' numbers, on
+ * top of a part's own 1 to 2 ms (its reads: one D1 batch and one KV read),
+ * so a part stays near 5 ms, half the Free plan's allowance (measured on
+ * Workers Free, 2026-10-13).
  */
 export const SHARD_APPS = 4;
 
@@ -102,6 +117,47 @@ export const shardInputSchema = z.object({
 });
 export type ShardInput = z.infer<typeof shardInputSchema>;
 
+/**
+ * A part's input, as `shardInputSchema.parse` reads it (the same result,
+ * unknown keys left out; throws on what the schema refuses), without Zod:
+ * the input comes from the check itself over `SELF`, and Zod's first parse
+ * in an isolate costs milliseconds of the Workers Free plan's 10 ms of CPU
+ * time per part. A test holds the two to the same result.
+ */
+export function parseShardInput(raw: unknown): ShardInput {
+  need(isRecord(raw), "not an object");
+  const r = raw as Record<string, unknown>;
+  const now = numberIn(r.now, "now");
+  need(Number.isInteger(now) && now > 0, "now is not a positive integer");
+  need(ACCOUNT_PLANS.includes(r.plan as AccountPlan), "plan is not an account plan");
+  const part = numberIn(r.part, "part");
+  need(Number.isInteger(part) && part >= 0, "part is not a non-negative integer");
+  need(r.fresh === undefined || typeof r.fresh === "boolean", "fresh is not a boolean");
+  return {
+    now,
+    plan: r.plan as AccountPlan,
+    part,
+    fresh: (r.fresh as boolean | undefined) ?? false,
+    apps: appsIn(r.apps, "apps", 64),
+    judge: stringsIn(r.judge, "judge"),
+    incomplete: stringsIn(r.incomplete, "incomplete"),
+    alarms: alarmsIn(r.alarms, "alarms"),
+    limitWarnings: recordIn(r.limitWarnings, "limitWarnings", (w, at) => {
+      need(isRecord(w), `${at} is not an object`);
+      const x = w as Record<string, unknown>;
+      need(typeof x.product === "string", `${at}.product is not a string`);
+      return {
+        product: x.product as string,
+        used: numberIn(x.used, `${at}.used`),
+        share: numberIn(x.share, `${at}.share`),
+        runsOutAt: x.runsOutAt === null ? null : numberIn(x.runsOutAt, `${at}.runsOutAt`),
+        appShare: numberIn(x.appShare, `${at}.appShare`),
+      };
+    }),
+    resumes: r.resumes === undefined ? {} : resumesIn(r.resumes, "resumes"),
+  };
+}
+
 export interface ShardResult {
   alerts: number;
   pauses: number;
@@ -122,16 +178,35 @@ export async function runShard(
 ): Promise<ShardResult> {
   const db = createDb(env.DB);
   const ids = input.apps.map((a) => a.installId);
-  const history = await loadHistory(db, env.KV, input.now, partHistory(input.part, ids), {
-    fresh: input.fresh,
-  });
+  const judgedIds = input.apps.filter((a) => input.judge.includes(a.installId));
   const hourNow = Math.floor(input.now / 3_600_000) * 3_600;
-  const recent = await readUsage(db, {
-    from: history.bounds.cutoff,
-    to: hourNow + 3_600,
-    grain: "hour",
-    installIds: ids,
-  });
+  // Everything the part reads from D1 in one round trip (db/batch.ts), its
+  // history from KV alongside.
+  const [history, [recent, states, reads]] = await Promise.all([
+    loadHistory(db, env.KV, input.now, partHistory(input.part, ids), { fresh: input.fresh }),
+    readTogether(db, [
+      usageRead(db, {
+        from: historyBounds(input.now).cutoff,
+        to: hourNow + 3_600,
+        grain: "hour",
+        installIds: ids,
+      }),
+      judgedIds.length > 0
+        ? usageStatesRead(
+            db,
+            judgedIds.map((a) => a.installId),
+          )
+        : known(new Map<string, UsageState>()),
+      judgedIds.length > 0
+        ? judgeReads(db, {
+            now: input.now,
+            plan: input.plan,
+            installIds: judgedIds.map((a) => a.installId),
+            resumesKnown: true,
+          })
+        : known(null),
+    ] as const),
+  ]);
   const usage = usageByInstall(history.series, recent);
   const report: SpendWatchReport = {
     status: "watching",
@@ -145,21 +220,17 @@ export async function runShard(
     history: history.source,
     pruned: null,
   };
-  const judged = input.apps.filter((a) => input.judge.includes(a.installId));
   let resumes = new Map(Object.entries(input.resumes) as Array<[string, ResumeWindow]>);
-  if (judged.length > 0) {
+  if (judgedIds.length > 0 && reads !== null) {
     ({ resumes } = await judge(
       env,
       db,
       {
         now: input.now,
         plan: input.plan,
-        apps: judged,
+        apps: judgedIds,
         usage,
-        states: await readUsageStates(
-          db,
-          judged.map((a) => a.installId),
-        ),
+        states,
         alarms: new Map(Object.entries(input.alarms)),
         incomplete: new Set(input.incomplete),
         limitWarnings: new Map(
@@ -170,6 +241,7 @@ export async function runShard(
       deps,
       SUBREQUEST_BUDGET,
       report,
+      reads,
     ));
   }
   return {
@@ -314,21 +386,26 @@ export function partsToRun(count: number, room: number, now: number): number[] {
 }
 
 /** The stored pages' numbers by app, to keep for the apps a check could not work out. */
-async function previousNumbers(db: Database): Promise<Map<string, SnapshotApp>> {
-  try {
-    const raw = (await readSettings(db, [SETTING.spendOverview]))[SETTING.spendOverview];
-    const parsed = raw === undefined ? null : spendSnapshotSchema.safeParse(JSON.parse(raw));
-    return new Map((parsed?.success ? parsed.data.apps : []).map((a) => [a.installId, a]));
-  } catch {
-    return new Map();
-  }
+function previousNumbers(db: Database): Read<Map<string, SnapshotApp>> {
+  const rows = settingsRead(db, [SETTING.spendOverview]);
+  return read(rows.queries, (results) => {
+    try {
+      const raw = rows.decode(results)[SETTING.spendOverview];
+      const parsed = raw === undefined ? null : spendSnapshotSchema.safeParse(JSON.parse(raw));
+      return new Map((parsed?.success ? parsed.data.apps : []).map((a) => [a.installId, a]));
+    } catch {
+      return new Map();
+    }
+  });
 }
 
 /**
  * Judges the checked apps and works out every app's pages' numbers in parts
- * over `SELF` (see the module comment), then stores the numbers. The apps
- * of a part that failed or did not fit this check keep their last numbers
- * and are judged by a later one. Never throws.
+ * over `SELF` (see the module comment), and returns the numbers as the
+ * pages read them (`settings.spend_overview`), for the check to store with
+ * its status in one statement; null when they could not be worked out. The
+ * apps of a part that failed or did not fit this check keep their last
+ * numbers and are judged by a later one. Never throws.
  */
 export async function checkInShards(
   env: SpendWatchEnv,
@@ -352,7 +429,7 @@ export async function checkInShards(
     resumes?: ReadonlyMap<string, ResumeWindow>;
   },
   report: SpendWatchReport,
-): Promise<void> {
+): Promise<string | null> {
   const unit = shardUnit(env);
   if (unit === null) throw new Error("the spendShard unit is not available");
   const warnings =
@@ -410,8 +487,13 @@ export async function checkInShards(
   }
   report.parts = { count: parts.length, ran: run.length, failed };
   try {
-    const before = worked.size < input.all.length ? await previousNumbers(db) : new Map();
-    const paused = new Set((await listOpenPauses(db)).map((p) => p.installId));
+    // One round trip: the open pauses (some may have started in a part just
+    // now) and, when some apps were not worked out, their last numbers.
+    const [pauses, before] = await readTogether(db, [
+      openPausesRead(db),
+      worked.size < input.all.length ? previousNumbers(db) : known(new Map<string, SnapshotApp>()),
+    ] as const);
+    const paused = new Set(pauses.map((p) => p.installId));
     const snapshot = mergeSnapshot({
       plan: input.plan,
       now: input.now,
@@ -424,12 +506,9 @@ export async function checkInShards(
       ),
       paused,
     });
-    await writeSettings(
-      db,
-      { [SETTING.spendOverview]: JSON.stringify(spendSnapshotSchema.parse(snapshot)) },
-      new Date(input.now),
-    );
+    return snapshotText(snapshot);
   } catch (error) {
     console.error("spend watcher: overview not stored", { error: message(error) });
+    return null;
   }
 }

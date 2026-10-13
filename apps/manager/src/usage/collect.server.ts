@@ -1,5 +1,8 @@
 import { CloudflareApiError, type CloudflareClient } from "@appflare/cf-api";
+import { sql } from "drizzle-orm";
 import type { AccountPlan } from "../account/plan";
+import { type Read, read } from "../db/batch";
+import type { Database } from "../db/client";
 import type { AppResources, CollectedHour } from "./collect";
 import type { HourlyUsage } from "./store/series.server";
 
@@ -79,6 +82,15 @@ const unique = (values: Array<string | null | undefined>): string[] => [
 
 export async function readWatchedApps(d1: D1Database): Promise<WatchedApp[]> {
   const { results } = await d1.prepare(WATCHED_APPS_SQL).all<Row>();
+  return watchedAppsFrom(results);
+}
+
+/** {@link readWatchedApps} as a read that can share a round trip with others (db/batch.ts). */
+export function watchedAppsRead(db: Database): Read<WatchedApp[]> {
+  return read([db.all(sql.raw(WATCHED_APPS_SQL))], ([rows]) => watchedAppsFrom(rows as Row[]));
+}
+
+function watchedAppsFrom(results: readonly Row[]): WatchedApp[] {
   return results.map((row) => {
     const resources = tuples(row.resources_json);
     const of = (kind: string, pick: (t: Array<string | null>) => string | null | undefined) =>

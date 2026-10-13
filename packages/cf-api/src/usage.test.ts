@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { CloudflareApiError } from "./errors";
 import type { CapturedRequest } from "./fake-fetch";
 import { CloudflareGraphQLError } from "./graphql";
 import { createHttpApi } from "./http";
-import { createUsage, USAGE_MAX_ROWS, UsageRowLimitError } from "./namespaces/usage";
+import {
+  createUsage,
+  USAGE_BATCH_FIELDS,
+  USAGE_MAX_ROWS,
+  type UsageReads,
+  UsageRowLimitError,
+} from "./namespaces/usage";
 
 const ACCOUNT = "acc-123";
 /** 2026-10-12T10:30:00.000Z */
@@ -626,5 +633,167 @@ describe("usage: products", () => {
       cpuTimeSec: 9.45,
       txBytes: 4656,
     });
+  });
+});
+
+describe("usage: batched", () => {
+  const workerRow = (script: string, hour: number, requests: number) => ({
+    dimensions: { scriptName: script, datetimeHour: hourIso(hour) },
+    sum: { requests, subrequests: 0, errors: 0, cpuTimeUs: 0 },
+  });
+  const DB = "11111111-1111-4111-8111-111111111111";
+  const ROWS: Record<string, unknown[]> = {
+    workersInvocationsAdaptive: [workerRow("a", NOW - 2 * H, 5), workerRow("b", NOW - H, 7)],
+    d1AnalyticsAdaptiveGroups: [
+      {
+        dimensions: { databaseId: DB, datetimeHour: hourIso(NOW - H) },
+        sum: { rowsRead: 10, rowsWritten: 2 },
+      },
+    ],
+    d1StorageAdaptiveGroups: [],
+  };
+
+  interface FakeOptions {
+    /** A dataset Cloudflare refuses, alone or combined. */
+    refuse?: string;
+    /** The refusal names no field. */
+    noPath?: boolean;
+    /** The answer keeps the other fields' data (Cloudflare drops it all). */
+    withData?: boolean;
+    /** Combined queries fail at the HTTP level. */
+    httpError?: boolean;
+    /** Combined queries are answered with errors Cloudflare never sends. */
+    malformed?: boolean;
+  }
+
+  /** Answers one-dataset and combined queries as Cloudflare does, or as `options` say. */
+  function combined(options: FakeOptions = {}) {
+    const bodies: Array<{ query: string; fields: string[] }> = [];
+    const fetch = async (input: string, init?: RequestInit) => {
+      const body = (await new Request(input, init).json()) as { query: string };
+      const fields = [...body.query.matchAll(/(\w+): (\w+)\(limit/g)].map(([, alias, dataset]) => ({
+        alias: alias ?? "",
+        dataset: dataset ?? "",
+      }));
+      bodies.push({ query: body.query, fields: fields.map((f) => f.dataset) });
+      const json = (value: unknown, status = 200) =>
+        new Response(JSON.stringify(value), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        });
+      if (fields.length > 1 && options.httpError) {
+        return json({ success: false, errors: [{ code: 10000, message: "busy" }] }, 503);
+      }
+      if (fields.length > 1 && options.malformed) {
+        return json({ data: null, errors: [null, { message: "odd", path: "r1" }] });
+      }
+      const bad = fields.find((f) => f.dataset === options.refuse);
+      const account = Object.fromEntries(fields.map((f) => [f.alias, ROWS[f.dataset] ?? []]));
+      const errors =
+        bad === undefined
+          ? null
+          : [
+              {
+                message: "too wide",
+                path: options.noPath ? null : ["Usage", "viewer", "accounts", "0", bad.alias],
+                extensions: { code: "quota" },
+              },
+            ];
+      const data =
+        bad !== undefined && !options.withData ? null : { viewer: { accounts: [account] } };
+      return json({ data, errors });
+    };
+    const http = createHttpApi({ accountId: ACCOUNT, token: "t", fetch });
+    return { usage: createUsage(http, { now: () => NOW_MS }), bodies };
+  }
+
+  const readBoth = (usage: UsageReads) =>
+    Promise.allSettled([
+      usage.workers({ ids: ["a", "b"], from: NOW - 3 * H }),
+      usage.d1({ ids: [DB], from: NOW - 3 * H }),
+    ]);
+  const fieldsSent = (bodies: Array<{ fields: string[] }>) =>
+    bodies.map((b) => b.fields.join(",")).sort();
+
+  it("sends the reads started together as one query, with the same answers", async () => {
+    const separate = combined();
+    const together = combined();
+    const one = await readBoth(separate.usage);
+    const two = await readBoth(together.usage.batched());
+    expect(separate.bodies).toHaveLength(3);
+    expect(together.bodies).toHaveLength(1);
+    expect(together.bodies[0]?.fields).toEqual([
+      "workersInvocationsAdaptive",
+      "d1AnalyticsAdaptiveGroups",
+      "d1StorageAdaptiveGroups",
+    ]);
+    expect(together.bodies[0]?.query).toContain(
+      "$f1: AccountD1AnalyticsAdaptiveGroupsFilter_InputObject!",
+    );
+    expect(two).toEqual(one);
+    expect(two.every((r) => r.status === "fulfilled")).toBe(true);
+  });
+
+  it("sends a field an error names on its own, and the others together again", async () => {
+    const { usage, bodies } = combined({ refuse: "d1StorageAdaptiveGroups" });
+    const [workers, d1] = await readBoth(usage.batched());
+    expect(fieldsSent(bodies)).toEqual(
+      [
+        "workersInvocationsAdaptive,d1AnalyticsAdaptiveGroups,d1StorageAdaptiveGroups",
+        "d1StorageAdaptiveGroups",
+        "workersInvocationsAdaptive,d1AnalyticsAdaptiveGroups",
+      ].sort(),
+    );
+    expect(workers.status).toBe("fulfilled");
+    expect(d1.status === "rejected" && (d1.reason as CloudflareGraphQLError).codes).toEqual([
+      "quota",
+    ]);
+  });
+
+  it("sends each read on its own when an error names no field", async () => {
+    const { usage, bodies } = combined({ refuse: "d1StorageAdaptiveGroups", noPath: true });
+    const [workers, d1] = await readBoth(usage.batched());
+    expect(bodies).toHaveLength(1 + 3);
+    expect(workers.status).toBe("fulfilled");
+    expect(d1.status === "rejected" && d1.reason).toBeInstanceOf(CloudflareGraphQLError);
+  });
+
+  it("fails only the field named by an error when the answer has data", async () => {
+    const { usage, bodies } = combined({ refuse: "d1StorageAdaptiveGroups", withData: true });
+    const [workers, d1] = await readBoth(usage.batched());
+    expect(bodies).toHaveLength(1);
+    expect(workers.status).toBe("fulfilled");
+    expect(d1.status === "rejected" && (d1.reason as CloudflareGraphQLError).codes).toEqual([
+      "quota",
+    ]);
+  });
+
+  it("fails every read of a combined query refused at the HTTP level", async () => {
+    const { usage, bodies } = combined({ httpError: true });
+    const results = await readBoth(usage.batched());
+    expect(bodies).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(results[0]?.status === "rejected" && results[0].reason).toBeInstanceOf(
+      CloudflareApiError,
+    );
+  });
+
+  it("settles every read when the errors are not what Cloudflare sends", async () => {
+    const { usage, bodies } = combined({ malformed: true });
+    const results = await readBoth(usage.batched());
+    // The errors name no field it can tell: each read on its own, which answers.
+    expect(bodies).toHaveLength(1 + 3);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+  });
+
+  it(`asks for at most ${USAGE_BATCH_FIELDS} fields in one query`, async () => {
+    const { usage, bodies } = combined();
+    const batched = usage.batched();
+    const reads = Array.from({ length: USAGE_BATCH_FIELDS * 2 + 1 }, (_, i) =>
+      batched.workers({ ids: [`w${i}`], from: NOW - 3 * H }),
+    );
+    const results = await Promise.allSettled(reads);
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    expect(bodies.map((b) => b.fields.length)).toEqual([USAGE_BATCH_FIELDS, USAGE_BATCH_FIELDS, 1]);
   });
 });

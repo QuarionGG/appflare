@@ -104,6 +104,87 @@ export const spendSnapshotSchema = z.object({
 export type SpendSnapshot = z.infer<typeof spendSnapshotSchema>;
 export type SnapshotApp = z.infer<typeof snapshotAppSchema>;
 
+/** Thrown by {@link snapshotText} for numbers `spendSnapshotSchema` would refuse. */
+export class SnapshotError extends Error {
+  override name = "SnapshotError";
+}
+
+function num(value: number, what: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new SnapshotError(`${what} is not a finite number`);
+  }
+  return value;
+}
+
+function flag(value: boolean, what: string): boolean {
+  if (typeof value !== "boolean") throw new SnapshotError(`${what} is not a boolean`);
+  return value;
+}
+
+/**
+ * The text `settings.spend_overview` stores for numbers a check worked out:
+ * what `JSON.stringify(spendSnapshotSchema.parse(snapshot))` gives (the
+ * same keys in the same order; throws on what the schema refuses), without
+ * Zod. The scheduled check stores it every five minutes in code that never
+ * runs often enough to be optimized, where Zod's first parse in an isolate
+ * costs milliseconds of the Workers Free plan's 10 ms of CPU time. Readers
+ * still parse with the schema. A test holds the two to the same result.
+ */
+export function snapshotText(snapshot: SpendSnapshot): string {
+  const loop = (l: SnapshotApp["loop"]["relaxed"], what: string) => ({
+    money: flag(l.money, `${what}.money`),
+    abnormal: flag(l.abnormal, `${what}.abnormal`),
+    trips: flag(l.trips, `${what}.trips`),
+  });
+  const period = (p: SnapshotApp["spend"]["day"], what: string) => ({
+    spent: num(p.spent, `${what}.spent`),
+    projected: num(p.projected, `${what}.projected`),
+    resetsAt: num(p.resetsAt, `${what}.resetsAt`),
+  });
+  if (snapshot.plan !== "free" && snapshot.plan !== "paid") {
+    throw new SnapshotError("plan is not an account plan");
+  }
+  const out: SpendSnapshot = {
+    computedAt: num(snapshot.computedAt, "computedAt"),
+    plan: snapshot.plan,
+    bill: {
+      now: num(snapshot.bill.now, "bill.now"),
+      projected: num(snapshot.bill.projected, "bill.projected"),
+    },
+    apps: snapshot.apps.map((app, i) => {
+      const at = `apps.${i}`;
+      if (typeof app.installId !== "string" || app.installId.length === 0) {
+        throw new SnapshotError(`${at}.installId is empty`);
+      }
+      return {
+        installId: app.installId,
+        burnPerHour: num(app.burnPerHour, `${at}.burnPerHour`),
+        ratio: app.ratio === null ? null : num(app.ratio, `${at}.ratio`),
+        loop: {
+          relaxed: loop(app.loop.relaxed, `${at}.loop.relaxed`),
+          standard: loop(app.loop.standard, `${at}.loop.standard`),
+          strict: loop(app.loop.strict, `${at}.loop.strict`),
+        },
+        spend: {
+          day: period(app.spend.day, `${at}.spend.day`),
+          week: period(app.spend.week, `${at}.spend.week`),
+          month: period(app.spend.month, `${at}.spend.month`),
+        },
+        overageUsd: num(app.overageUsd, `${at}.overageUsd`),
+      };
+    }),
+    ...(snapshot.stopped === undefined
+      ? {}
+      : {
+          stopped: snapshot.stopped.map((id) => {
+            if (typeof id !== "string") throw new SnapshotError("stopped holds a non-string");
+            return id;
+          }),
+        }),
+  };
+  return JSON.stringify(out);
+}
+
 function isProductKey(key: string): key is ProductKey {
   return Object.hasOwn(PRODUCTS, key);
 }

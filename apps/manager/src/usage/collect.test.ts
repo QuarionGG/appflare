@@ -38,7 +38,7 @@ function reader(
 ) {
   const graphql = fakeGraphQL(answers, undefined, refuse);
   const api = createClient({ accountId: "acc", token: "t", fetch: graphql.fetch });
-  return { usage: api.usage, sent: graphql.sent };
+  return { usage: api.usage, sent: graphql.sent, requests: graphql.requests };
 }
 
 const of = (hours: CollectedHour[], product: string) =>
@@ -327,6 +327,19 @@ describe("collectUsage (a read that fails)", () => {
     // Neither the read's counts nor its storage, not even the level carried from before.
     expect(products.has("d1_rows_read")).toBe(false);
     expect(products.has("d1_storage")).toBe(false);
+  });
+
+  it("asks for every dataset in one request, and on a refused one asks for it on its own", async () => {
+    const calm = reader(RECORDED);
+    await collectUsage(calm.usage, [app], RECORDED_NOW);
+    expect(calm.requests.count).toBe(1);
+    // Cloudflare answers a combined query with a refused field with no data at
+    // all: the refused field is asked for on its own and the others together
+    // again, so only the refused one fails.
+    const refused = reader(RECORDED, { message: "timeout", datasets: ["d1StorageAdaptiveGroups"] });
+    const collected = await collectUsage(refused.usage, [app], RECORDED_NOW);
+    expect(refused.requests.count).toBe(3);
+    expect(collected.failures.map((f) => f.source)).toEqual(["d1"]);
   });
 
   it("leaves out the products of a source the check could not prepare", async () => {

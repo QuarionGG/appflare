@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   type SpendWatchDeps,
   type SpendWatchEnv,
@@ -6,15 +5,18 @@ import {
   spendWatchLog,
   watchSpend,
 } from "./watcher.server";
-import { runShard, type ShardUnitResult, shardInputSchema } from "./watcher-shard.server";
+import { type CheckUnitResult, parseCheckInput, runCheck } from "./watcher-check.server";
+import { parseShardInput, runShard, type ShardUnitResult } from "./watcher-shard.server";
 
 /**
  * The spend watcher as a unit of the manager's `JobUnits` entrypoint,
  * reached over the `SELF` service binding like the notification units: the
  * cron's call costs it one subrequest and the check runs in an invocation of
  * its own, with its own subrequest limit and CPU time. On Workers Free a
- * check judges its apps in parts through the `spendShard` unit, each part
- * with CPU time of its own (watcher-shard.server.ts). Without the binding
+ * check hands the account's sums to the `spendCheck` unit
+ * (watcher-check.server.ts), which judges the apps in parts through the
+ * `spendShard` unit, each part with CPU time of its own
+ * (watcher-shard.server.ts). Without the binding
  * (a manager deployed before it existed) the whole check runs in place.
  *
  * The cron runs every five minutes. The spend watcher runs on every run; the
@@ -30,14 +32,28 @@ export type SpendWatcherResult =
 
 export interface SpendWatcherUnitsApi {
   watchSpend(input: unknown): Promise<SpendWatcherResult>;
+  /** The second half of a check on Workers Free: the account's sums, the parts, the pages' numbers. */
+  spendCheck(input: unknown): Promise<CheckUnitResult>;
   /** Judges a few apps of a check on Workers Free, and works out their pages' numbers. */
   spendShard(input: unknown): Promise<ShardUnitResult>;
 }
 
-const input = z.object({
-  /** A half-hour run: prune what is past its retention too. */
-  maintenance: z.boolean().default(false),
-});
+/**
+ * The check's input: `maintenance`, a half-hour run that also prunes what
+ * is past its retention (false when left out). Read without Zod, whose
+ * first parse in an isolate costs milliseconds of a Workers Free run.
+ */
+function checkInput(raw: unknown): { maintenance: boolean } {
+  const value = raw === undefined || raw === null ? {} : raw;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid check input: not an object");
+  }
+  const maintenance = (value as { maintenance?: unknown }).maintenance;
+  if (maintenance !== undefined && typeof maintenance !== "boolean") {
+    throw new Error("Invalid check input: maintenance is not a boolean");
+  }
+  return { maintenance: maintenance ?? false };
+}
 
 export function createSpendWatcherUnits(
   env: SpendWatchEnv,
@@ -46,15 +62,22 @@ export function createSpendWatcherUnits(
   return {
     async watchSpend(raw) {
       try {
-        const { maintenance } = input.parse(raw ?? {});
+        const { maintenance } = checkInput(raw);
         return { ok: true, value: await watchSpend(env, { maintenance }, deps) };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    async spendCheck(raw) {
+      try {
+        return { ok: true, value: await runCheck(env, parseCheckInput(raw), deps) };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     },
     async spendShard(raw) {
       try {
-        return { ok: true, value: await runShard(env, shardInputSchema.parse(raw), deps) };
+        return { ok: true, value: await runShard(env, parseShardInput(raw), deps) };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }

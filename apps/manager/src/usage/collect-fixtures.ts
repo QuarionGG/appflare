@@ -425,8 +425,10 @@ export function fakeGraphQL(
   answers: Readonly<Record<string, readonly AnswerRow[]>>,
   rest?: FetchLike,
   refuse?: { message: string; code?: string; datasets?: readonly string[] },
-): { fetch: FetchLike; sent: GraphQLSent[] } {
+): { fetch: FetchLike; sent: GraphQLSent[]; requests: { count: number } } {
   const sent: GraphQLSent[] = [];
+  /** GraphQL requests answered (a combined query is one). */
+  const requests = { count: 0 };
   const fetch: FetchLike = async (input, init) => {
     const request = new Request(input, init);
     if (!new URL(request.url).pathname.endsWith("/graphql")) {
@@ -438,38 +440,54 @@ export function fakeGraphQL(
     }
     const body = (await request.json()) as {
       query: string;
-      variables: { filter: Record<string, unknown> };
+      variables: Record<string, unknown>;
     };
-    const filter = body.variables.filter;
-    const named = /rows: (\w+)\(/.exec(body.query)?.[1] ?? "";
-    const dataset = filter.type === "alarm" ? "alarms" : named;
-    sent.push({ dataset, filter });
-    if (refuse !== undefined && (refuse.datasets?.includes(dataset) ?? true)) {
+    requests.count += 1;
+    // One dataset per request (`rows: <dataset>(... filter: $filter`), or
+    // several in a combined query (`r<i>: <dataset>(... filter: $f<i>`).
+    const fields = [...body.query.matchAll(/(\w+): (\w+)\(limit: \d+, filter: \$(\w+)/g)].map(
+      ([, alias, named, variable]) => {
+        const filter = body.variables[variable ?? ""] as Record<string, unknown>;
+        return {
+          alias: alias ?? "",
+          dataset: filter.type === "alarm" ? "alarms" : (named ?? ""),
+          filter,
+        };
+      },
+    );
+    for (const f of fields) sent.push({ dataset: f.dataset, filter: f.filter });
+    const refused = fields.filter(
+      (f) => refuse !== undefined && (refuse.datasets?.includes(f.dataset) ?? true),
+    );
+    if (refuse !== undefined && refused.length > 0) {
+      // As Cloudflare does: the refused fields' errors, and no data at all.
       return Response.json({
         data: null,
-        errors: [
-          {
-            message: refuse.message,
-            extensions: refuse.code === undefined ? {} : { code: refuse.code },
-          },
-        ],
+        errors: refused.map((f) => ({
+          message: refuse.message,
+          path: fields.length > 1 ? ["Usage", "viewer", "accounts", "0", f.alias] : null,
+          extensions: refuse.code === undefined ? {} : { code: refuse.code },
+        })),
       });
     }
-    const from = Date.parse(String(filter.datetime_geq));
-    const to = Date.parse(String(filter.datetime_lt));
-    const rows = (answers[dataset] ?? []).filter((row) => {
-      const hour = Date.parse(String(row.dimensions.datetimeHour));
-      if (!(hour >= from && hour < to)) return false;
-      for (const field of ID_FIELDS) {
-        const wanted = filter[`${field}_in`];
-        if (!Array.isArray(wanted)) continue;
-        if (!wanted.map(idKey).includes(idKey(row.dimensions[field]))) return false;
-      }
-      return true;
-    });
-    return Response.json({ data: { viewer: { accounts: [{ rows }] } }, errors: null });
+    const account: Record<string, AnswerRow[]> = {};
+    for (const { alias, dataset, filter } of fields) {
+      const from = Date.parse(String(filter.datetime_geq));
+      const to = Date.parse(String(filter.datetime_lt));
+      account[alias] = (answers[dataset] ?? []).filter((row) => {
+        const hour = Date.parse(String(row.dimensions.datetimeHour));
+        if (!(hour >= from && hour < to)) return false;
+        for (const field of ID_FIELDS) {
+          const wanted = filter[`${field}_in`];
+          if (!Array.isArray(wanted)) continue;
+          if (!wanted.map(idKey).includes(idKey(row.dimensions[field]))) return false;
+        }
+        return true;
+      });
+    }
+    return Response.json({ data: { viewer: { accounts: [account] } }, errors: null });
   };
-  return { fetch, sent };
+  return { fetch, sent, requests };
 }
 
 /** An answer row for an hour (unix seconds) and a resource. */

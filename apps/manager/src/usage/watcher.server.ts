@@ -4,10 +4,12 @@ import {
   CloudflareGraphQLError,
   missingSpendProtectionScopes,
 } from "@appflare/cf-api";
-import { readAccountPlan } from "../account/plan.server";
+import { accountPlanRead } from "../account/plan.server";
 import { getCfClient } from "../cloudflare/client.server";
-import { readGrant } from "../cloudflare/grant-store.server";
+import { grantRead } from "../cloudflare/grant-store.server";
+import { readTogether } from "../db/batch";
 import { createDb, type Database } from "../db/client";
+import { SETTING, settingsRead } from "../db/settings";
 import {
   type CollectSource,
   type CollectTarget,
@@ -15,26 +17,22 @@ import {
   HOUR,
   LEVEL_PRODUCTS,
 } from "./collect";
-import { addAccountResources, changedHours, readWatchedApps, storedIndex } from "./collect.server";
+import { addAccountResources, changedHours, storedIndex, watchedAppsRead } from "./collect.server";
 import { DAY_MS, HOUR_MS, type ProductKey, type Usage } from "./math";
-import { resumeWindows } from "./resume.server";
-import { pruneActivity } from "./store/activity.server";
-import { pruneAlertFirings } from "./store/alert-rules.server";
+import { recentResumesRead, resumeWindows } from "./resume.server";
+import { pruneActivityStatement } from "./store/activity.server";
+import { pruneAlertFiringsStatement } from "./store/alert-rules.server";
 import {
   type HourlyUsage,
-  pruneUsage,
+  pruneUsageStatements,
   readUsage,
   recordHourlyUsage,
   type UsageRow,
+  usageRead,
 } from "./store/series.server";
-import { readUsageStates } from "./store/usage-state.server";
-import {
-  ALL_HISTORY,
-  historyBounds,
-  loadHistory,
-  SUMS_HISTORY,
-  usageByInstall,
-} from "./watcher-history.server";
+import { usageStatesOf, usageStatesRead } from "./store/usage-state.server";
+import { type CheckInput, type CheckUnitResult, checkUnit, runCheck } from "./watcher-check.server";
+import { ALL_HISTORY, historyBounds, loadHistory, usageByInstall } from "./watcher-history.server";
 import {
   judge,
   message,
@@ -44,7 +42,7 @@ import {
   SUBREQUEST_BUDGET,
   writeOverview,
 } from "./watcher-judge.server";
-import { checkInShards, shardUnit } from "./watcher-shard.server";
+import { shardUnit } from "./watcher-shard.server";
 import { type SpendWatchStatus, writeSpendWatchStatus } from "./watcher-status";
 
 export type { SpendWatchDeps, SpendWatchEnv, SpendWatchReport } from "./watcher-judge.server";
@@ -72,8 +70,16 @@ export { SUBREQUEST_BUDGET } from "./watcher-judge.server";
  * 4. Judge every app and act: states, activity, notifications (sent at once
  *    over `SELF` while this invocation has subrequests to spare, else by
  *    the scheduled run), alert firings, pauses.
- *    On Workers Free (10 ms of CPU time per run) this happens in parts of
- *    a few apps, each an invocation of its own (watcher-shard.server.ts).
+ *    On Workers Free (10 ms of CPU time per run) this happens in an
+ *    invocation of its own (watcher-check.server.ts), which judges the apps
+ *    in parts of a few apps, each an invocation of its own too
+ *    (watcher-shard.server.ts).
+ *
+ * Every invocation's CPU time counts on Workers Free, and code that runs
+ * once every five minutes is never optimized by the runtime: what costs is
+ * each call made, not only the work. So a check reads D1 in as few round
+ * trips as it can (db/batch.ts), asks the analytics for every dataset in one
+ * request, and validates what it hands its own units without Zod.
  *
  * On the half-hour checks it also prunes the usage history, activity and
  * alert firings past their retention (each delete reads through an index on
@@ -167,14 +173,15 @@ function levelsBefore(usage: Usage | undefined, from: number): Partial<Record<Pr
   return out;
 }
 
+/** Prunes the usage history, activity and alert firings past their retention, in one batch. */
 async function prune(db: Database, now: number): Promise<number> {
   const at = new Date(now);
-  const [usage, activity, firings] = await Promise.all([
-    pruneUsage(db, at),
-    pruneActivity(db, at),
-    pruneAlertFirings(db, at),
+  const results = await db.batch([
+    ...pruneUsageStatements(db, at),
+    pruneActivityStatement(db, at),
+    pruneAlertFiringsStatement(db, at),
   ]);
-  return usage.hourly + usage.daily + activity + firings;
+  return results.reduce((sum, r) => sum + r.meta.changes, 0);
 }
 
 /** One check; see the module comment. */
@@ -198,14 +205,26 @@ export async function watchSpend(
     history: null,
     pruned: null,
   };
+  /** The pages' numbers a check on Workers Free worked out, stored with the status. */
+  let overview: string | null = null;
   const finish = async (status: SpendWatchStatus | null) => {
     if (status !== null) {
       report.status = status.state;
       if (status.state === "failed") report.error = status.error;
       try {
-        await writeSpendWatchStatus(db, status);
+        const { alongsideError } = await writeSpendWatchStatus(
+          db,
+          status,
+          overview === null ? {} : { [SETTING.spendOverview]: overview },
+        );
+        if (alongsideError !== undefined) {
+          console.error("spend watcher: overview not stored", { error: message(alongsideError) });
+        }
       } catch (error) {
         console.error("spend watcher: status not stored", { error: message(error) });
+        if (overview !== null) {
+          console.error("spend watcher: overview not stored", { error: message(error) });
+        }
       }
     }
     return report;
@@ -220,42 +239,77 @@ export async function watchSpend(
   }
 
   try {
-    const all = await readWatchedApps(env.DB);
-    /** The pages' numbers from what is stored, for a check that collects nothing. */
+    // What the check reads before it asks Cloudflare, in one round trip
+    // (db/batch.ts): the apps, the connection, the plan, what the last
+    // checks remembered, the latest resumes, and the stored hours the check
+    // reads again (from the history's cut-off on; an app that fell further
+    // behind reads its older hours just below).
+    const { cutoff } = historyBounds(now);
+    const hourNow = Math.floor(now / HOUR_MS) * (HOUR_MS / 1000);
+    const [all, grant, plan, account, storedStates, latestResumes, storedRecent] =
+      await readTogether(db, [
+        watchedAppsRead(db),
+        grantRead(db),
+        accountPlanRead(db),
+        settingsRead(db, [SETTING.accountId]),
+        usageStatesRead(db, null),
+        recentResumesRead(db, now),
+        usageRead(db, { from: cutoff - HOUR, to: hourNow + HOUR, grain: "hour" }),
+      ] as const);
+    /**
+     * Workers Free: the rest of the check (the account's sums, the parts
+     * that judge the apps, the pages' numbers) in an invocation of its own,
+     * the `spendCheck` unit (watcher-check.server.ts), or in place without it.
+     */
+    const checkRest = async (
+      input: Omit<CheckInput, "budget">,
+      options: { history: boolean },
+    ): Promise<void> => {
+      const unit = checkUnit(env);
+      if (unit !== null) report.subrequests += 1;
+      const full: CheckInput = { ...input, budget: budget - report.subrequests };
+      let result: CheckUnitResult;
+      if (unit === null) result = { ok: true, value: await runCheck(env, full, deps) };
+      else {
+        try {
+          result = await unit.spendCheck(full);
+        } catch (error) {
+          result = { ok: false, error: message(error) };
+        }
+      }
+      if (!result.ok) throw new Error(result.error);
+      const done = result.value;
+      report.alerts += done.alerts;
+      report.pauses += done.pauses;
+      report.deferred += done.deferred;
+      report.subrequests += done.subrequests;
+      if (done.parts !== undefined) report.parts = done.parts;
+      if (options.history) report.history = done.history;
+      overview = done.overview;
+    };
+    /**
+     * The pages' numbers from what is stored, for a check that collects
+     * nothing. Best effort: the status the check is about to store (say,
+     * that the connection needs access) matters more than the numbers.
+     */
     const storedOverview = async () => {
-      const plan = await readAccountPlan(db);
       if (plan !== "free" || shardUnit(env) === null) {
         await writeOverview(env, db, { now, all });
         return;
       }
-      const history = await loadHistory(db, env.KV, now, SUMS_HISTORY);
-      const recent = await readUsage(db, {
-        from: history.bounds.cutoff,
-        to: Math.floor(now / HOUR_MS) * HOUR + HOUR,
-        grain: "hour",
-      });
-      await checkInShards(
-        env,
-        db,
-        {
-          now,
-          plan,
-          all,
-          judge: new Set(),
-          incomplete: new Set(),
-          alarms: new Map(),
-          sums: usageByInstall(history.series, recent),
-          fresh: new Set(),
-          budget,
-        },
-        report,
-      );
+      try {
+        await checkRest(
+          { now, plan, all, judge: [], incomplete: [], alarms: {}, fresh: [], resumes: {} },
+          { history: false },
+        );
+      } catch (error) {
+        console.error("spend watcher: overview not stored", { error: message(error) });
+      }
     };
     if (all.length === 0) {
       await storedOverview();
       return await finish({ state: "watching", at: now });
     }
-    const grant = await readGrant(env.DB);
     if (grant !== null) {
       const missing = missingSpendProtectionScopes(grant.scopes);
       if (missing.length > 0) {
@@ -271,16 +325,16 @@ export async function watchSpend(
       return await finish({ state: "watching", at: now });
     }
 
-    const plan = await readAccountPlan(db);
     const api: CloudflareClient = await getCfClient(env, {
       grant,
+      accountId: account[SETTING.accountId] ?? "",
       ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
       onRequest: () => {
         report.subrequests += 1;
       },
     });
-    const states = await readUsageStates(
-      db,
+    const states = usageStatesOf(
+      storedStates,
       apps.map((a) => a.installId),
     );
 
@@ -292,14 +346,14 @@ export async function watchSpend(
         readFrom(a, states.get(a.installId)?.lastCheckedAt ?? null, now),
       ]),
     );
-    const { cutoff } = historyBounds(now);
     const recentFrom = Math.min(cutoff, ...froms.values());
-    const hourNow = Math.floor(now / HOUR_MS) * (HOUR_MS / 1000);
-    const stored = await readUsage(db, {
-      from: recentFrom - HOUR,
-      to: hourNow + HOUR,
-      grain: "hour",
-    });
+    const stored =
+      recentFrom < cutoff
+        ? [
+            ...(await readUsage(db, { from: recentFrom - HOUR, to: cutoff - HOUR, grain: "hour" })),
+            ...storedRecent,
+          ]
+        : storedRecent;
     const before = usageByInstall([], stored);
 
     // The account's Durable Object namespaces and containers: without
@@ -365,38 +419,32 @@ export async function watchSpend(
     const resumes = await resumeWindows(db, env.KV, {
       now,
       installIds: apps.map((a) => a.installId),
-      usage: usageByInstall([], recent),
+      // Read only for an app resumed lately: none, most checks.
+      usage: latestResumes.size === 0 ? new Map() : usageByInstall([], recent),
       before,
+      resumes: latestResumes,
       keep: true,
     });
-    const sharded = plan === "free" && shardUnit(env) !== null;
-    const history = await loadHistory(db, env.KV, now, sharded ? SUMS_HISTORY : ALL_HISTORY, {
-      fresh: rewritten,
-    });
-    report.history = history.source;
-
-    if (sharded) {
+    if (plan === "free" && shardUnit(env) !== null) {
       // Workers Free: the apps are judged in parts, each with CPU time of
-      // its own (watcher-shard.server.ts); the account's sums are worked
-      // out here.
-      await checkInShards(
-        env,
-        db,
+      // its own (watcher-shard.server.ts), and the account's sums are worked
+      // out in an invocation of their own (watcher-check.server.ts).
+      await checkRest(
         {
           now,
           plan,
-          all,
-          judge: new Set(apps.map((a) => a.installId)),
-          incomplete: collected.incomplete,
-          alarms: collected.alarms,
-          sums: usageByInstall(history.series, recent),
-          fresh: rewritten,
-          budget,
-          resumes,
+          all: all.map((a) => ({ installId: a.installId, installedAt: a.installedAt })),
+          judge: apps.map((a) => a.installId),
+          incomplete: [...collected.incomplete],
+          alarms: Object.fromEntries(collected.alarms),
+          fresh: [...rewritten],
+          resumes: Object.fromEntries(resumes),
         },
-        report,
+        { history: true },
       );
     } else {
+      const history = await loadHistory(db, env.KV, now, ALL_HISTORY, { fresh: rewritten });
+      report.history = history.source;
       const usage = usageByInstall(history.series, recent);
       const { paused } = await judge(
         env,

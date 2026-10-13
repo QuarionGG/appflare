@@ -1,5 +1,6 @@
 import { and, count, desc, eq, gte, inArray, isNull, lt, type SQL } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { known, type Read, read, runRead } from "../../db/batch";
 import type { Database } from "../../db/client";
 import { type ActivityKind, usage_activity } from "../../db/schema";
 import { ACTIVITY_FACTS, type Activity, type ActivityFacts } from "./activity";
@@ -94,26 +95,50 @@ export async function listActivity(
   db: Database,
   query: ActivityQuery & { limit?: number } = {},
 ): Promise<Activity[]> {
-  if (query.kinds?.length === 0) return [];
-  const rows = await db
-    .select()
-    .from(usage_activity)
-    .where(where(query))
-    .orderBy(desc(usage_activity.at), desc(usage_activity.id))
-    .limit(query.limit ?? 50);
-  return rows.map(fromRow).filter((a) => a !== null);
+  return runRead(db, activityRead(db, query));
+}
+
+/** {@link listActivity} as a read (db/batch.ts). */
+export function activityRead(
+  db: Database,
+  query: ActivityQuery & { limit?: number } = {},
+): Read<Activity[]> {
+  if (query.kinds?.length === 0) return known([]);
+  return read(
+    [
+      db
+        .select()
+        .from(usage_activity)
+        .where(where(query))
+        .orderBy(desc(usage_activity.at), desc(usage_activity.id))
+        .limit(query.limit ?? 50),
+    ],
+    ([rows]) => (rows as Row[]).map(fromRow).filter((a) => a !== null),
+  );
 }
 
 /** How many entries match (the "N alerts sent" badge: `alert_sent` since the period began). */
 export async function countActivity(db: Database, query: ActivityQuery): Promise<number> {
-  if (query.kinds?.length === 0) return 0;
-  const [row] = await db.select({ n: count() }).from(usage_activity).where(where(query));
-  return row?.n ?? 0;
+  return runRead(db, activityCountRead(db, query));
+}
+
+/** {@link countActivity} as a read (db/batch.ts). */
+export function activityCountRead(db: Database, query: ActivityQuery): Read<number> {
+  if (query.kinds?.length === 0) return known(0);
+  return read(
+    [db.select({ n: count() }).from(usage_activity).where(where(query))],
+    ([rows]) => (rows as Array<{ n: number }>)[0]?.n ?? 0,
+  );
 }
 
 /** Deletes entries older than `ACTIVITY_RETENTION_DAYS` before `now`; returns how many went. */
 export async function pruneActivity(db: Database, now: Date = new Date()): Promise<number> {
-  const cutoff = new Date(now.getTime() - ACTIVITY_RETENTION_DAYS * DAY_SECONDS * 1000);
-  const result = await db.delete(usage_activity).where(lt(usage_activity.at, cutoff));
+  const result = await pruneActivityStatement(db, now);
   return result.meta.changes;
+}
+
+/** The delete of {@link pruneActivity}, to batch with others. */
+export function pruneActivityStatement(db: Database, now: Date) {
+  const cutoff = new Date(now.getTime() - ACTIVITY_RETENTION_DAYS * DAY_SECONDS * 1000);
+  return db.delete(usage_activity).where(lt(usage_activity.at, cutoff));
 }

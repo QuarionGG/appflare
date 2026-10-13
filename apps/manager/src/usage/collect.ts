@@ -105,8 +105,14 @@ export interface CollectFailure {
   error: unknown;
 }
 
-/** The usage reads the collector makes (cf-api `client.usage`). */
-export type UsageReader = Pick<
+/**
+ * The usage reads the collector makes (cf-api `client.usage`), and
+ * optionally a reader that sends the reads started together as one request
+ * (`batched`), which the collector uses when there is one.
+ */
+export type UsageReader = UsageReads & { batched?: () => UsageReads };
+
+type UsageReads = Pick<
   CloudflareClient["usage"],
   | "workers"
   | "durableObjects"
@@ -336,7 +342,7 @@ function attribute(reading: Reading, rows: readonly UsageRow[], owner: Map<strin
  * latest sample carried into hours without one.
  */
 export async function collectUsage(
-  usage: UsageReader,
+  reader: UsageReader,
   targets: readonly CollectTarget[],
   now: number,
 ): Promise<Collected> {
@@ -349,6 +355,8 @@ export async function collectUsage(
     incomplete: new Set(),
   };
   if (targets.length === 0) return collected;
+  // Every read below starts in this turn: batched, they go out as one request.
+  const usage = reader.batched?.() ?? reader;
   const earliest = Math.min(...targets.map((t) => t.from));
   const range = { from: earliest - LEVEL_LOOKBACK_HOURS * HOUR, to: now };
   const reading: Reading = { values: new Map() };

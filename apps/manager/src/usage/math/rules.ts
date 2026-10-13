@@ -205,7 +205,46 @@ interface SpendRate {
   recent: Usage;
 }
 
+/**
+ * Spend rates already worked out, by usage object: the loop check at each
+ * level, the evaluation and `heavyNewUse` of one app at one moment all ask
+ * for the same one (the level does not change it). A weak map keeps it only
+ * as long as the usage; a usage must not change after it is measured.
+ */
+const rates = new WeakMap<
+  Usage,
+  { plan: AccountPlan; now: number; since?: number; resume?: ResumeWindow; rate: SpendRate }
+>();
+
 function spendRate(input: {
+  plan: AccountPlan;
+  usage: Usage;
+  now: number;
+  since?: number;
+  resume?: ResumeWindow;
+}): SpendRate {
+  const known = rates.get(input.usage);
+  if (
+    known !== undefined &&
+    known.plan === input.plan &&
+    known.now === input.now &&
+    known.since === input.since &&
+    known.resume === input.resume
+  ) {
+    return known.rate;
+  }
+  const rate = computeSpendRate(input);
+  rates.set(input.usage, {
+    plan: input.plan,
+    now: input.now,
+    ...(input.since === undefined ? {} : { since: input.since }),
+    ...(input.resume === undefined ? {} : { resume: input.resume }),
+    rate,
+  });
+  return rate;
+}
+
+function computeSpendRate(input: {
   plan: AccountPlan;
   usage: Usage;
   now: number;

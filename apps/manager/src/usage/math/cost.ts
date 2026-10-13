@@ -243,9 +243,15 @@ export function accountOverage(
   for (const key of PRODUCT_KEYS) {
     const users = Object.entries(apps).filter(([, usage]) => usage[key] !== undefined);
     if (users.length === 0) continue;
-    const total = productMonth(key, addSeries(users.map(([, u]) => u[key] ?? [])), plan, now, {
+    const all = addSeries(users.map(([, u]) => u[key] ?? []));
+    // The pace counts only apps still running; it matters only for a projection.
+    const running = users.filter(([id]) => !stopped.has(id));
+    const total = productMonth(key, all, plan, now, {
       projected,
-      paceFrom: addSeries(users.filter(([id]) => !stopped.has(id)).map(([, u]) => u[key] ?? [])),
+      paceFrom:
+        !projected || running.length === users.length
+          ? all
+          : addSeries(running.map(([, u]) => u[key] ?? [])),
     });
     result.byProduct[key] = total;
     result.usd += total.usd;

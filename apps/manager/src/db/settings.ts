@@ -1,4 +1,5 @@
 import { inArray, sql } from "drizzle-orm";
+import { type Read, read, runRead } from "./batch";
 import type { Database } from "./client";
 import { settings } from "./schema";
 
@@ -249,17 +250,32 @@ export const SETTING = {
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];
 
+/** The given rows, as a read that can share a round trip with others (db/batch.ts). */
+export function settingsRead<K extends SettingKey>(
+  db: Database,
+  keys: readonly K[],
+): Read<Partial<Record<K, string>>> {
+  return read(
+    [
+      db
+        .select({ key: settings.key, value: settings.value })
+        .from(settings)
+        .where(inArray(settings.key, [...keys])),
+    ],
+    ([rows]) => {
+      const out: Partial<Record<K, string>> = {};
+      for (const row of rows as Array<{ key: string; value: string }>)
+        out[row.key as K] = row.value;
+      return out;
+    },
+  );
+}
+
 export async function readSettings<K extends SettingKey>(
   db: Database,
   keys: readonly K[],
 ): Promise<Partial<Record<K, string>>> {
-  const rows = await db
-    .select({ key: settings.key, value: settings.value })
-    .from(settings)
-    .where(inArray(settings.key, [...keys]));
-  const out: Partial<Record<K, string>> = {};
-  for (const row of rows) out[row.key as K] = row.value;
-  return out;
+  return runRead(db, settingsRead(db, keys));
 }
 
 /** Upserts every given row in one statement. */

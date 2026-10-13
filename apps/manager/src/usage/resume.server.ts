@@ -1,3 +1,4 @@
+import type { Read } from "../db/batch";
 import type { Database } from "../db/client";
 import {
   HOUR_MS,
@@ -7,7 +8,7 @@ import {
   resumeMatters,
   type Usage,
 } from "./math";
-import { latestResumes } from "./store/pauses.server";
+import { latestResumes, latestResumesRead } from "./store/pauses.server";
 
 /**
  * The resume windows of the apps resumed lately (math/resume.ts): the loop
@@ -23,6 +24,11 @@ import { latestResumes } from "./store/pauses.server";
 /** The latest resume of each app resumed in the last 3 hours (more than any window needs). */
 export function recentResumes(db: Database, now: number): Promise<Map<string, number>> {
   return latestResumes(db, new Date(now - 3 * HOUR_MS));
+}
+
+/** {@link recentResumes} as a read that can share a round trip with others (db/batch.ts). */
+export function recentResumesRead(db: Database, now: number): Read<Map<string, number>> {
+  return latestResumesRead(db, new Date(now - 3 * HOUR_MS));
 }
 
 /** KV key of an install's resume base. */

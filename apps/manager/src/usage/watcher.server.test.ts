@@ -29,6 +29,7 @@ import { writeSpendDefaults } from "./store/defaults.server";
 import { readUsage, recordHourlyUsage } from "./store/series.server";
 import { readUsageState } from "./store/usage-state.server";
 import { recentRows, type SpendWatchDeps, spendWatchLog, watchSpend } from "./watcher.server";
+import type { CheckInput } from "./watcher-check.server";
 import { HISTORY_KEY } from "./watcher-history.server";
 import type { ShardInput } from "./watcher-shard.server";
 import { readSpendWatchStatus } from "./watcher-status";
@@ -134,6 +135,7 @@ function world(
     events,
     pauses,
     graphql: graphql.sent,
+    graphqlRequests: graphql.requests,
     rest: rest.calls,
     refusePause: (ids: string[]) => {
       refusePauses = new Set(ids);
@@ -159,8 +161,10 @@ describe("watchSpend: collect and store", () => {
     const w = world(RECORDED);
     const first = await watchSpend(watchEnv(), {}, w.deps());
     expect(first).toMatchObject({ status: "watching", apps: 1, newApps: 0, history: "database" });
-    // The namespace list, then one request per dataset.
-    expect(first.subrequests).toBe(1 + 9);
+    // The namespace list, then one request asking for every dataset at once.
+    expect(first.subrequests).toBe(1 + 1);
+    expect(w.graphqlRequests.count).toBe(1);
+    expect(w.graphql).toHaveLength(9);
     expect(new Set(w.graphql.map((s) => s.dataset)).size).toBe(w.graphql.length);
     expect(await hourly("notes", "workers_requests")).toEqual([
       [-4 * HOUR, 2],
@@ -499,19 +503,24 @@ describe("watchSpend: judging", () => {
   });
 
   describe("on Workers Free, in parts over SELF", () => {
-    /** A `SELF` whose `spendShard` runs the unit here, recording each part's input. */
+    /**
+     * A `SELF` whose `spendCheck` and `spendShard` run the units here (each
+     * input cloned, as over RPC), recording each one's input.
+     */
     function selfFor(deps: SpendWatchDeps) {
       const parts: ShardInput[] = [];
-      const units = createSpendWatcherUnits(watchEnv(), deps);
-      return {
-        parts,
-        self: {
-          spendShard: (input: unknown) => {
-            parts.push(input as ShardInput);
-            return units.spendShard(structuredClone(input));
-          },
-        },
+      const checks: CheckInput[] = [];
+      const self: Record<string, (input: unknown) => Promise<unknown>> = {};
+      const units = createSpendWatcherUnits({ ...watchEnv(), SELF: self }, deps);
+      self.spendCheck = (input: unknown) => {
+        checks.push(input as CheckInput);
+        return units.spendCheck(structuredClone(input));
       };
+      self.spendShard = (input: unknown) => {
+        parts.push(input as ShardInput);
+        return units.spendShard(structuredClone(input));
+      };
+      return { parts, checks, self };
     }
     const snapshot = async () =>
       spendSnapshotSchema.parse(
@@ -527,8 +536,11 @@ describe("watchSpend: judging", () => {
       await watchSpend(watchEnv(), {}, w.deps());
       const whole = await snapshot();
 
-      const { self, parts } = selfFor(w.deps());
+      const { self, parts, checks } = selfFor(w.deps());
       const report = await watchSpend({ ...watchEnv(), SELF: self }, {}, w.deps());
+      // The account's sums and the parts in an invocation of their own.
+      expect(checks).toHaveLength(1);
+      expect(checks[0]?.judge).toEqual(["b", "c", "d", "e", "notes"]);
       // In the order Home lists them (by install time, then id).
       expect(parts.map((p) => p.apps.map((a) => a.installId))).toEqual([
         ["b", "c", "d", "e"],
@@ -579,6 +591,38 @@ describe("watchSpend: judging", () => {
       expect(after.apps).toEqual(before.apps);
       expect(after.computedAt).toBe(NOW + 5 * 60_000);
     });
+
+    async function grantWithoutAnalytics() {
+      await env.DB.prepare(
+        `INSERT INTO cloudflare_grant (id, client_id, scopes_json, refresh_token, access_token,
+           access_expires_at, key_id, status, connected_at, refreshed_at)
+         VALUES ('g', 'c', ?1, 'sealed', 'sealed', ?2, 'k', 'connected', 1, 1)`,
+      )
+        .bind(JSON.stringify(["account-settings.read", "workers-scripts.write"]), NOW + 3_600_000)
+        .run();
+    }
+
+    for (const [how, spendCheck] of [
+      ["answers that it failed", async () => ({ ok: false as const, error: "boom" })],
+      [
+        "throws",
+        async () => {
+          throw new Error("network connection lost");
+        },
+      ],
+    ] as const) {
+      it(`still says it needs access when the unit for the account's numbers ${how}`, async () => {
+        await seedRecordedApp();
+        await grantWithoutAnalytics();
+        const self = { spendCheck, spendShard: async () => ({ ok: false as const, error: "x" }) };
+        const report = await watchSpend({ ...watchEnv(), SELF: self }, {}, world(RECORDED).deps());
+        expect(report.status).toBe("needs_access");
+        expect(await readSpendWatchStatus(db())).toMatchObject({
+          state: "needs_access",
+          via: "oauth",
+        });
+      });
+    }
 
     it("runs as many parts as its subrequests allow, a different window each check", async () => {
       for (const id of ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"]) {

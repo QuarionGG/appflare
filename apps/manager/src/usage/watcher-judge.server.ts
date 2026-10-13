@@ -2,6 +2,7 @@ import type { FetchLike } from "@appflare/cf-api";
 import type { AccountPlan } from "../account/plan";
 import { readAccountPlan } from "../account/plan.server";
 import type { CfClientEnv } from "../cloudflare/client.server";
+import { known, type Read, read, runRead } from "../db/batch";
 import type { Database } from "../db/client";
 import { SETTING, writeSettings } from "../db/settings";
 import type { JobWorkflows } from "../jobs/create-job.server";
@@ -15,15 +16,16 @@ import {
   type PauseDraft,
 } from "./evaluate";
 import { DAY_MS, HOUR_MS, periodStart, type ResumeWindow, type Usage } from "./math";
-import { spendSnapshot, spendSnapshotSchema } from "./overview.server";
+import { snapshotText, spendSnapshot } from "./overview.server";
 import { PauseActionError, startPause } from "./pause.server";
-import { resumeWindows } from "./resume.server";
-import { countActivity, listActivity, recordActivity } from "./store/activity.server";
-import { listAlertRules, recordAlertFiring } from "./store/alert-rules.server";
-import { effectiveSpendSettingsOf } from "./store/app-settings.server";
-import { readSpendDefaults } from "./store/defaults.server";
-import { listOpenPauses } from "./store/pauses.server";
+import { recentResumesRead, resumeWindows } from "./resume.server";
+import type { Activity } from "./store/activity";
+import { activityCountRead, activityRead, recordActivity } from "./store/activity.server";
+import { type AlertRule, allAlertRulesRead, recordAlertFiring } from "./store/alert-rules.server";
+import { effectiveSpendSettingsRead } from "./store/app-settings.server";
+import { type AppPause, listOpenPauses, openPausesRead } from "./store/pauses.server";
 import { readUsage } from "./store/series.server";
+import type { EffectiveSpendSettings, SpendDefaults } from "./store/spend-settings";
 import {
   type readUsageStates,
   updateUsageState,
@@ -155,11 +157,7 @@ export async function writeOverview(
       paused,
       ...(input.resumes === undefined ? {} : { resumes: input.resumes }),
     });
-    await writeSettings(
-      db,
-      { [SETTING.spendOverview]: JSON.stringify(spendSnapshotSchema.parse(snapshot)) },
-      new Date(now),
-    );
+    await writeSettings(db, { [SETTING.spendOverview]: snapshotText(snapshot) }, new Date(now));
   } catch (error) {
     console.error("spend watcher: overview not stored", { error: message(error) });
   }
@@ -189,6 +187,83 @@ export interface JudgeResult {
   resumes: Map<string, ResumeWindow>;
 }
 
+/** What {@link judge} reads from the database before it decides, as one read (db/batch.ts). */
+export interface JudgeReads {
+  settings: Map<string, EffectiveSpendSettings>;
+  defaults: SpendDefaults;
+  rules: AlertRule[];
+  pauses: AppPause[];
+  /** The latest recent resumes, when the check did not work out the resume windows already. */
+  latestResumes: Map<string, number> | null;
+  /** Today's `limit_near` entries (Workers Free). */
+  limitEntries: Activity[];
+  /** `budget_reached` entries this month (Workers Paid). */
+  budgetTold: number;
+  /** `pause_failed` entries within the pause retry time. */
+  failedPauses: Activity[];
+}
+
+/**
+ * The reads of {@link judge} for `installIds` at `now`, all in one round
+ * trip; a part of a check sends them together with its usage and states.
+ */
+export function judgeReads(
+  db: Database,
+  input: { now: number; plan: AccountPlan; installIds: readonly string[]; resumesKnown: boolean },
+): Read<JudgeReads> {
+  const { now, plan } = input;
+  const today = new Date(Math.floor(now / DAY_MS) * DAY_MS);
+  const monthStart = new Date(periodStart("month", now));
+  const parts = [
+    effectiveSpendSettingsRead(db, input.installIds),
+    allAlertRulesRead(db),
+    openPausesRead(db),
+    input.resumesKnown ? known(null) : recentResumesRead(db, now),
+    plan === "free"
+      ? activityRead(db, { since: today, kinds: ["limit_near"], limit: 200 })
+      : known([]),
+    // Counted on Paid; it matters only while the monthly budget is on.
+    plan === "paid"
+      ? activityCountRead(db, { installId: null, kinds: ["budget_reached"], since: monthStart })
+      : known(0),
+    activityRead(db, {
+      since: new Date(now - PAUSE_RETRY_MS),
+      kinds: ["pause_failed"],
+      limit: 200,
+    }),
+  ] as const;
+  return read(
+    parts.flatMap((p) => p.queries),
+    (results) => {
+      let at = 0;
+      const next = <T>(p: Read<T>): T => {
+        const own = results.slice(at, at + p.queries.length);
+        at += p.queries.length;
+        return p.decode(own);
+      };
+      const [settings, rules, pauses, latest, limitEntries, budgetTold, failedPauses] = [
+        next(parts[0]),
+        next(parts[1]),
+        next(parts[2]),
+        next(parts[3]),
+        next(parts[4]),
+        next(parts[5]),
+        next(parts[6]),
+      ] as const;
+      return {
+        settings: settings.settings,
+        defaults: settings.defaults,
+        rules,
+        pauses,
+        latestResumes: latest,
+        limitEntries,
+        budgetTold,
+        failedPauses,
+      };
+    },
+  );
+}
+
 /**
  * Judges every app (evaluate.ts) and does what it decided, within the
  * subrequest budget.
@@ -200,34 +275,32 @@ export async function judge(
   deps: SpendWatchDeps,
   budget: number,
   report: SpendWatchReport,
+  /** What {@link judgeReads} read, when the caller read it with other things. */
+  loaded?: JudgeReads,
 ): Promise<JudgeResult> {
   const { now, plan } = input;
   const ids = input.apps.map((a) => a.installId);
-  const today = new Date(Math.floor(now / DAY_MS) * DAY_MS);
-  const monthStart = new Date(periodStart("month", now));
-  const [settings, defaults, rules, pauses, resumes] = await Promise.all([
-    effectiveSpendSettingsOf(db, ids),
-    readSpendDefaults(db),
-    listAlertRules(db),
-    listOpenPauses(db),
+  const reads =
+    loaded ??
+    (await runRead(
+      db,
+      judgeReads(db, { now, plan, installIds: ids, resumesKnown: input.resumes !== undefined }),
+    ));
+  const { settings, defaults, rules, pauses } = reads;
+  const resumes =
     input.resumes !== undefined
-      ? Promise.resolve(new Map(input.resumes))
-      : resumeWindows(db, env.KV, { now, installIds: ids, usage: input.usage, keep: true }),
-  ]);
+      ? new Map(input.resumes)
+      : await resumeWindows(db, env.KV, {
+          now,
+          installIds: ids,
+          usage: input.usage,
+          keep: true,
+          ...(reads.latestResumes === null ? {} : { resumes: reads.latestResumes }),
+        });
   const budgetOn = plan === "paid" && defaults.budget.on ? defaults.budget.amount : null;
-  const [limitEntries, budgetTold, failedPauses] = await Promise.all([
-    plan === "free"
-      ? listActivity(db, { since: today, kinds: ["limit_near"], limit: 200 })
-      : Promise.resolve([]),
-    budgetOn === null
-      ? Promise.resolve(0)
-      : countActivity(db, { installId: null, kinds: ["budget_reached"], since: monthStart }),
-    listActivity(db, {
-      since: new Date(now - PAUSE_RETRY_MS),
-      kinds: ["pause_failed"],
-      limit: 200,
-    }),
-  ]);
+  const limitEntries = reads.limitEntries;
+  const budgetTold = budgetOn === null ? 0 : reads.budgetTold;
+  const failedPauses = reads.failedPauses;
   const pauseFailed = new Set(
     failedPauses.flatMap((a) => (a.installId === null ? [] : [a.installId])),
   );
