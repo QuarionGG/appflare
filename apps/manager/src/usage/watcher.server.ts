@@ -13,6 +13,7 @@ import { SETTING, settingsRead } from "../db/settings";
 import { type AccountDay, accountToday } from "./account-day";
 import { checkAccountLimits, deliverAccountLimitEvents } from "./account-limits.server";
 import {
+  ACCOUNT_DAY_READ,
   accountDayFrom,
   type CollectSource,
   type CollectTarget,
@@ -21,7 +22,7 @@ import {
   LEVEL_PRODUCTS,
 } from "./collect";
 import { addAccountResources, changedHours, storedIndex, watchedAppsRead } from "./collect.server";
-import { DAY_MS, HOUR_MS, type ProductKey, type Usage } from "./math";
+import { DAY_MS, dayStart, HOUR_MS, type ProductKey, type Usage } from "./math";
 import { recentResumesRead, resumeWindows } from "./resume.server";
 import { pruneActivityStatement } from "./store/activity.server";
 import { pruneAlertFiringsStatement } from "./store/alert-rules.server";
@@ -43,6 +44,7 @@ import {
   type SpendWatchEnv,
   type SpendWatchReport,
   SUBREQUEST_BUDGET,
+  storedUsage,
   writeOverview,
 } from "./watcher-judge.server";
 import { shardUnit } from "./watcher-shard.server";
@@ -63,7 +65,10 @@ export { SUBREQUEST_BUDGET } from "./watcher-judge.server";
  * 2. Apps installed less than 15 minutes ago are left for later: the
  *    analytics show a brand-new Durable Object namespace only after about
  *    13 minutes, so an early read would store hours that look like nothing
- *    happened. Their first check reads from their install on.
+ *    happened. Their first check reads from their install on. On Workers
+ *    Free, a check with no app to read (none, or all too new) still reads
+ *    the account's totals alone, in one request, and judges the account's
+ *    free daily limits (account-limits.ts).
  * 3. Collect (collect.ts): each dataset once for all apps, for the hours
  *    that can still change (the last three) and any missed since the app's
  *    last check (up to eight days back for an app never checked, enough
@@ -305,22 +310,87 @@ export async function watchSpend(
      * nothing. Best effort: the status the check is about to store (say,
      * that the connection needs access) matters more than the numbers.
      */
-    const storedOverview = async () => {
+    const storedOverview = async (options: { withAccount?: boolean } = {}) => {
+      // Workers Free: the account's free daily limits are judged even with no
+      // app to read, from this check's reading of the account alone.
+      const accountUsed =
+        options.withAccount === true && plan === "free" ? accountToday(accountDay, now) : null;
       if (plan !== "free" || shardUnit(env) === null) {
-        await writeOverview(env, db, { now, all });
+        if (accountUsed === null) {
+          await writeOverview(env, db, { now, all });
+          return;
+        }
+        const usage = await storedUsage(db, env.KV, now);
+        const checked = await checkAccountLimits(
+          env,
+          db,
+          { now, accountToday: accountUsed, usage, listed: new Set(all.map((a) => a.installId)) },
+          deps,
+          report,
+        );
+        await deliverAccountLimitEvents(env, checked.deliver, budget, report);
+        await writeOverview(env, db, { now, all, usage });
         return;
       }
       try {
         await checkRest(
-          { now, plan, all, judge: [], incomplete: [], alarms: {}, fresh: [], resumes: {} },
+          {
+            now,
+            plan,
+            all,
+            judge: [],
+            incomplete: [],
+            alarms: {},
+            fresh: [],
+            resumes: {},
+            ...(accountUsed === null ? {} : { accountToday: { ...accountUsed } }),
+          },
           { history: false },
         );
       } catch (error) {
         console.error("spend watcher: overview not stored", { error: message(error) });
       }
     };
+    /** The Cloudflare client of this check, made once, counting its subrequests. */
+    let client: CloudflareClient | null = null;
+    const cloudflare = async (): Promise<CloudflareClient> => {
+      client ??= await getCfClient(env, {
+        grant,
+        accountId: account[SETTING.accountId] ?? "",
+        ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+        onRequest: () => {
+          report.subrequests += 1;
+        },
+      });
+      return client;
+    };
+    /**
+     * Workers Free with no app to read yet (none installed, or all too new):
+     * the account's totals alone, in one request, since Cloudflare stops a
+     * product for the whole account (Appflare's own Worker and database too)
+     * once something else uses up its daily limit.
+     */
+    const readAccountAlone = async (): Promise<void> => {
+      if (plan !== "free") return;
+      try {
+        const api = await cloudflare();
+        const read = await api.usage.batched().accountTotals({
+          from: dayStart(now) / 1000,
+          to: Math.floor(now / 1000),
+          datasets: ACCOUNT_DAY_READ,
+        });
+        const fresh = accountDayFrom(read, now);
+        const earlier = accountToday(accountDay, now) ?? {};
+        accountDay = { at: fresh.at, used: { ...earlier, ...fresh.used } };
+        if (read.failed.length > 0) report.failedReads = ["account"];
+      } catch (error) {
+        report.failedReads = ["account"];
+        console.warn("spend watcher: the account's totals not read", { error: message(error) });
+      }
+    };
     if (all.length === 0) {
-      await storedOverview();
+      await readAccountAlone();
+      await storedOverview({ withAccount: true });
       return await finish({ state: "watching", at: now });
     }
     if (grant !== null) {
@@ -334,18 +404,12 @@ export async function watchSpend(
     report.newApps = all.length - apps.length;
     report.apps = apps.length;
     if (apps.length === 0) {
-      await storedOverview();
+      await readAccountAlone();
+      await storedOverview({ withAccount: true });
       return await finish({ state: "watching", at: now });
     }
 
-    const api: CloudflareClient = await getCfClient(env, {
-      grant,
-      accountId: account[SETTING.accountId] ?? "",
-      ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-      onRequest: () => {
-        report.subrequests += 1;
-      },
-    });
+    const api = await cloudflare();
     const states = usageStatesOf(
       storedStates,
       apps.map((a) => a.installId),

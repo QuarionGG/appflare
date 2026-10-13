@@ -316,7 +316,7 @@ function UsageRow({
 /**
  * Workers Free: the whole account near (or past) a free daily limit,
  * whatever is using it. Not an app's row, so no Pause: "See usage" opens
- * Home's Usage section.
+ * Home's Usage section, once an app is installed and Home has one.
  */
 function AccountUsageRow({ item }: { item: Extract<AttentionItem, { kind: "account-usage" }> }) {
   const { badge, title, description } = accountLimitAttentionCopy(item.limit, item.topLabel);
@@ -333,9 +333,12 @@ function AccountUsageRow({ item }: { item: Extract<AttentionItem, { kind: "accou
       }
       description={description}
       actions={
-        <LinkButton href="/#usage" variant="secondary" icon={<ArrowRightIcon />}>
-          See usage
-        </LinkButton>
+        // Home has no Usage section to open before an app is installed.
+        item.usageShown ? (
+          <LinkButton href="/#usage" variant="secondary" icon={<ArrowRightIcon />}>
+            See usage
+          </LinkButton>
+        ) : null
       }
     />
   );

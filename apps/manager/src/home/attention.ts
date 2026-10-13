@@ -198,6 +198,8 @@ export type AttentionItem =
       limit: AccountLimitAttention;
       /** What Home calls the Appflare app that used most of it; null when none is listed. */
       topLabel: string | null;
+      /** Home shows its Usage section (an app is installed), for "See usage". */
+      usageShown: boolean;
     }
   | { kind: "connection"; key: string }
   | ({
@@ -267,6 +269,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     key: `account-usage:${limit.product}`,
     limit,
     topLabel: limit.top === null ? null : (apps.get(limit.top.installId)?.label ?? null),
+    usageShown: input.apps.some((a) => a.status !== "uninstalled"),
   }));
 
   const failed: AttentionItem[] = input.failedJobs

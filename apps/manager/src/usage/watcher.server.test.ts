@@ -242,13 +242,15 @@ describe("watchSpend: collect and store", () => {
     const w = world(RECORDED);
     const report = await watchSpend(watchEnv(), {}, w.deps());
     expect(report).toMatchObject({ status: "watching", apps: 0, newApps: 1, rowsWritten: 0 });
-    expect(w.graphql).toEqual([]);
+    // Nothing of the app; on Workers Free, the account's totals alone.
+    expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+    expect(w.graphql.some((s) => Object.keys(s.filter).some((k) => k.endsWith("_in")))).toBe(false);
     expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
 
     // Its first check reads from its install on.
     const later = await watchSpend(watchEnv(), {}, w.deps(NOW + 20 * 60_000));
     expect(later.apps).toBe(1);
-    expect(w.graphql[0]?.filter.datetime_geq).toBe(
+    expect(w.graphql.find((s) => "scriptName_in" in s.filter)?.filter.datetime_geq).toBe(
       new Date((HOUR_NOW - 3 * HOUR) * 1000).toISOString(),
     );
   });
@@ -493,6 +495,87 @@ describe("watchSpend: the account's free daily limits", () => {
         "account only: usage_account_limit",
         "both: usage_limit_near",
       ]);
+    });
+  });
+
+  describe("with no app to read", () => {
+    /** Outside usage only: a database Appflare did not install wrote 95,000 rows today. */
+    const OUTSIDE = {
+      d1AnalyticsAdaptiveGroups: [
+        answerRow("databaseId", OTHER_DB, DAY_START / 1000 + 2 * HOUR, {
+          sum: { rowsRead: 0, rowsWritten: 95_000 },
+        }),
+      ],
+    };
+    const limitsChannel = () =>
+      addChannel(
+        {
+          label: "Limits",
+          events: ["usage_account_limit"],
+          settings: { kind: "slack", webhookUrl: SLACK_URL },
+        },
+        NOW - DAY_MS,
+      );
+    const outbox = async () =>
+      (
+        await env.DB.prepare(
+          `SELECT e.type, d.status FROM notification_events e
+           JOIN notification_deliveries d ON d.event_id = e.id`,
+        ).all<{ type: string; status: string }>()
+      ).results;
+
+    it("Workers Free, no apps: reads the account alone and warns past 90%", async () => {
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const deps = { ...w.deps(), emit: emitUsageEvent };
+      const kicks: string[] = [];
+      const self: Record<string, (input: unknown) => Promise<unknown>> = {};
+      const units = createSpendWatcherUnits({ ...watchEnv(), SELF: self }, deps);
+      self.spendCheck = (input: unknown) => units.spendCheck(structuredClone(input));
+      self.spendShard = (input: unknown) => units.spendShard(structuredClone(input));
+      self.deliverNotifications = async (input: unknown) => {
+        kicks.push((input as { eventId: string }).eventId);
+        return { ok: true, value: { sent: 0, retrying: 0, failed: 0 } };
+      };
+      const report = await watchSpend({ ...watchEnv(), SELF: self }, {}, deps);
+      expect(report).toMatchObject({ status: "watching", apps: 0 });
+      // One request for the account's datasets, and nothing about apps.
+      expect(w.graphqlRequests.count).toBe(1);
+      expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+      expect(w.rest).toEqual([]);
+      // The check's own invocation, the request, and asking for the message to be sent.
+      expect(report.subrequests).toBe(3);
+      expect((await readSpendWatchStatus(db()))?.account?.used.d1_rows_written).toBe(95_000);
+      const entries = await listActivity(db(), { installId: null, kinds: ["limit_near"] });
+      expect(entries.map((e) => e.facts)).toEqual([
+        expect.objectContaining({ product: "d1_rows_written", used: 95_000, otherShare: 1 }),
+      ]);
+      expect(await outbox()).toEqual([{ type: "usage_account_limit", status: "pending" }]);
+      expect(kicks).toHaveLength(1);
+    });
+
+    it("Workers Free, every app too new: the same, and the app is left for later", async () => {
+      await seedRecordedApp("notes", NOW - 5 * 60_000);
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const report = await watchSpend(watchEnv(), {}, { ...w.deps(), emit: emitUsageEvent });
+      expect(report).toMatchObject({ status: "watching", apps: 0, newApps: 1 });
+      expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+      expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
+      expect(await listActivity(db(), { installId: null, kinds: ["limit_near"] })).toHaveLength(1);
+      expect(await outbox()).toEqual([{ type: "usage_account_limit", status: "pending" }]);
+    });
+
+    it("Workers Paid, no apps: no read of the account", async () => {
+      await writeAccountPlan(db(), "paid");
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const report = await watchSpend(watchEnv(), {}, { ...w.deps(), emit: emitUsageEvent });
+      expect(report).toMatchObject({ status: "watching", apps: 0, subrequests: 0 });
+      expect(w.graphql).toEqual([]);
+      expect((await readSpendWatchStatus(db()))?.account).toBeUndefined();
+      expect(await listActivity(db(), { kinds: ["limit_near"] })).toEqual([]);
+      expect(await outbox()).toEqual([]);
     });
   });
 

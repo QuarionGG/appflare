@@ -343,7 +343,17 @@ describe("the account near a free daily limit", () => {
   it("is an account row, for members too, naming the top app as Home names it, with no app's dot", () => {
     const items = attentionItems({ ...EVERYTHING, isAdmin: false });
     const row = items.find((i) => i.kind === "account-usage");
-    expect(row).toMatchObject({ key: "account-usage:d1_rows_written", topLabel: "Links" });
+    expect(row).toMatchObject({
+      key: "account-usage:d1_rows_written",
+      topLabel: "Links",
+      usageShown: true,
+    });
+    // With no app installed there is no Usage section for "See usage" to open.
+    const alone = attentionItems({ ...EVERYTHING, apps: [], failedJobs: [] });
+    expect(alone.find((i) => i.kind === "account-usage")).toMatchObject({
+      topLabel: null,
+      usageShown: false,
+    });
     expect(row !== undefined && "installId" in row).toBe(false);
     expect(appSignals(items).get("links")).toBe("update");
   });

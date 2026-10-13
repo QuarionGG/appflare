@@ -446,10 +446,11 @@ export async function checkInShards(
   const unit = shardUnit(env);
   if (unit === null) throw new Error("the spendShard unit is not available");
   // Workers Free: first the whole account's warning, which owns its products for the day.
-  // A check that judges apps: without a reading, the products the account
-  // was warned about today still come from what was recorded.
+  // A check that judges apps (without a reading, the products the account
+  // was warned about today still come from what was recorded), or one with a
+  // reading of the account alone (no app to read yet).
   const account =
-    input.plan === "free" && input.judge.size > 0
+    input.plan === "free" && (input.judge.size > 0 || input.accountToday !== undefined)
       ? await checkAccountLimits(
           env,
           db,
