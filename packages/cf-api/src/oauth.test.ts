@@ -658,4 +658,15 @@ describe("manager scopes", () => {
     const withoutDns = MANAGER_OAUTH_SCOPES.filter((s) => s !== "dns.write" && s !== "d1.write");
     expect(missingManagerScopes(withoutDns)).toEqual(["d1.write", "dns.write"]);
   });
+
+  it("does not ask for Workers Tail, which nothing in Appflare uses", () => {
+    expect(MANAGER_OAUTH_SCOPES).not.toContain("workers-tail.read");
+    expect(Object.keys(MANAGER_OAUTH_SCOPE_BY_GROUP)).not.toContain("workers_tail");
+  });
+
+  it("finds nothing missing in a sign-in that holds a scope Appflare no longer asks for", () => {
+    // Earlier versions asked for `workers-tail.read`; those sign-ins must not
+    // be sent to reconnect because the list got shorter.
+    expect(missingManagerScopes([...MANAGER_OAUTH_SCOPES, "workers-tail.read"])).toEqual([]);
+  });
 });

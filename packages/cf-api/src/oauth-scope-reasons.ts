@@ -153,12 +153,6 @@ export const MANAGER_SCOPE_REASONS = {
     label: "Account Settings",
     text: "Account Settings lets Appflare read which Cloudflare account it is in and that account's name.",
   },
-  workers_tail: {
-    label: "Workers Tail",
-    // No version of Appflare reads live logs yet: asked for now so that a
-    // later one can, without a new sign-in.
-    text: "Workers Tail lets Appflare read a Worker's live logs. Appflare asks for it now so a later version can show them without asking you to sign in again.",
-  },
 } as const satisfies Record<RequestedGroupKey, ScopeReason>;
 
 /**

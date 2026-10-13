@@ -62,14 +62,13 @@ describe("token template URLs", () => {
     );
   });
 
-  it("asks for edit on resource groups and read on account settings, billing, tail, Access organizations, and zones", () => {
+  it("asks for edit on resource groups and read on account settings, billing, Access organizations, and zones", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
     expect(reads.sort()).toEqual([
       "access_acct",
       "account_settings",
       "billing",
       "email_routing_address",
-      "workers_tail",
       "zone",
     ]);
   });

@@ -261,7 +261,6 @@ The token template requests:
 | Hyperdrive | Edit | Only for [apps with a database elsewhere](/guides/install-apps/#apps-with-a-database-elsewhere): creating a Hyperdrive configuration from the connection string you enter, replacing it when you change the string, and deleting it on uninstall. |
 | Pipelines | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events): creating a Pipelines stream, sink and pipeline for each stream the app uses, and deleting them on uninstall. |
 | Workers R2 Data Catalog | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events), and added by hand (the template link cannot select it): removing a bucket's R2 Data Catalog when an uninstall deletes the bucket. Without it the bucket is still deleted. |
-| Workers Tail | Read | Not used by the current version. |
 
 The permissions marked "Only for" are optional: you can remove them from the form if
 you will not use that feature, and everything else works without them.
