@@ -13,7 +13,13 @@
  *   with `llms.txt`. A page without Markdown, such as an app's page, is
  *   answered with its HTML.
  *
- * Every other request is the static files' own answer, untouched.
+ * Every other request is the static files' own answer, untouched, except a
+ * path that matches no file (wrangler.jsonc's `not_found_handling: "none"`
+ * sends those here). A missing build file under /assets/ gets a plain 404
+ * that browsers never keep: `_headers` lets them keep /assets/* for a year,
+ * and a page from one version can ask for a file another version has not
+ * got (while a deploy spreads, or from a tab opened before it). Any other
+ * path gets the site's 404 page.
  */
 
 import { markdownPath, prefersMarkdown } from "./markdown.ts";
@@ -33,6 +39,35 @@ export interface Env {
 // Not exported: the runtime reads every value the main module exports as an
 // entrypoint, and refuses one that is not a handler.
 const INSTALLER_PREFIX = "/api/install/";
+/** Where the build puts its content-named files. */
+const BUILD_FILES_PREFIX = "/assets/";
+/** The site's 404 page, `404.html`, at the address the static files answer it. */
+const NOT_FOUND_PAGE = "/404";
+
+/**
+ * The answer for a path that matches no file: never the static files' own
+ * 404 under /assets/, which carries the one-year rule from `_headers`.
+ */
+async function notFound(request: Request, env: Env): Promise<Response> {
+  if (new URL(request.url).pathname.startsWith(BUILD_FILES_PREFIX)) {
+    return new Response("Not found\n", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const page = await env.ASSETS.fetch(
+    new Request(new URL(NOT_FOUND_PAGE, request.url), { method: request.method }),
+  );
+  return new Response(page.body, { status: 404, headers: page.headers });
+}
+
+/** The static files' answer, or {@link notFound} when they have none. */
+async function staticFile(request: Request, env: Env): Promise<Response> {
+  const response = await env.ASSETS.fetch(request);
+  if (response.status !== 404) return response;
+  await response.body?.cancel();
+  return notFound(request, env);
+}
 
 async function markdownResponse(
   request: Request,
@@ -55,14 +90,14 @@ export default {
     if (pathname.startsWith(INSTALLER_PREFIX)) return env.INSTALLER.fetch(request);
     const path = markdownPath(pathname);
     if (path === null || (request.method !== "GET" && request.method !== "HEAD")) {
-      return env.ASSETS.fetch(request);
+      return staticFile(request, env);
     }
     if (prefersMarkdown(request.headers.get("Accept"))) {
       const markdown = await markdownResponse(request, env, path);
       if (markdown) return markdown;
     }
     // A page's address now answers HTML or Markdown by the Accept header.
-    const response = await env.ASSETS.fetch(request);
+    const response = await staticFile(request, env);
     const headers = new Headers(response.headers);
     headers.append("Vary", "Accept");
     return new Response(response.body, {

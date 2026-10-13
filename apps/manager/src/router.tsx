@@ -10,6 +10,8 @@ export function getRouter() {
   return createRouter({
     routeTree,
     scrollRestoration: true,
+    // A route's code that fails to load on a hover is only remembered; the
+    // navigation that needs it reloads the page once (stale-build.ts).
     defaultPreload: "intent",
     defaultPendingMs: PENDING_MS,
     defaultPendingMinMs: PENDING_MIN_MS,

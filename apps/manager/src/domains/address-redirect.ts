@@ -12,8 +12,9 @@ import { SETTING } from "../db/settings";
  * be turned into a GET elsewhere), `/api/health` (health checks and the
  * installer read the workers.dev address), `/api/handoff` (the browser
  * installer proves the address it chose, which a redirect would fail), server functions, static assets
- * (served before the Worker runs), version preview hosts (a self-update
- * checks its new version there), and every other host.
+ * (served before the Worker runs; a missing build file is answered before
+ * this check), version preview hosts (a self-update checks its new version
+ * there), and every other host.
  *
  * Runs before the Cloudflare Access check: once Appflare moved, Access
  * protects the custom domain, not workers.dev.
@@ -142,30 +143,3 @@ export function createAddressRedirect(
 
 /** The one redirect the Worker uses; moving the address invalidates it. */
 export const addressRedirect: AddressRedirect = createAddressRedirect();
-
-/** Paths TanStack Start answers first: server routes and server functions. */
-export function isServerPath(pathname: string): boolean {
-  return pathname.startsWith("/api/") || pathname.startsWith("/_serverFn/");
-}
-
-/**
- * Serves a request the way the static assets did before page requests
- * reached the Worker: a GET or HEAD outside the server paths is answered from
- * `assets`, which with `not_found_handling: "single-page-application"`
- * answers the SPA shell (200) for any path that matches no file. Everything
- * else goes to `app`, TanStack Start: server routes and functions, and a
- * 404 from the assets, which happens only while the shell does not exist
- * yet (the build renders it through the Worker).
- */
-export async function serveRequest(
-  request: Request,
-  assets: Pick<Fetcher, "fetch">,
-  app: (request: Request) => Response | Promise<Response>,
-): Promise<Response> {
-  const readOnly = request.method === "GET" || request.method === "HEAD";
-  if (!readOnly || isServerPath(new URL(request.url).pathname)) return app(request);
-  const asset = await assets.fetch(request);
-  if (asset.status !== 404) return asset;
-  await asset.body?.cancel();
-  return app(request);
-}

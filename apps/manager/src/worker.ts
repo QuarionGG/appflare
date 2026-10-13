@@ -19,7 +19,7 @@ import { refreshEnabledCatalogs } from "./catalog/refresh.server";
 import { getCfClient } from "./cloudflare/client.server";
 import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
-import { addressRedirect, serveRequest } from "./domains/address-redirect";
+import { addressRedirect } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
 import {
   movePendingAddress,
@@ -36,15 +36,18 @@ import { ensureOwnSchedule, ownScheduleLog } from "./jobs/self-update/schedule";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { createNotificationUnits, selfNotificationUnits } from "./notifications/units";
 import { runningVersion } from "./server/build-version";
+import { missingBuildFile, serveRequest } from "./server/static-files";
 import { reportTelemetry } from "./telemetry/report.server";
 import { runScheduled, scheduledSpendWatch } from "./usage/watcher-unit";
 
 /**
  * The manager's Worker entry (custom entry so it can export more than
- * `fetch`). TanStack Start serves the SPA's server functions and server routes;
- * files under /assets/ never reach this code (wrangler.jsonc `assets`). Page
+ * `fetch`). TanStack Start serves the SPA's server functions and server routes.
+ * Existing static files never reach this code (wrangler.jsonc `assets`); page
  * requests do, so the workers.dev address can redirect them to Appflare's
- * custom domain; the rest are served from the static assets.
+ * custom domain, and get the SPA shell from the static assets. So do
+ * requests for build files that do not exist, which get a 404 that is never
+ * cached (server/static-files.ts).
  */
 
 export { JobWorkflow } from "./jobs/job-workflow";
@@ -187,6 +190,10 @@ async function lookAtPendingAddress(env: Env): Promise<void> {
 
 export default {
   async fetch(request, env, ctx) {
+    // A build file this version does not have (a page or a tab from another
+    // version asked for it): a plain 404, before anything reads the database.
+    const missing = missingBuildFile(request);
+    if (missing !== null) return missing;
     await authStorage(ctx);
     const failed = await migrated(env, request);
     if (failed !== null) return failed;
@@ -203,7 +210,7 @@ export default {
     return (
       // Cloudflare Access protection, when on: checked before any routing.
       (await accessGate.check(request, env.DB, runningVersion(env))) ??
-      // Pages and public files from the static assets (the SPA shell for any page).
+      // Pages from the static assets (the SPA shell for any page).
       serveRequest(request, env.ASSETS, (r) => handler.fetch(r))
     );
   },

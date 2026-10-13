@@ -105,8 +105,8 @@ export default defineConfig({
       spa: {
         enabled: true,
         // The shell is written to `/index.html` (default `/_shell.html`) so
-        // Workers static assets' `not_found_handling: "single-page-application"`,
-        // which always falls back to `/index.html`, serves it for every route.
+        // the static files answer it at `/`, where the Worker fetches it for
+        // every page (src/server/static-files.ts).
         prerender: { outputPath: "/index" },
       },
     }),

@@ -136,8 +136,17 @@ export interface ManagerArtifactExpectations {
 export const MANAGER_MAX_MODULES = 8;
 
 const REQUIRED_FLAGS = ["nodejs_compat", "global_fetch_strictly_public"];
-/** Everything but the hashed bundles reaches the Worker, so workers.dev can redirect pages. */
-const REQUIRED_RUN_WORKER_FIRST = ["/*", "!/assets/*"];
+/**
+ * Every page reaches the Worker, so workers.dev can redirect it: `/` first
+ * (its file is the shell), the rest because no file matches them.
+ */
+const REQUIRED_RUN_WORKER_FIRST = ["/"];
+/**
+ * A path with no file reaches the Worker, which answers a missing build file
+ * with a 404 browsers never keep; a fallback in the static files would carry
+ * the one-year cache rule for /assets/*.
+ */
+const REQUIRED_NOT_FOUND_HANDLING = "none";
 /** Binding fields that would carry an account-specific id. */
 const ID_FIELDS = ["id", "account_id", "database_id", "namespace_id", "preview_id", "bucket_name"];
 
@@ -230,7 +239,7 @@ export function managerArtifactProblems(
   const assets = manifest.assets;
   expect(assets.binding === "ASSETS", `assets.binding is ${JSON.stringify(assets.binding)}`);
   expect(
-    assets.config.not_found_handling === "single-page-application",
+    assets.config.not_found_handling === REQUIRED_NOT_FOUND_HANDLING,
     `assets not_found_handling is ${JSON.stringify(assets.config.not_found_handling)}`,
   );
   expect(

@@ -1,5 +1,6 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { localWorkerCap } from "../../vitest.shared.ts";
 
 // Worker test project: tests run inside workerd with a local R2 bucket as
 // BUILDS. The containers themselves cannot run here (they need Cloudflare's
@@ -40,6 +41,7 @@ export default defineConfig({
   resolve: { conditions },
   ssr: { resolve: { conditions } },
   test: {
+    ...localWorkerCap,
     include: ["src/**/*.test.ts"],
   },
 });

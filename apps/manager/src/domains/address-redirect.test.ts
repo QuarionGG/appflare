@@ -9,8 +9,6 @@ import {
   addressRedirectTarget,
   createAddressRedirect,
   isManagerWorkersDevHost,
-  isServerPath,
-  serveRequest,
 } from "./address-redirect";
 
 const DEV = "https://appflare.ada.workers.dev";
@@ -72,52 +70,6 @@ describe("isManagerWorkersDevHost", () => {
     expect(isManagerWorkersDevHost("APPFLARE.ada.workers.dev", "appflare")).toBe(true);
     expect(isManagerWorkersDevHost("0badcafe-appflare.ada.workers.dev", "appflare")).toBe(false);
     expect(isManagerWorkersDevHost("appflare.example.com", "appflare")).toBe(false);
-  });
-});
-
-describe("serveRequest", () => {
-  /**
-   * The assets binding with `not_found_handling: "single-page-application"`
-   * (the manager's config): a path that matches no file answers the shell
-   * with 200, whatever it looks like; without a shell, a 404.
-   */
-  const assetsOf = (files: Record<string, string>) =>
-    ({
-      fetch: async (input: RequestInfo | URL) => {
-        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-        const body = files[path] ?? files["/index.html"];
-        return body === undefined ? new Response("", { status: 404 }) : new Response(body);
-      },
-    }) as Pick<Fetcher, "fetch">;
-  const built = assetsOf({ "/index.html": "shell", "/favicon.svg": "icon" });
-  const app = async (request: Request) => new Response(`app ${request.method}`);
-  const serve = async (path: string, method = "GET", assets = built) =>
-    (await serveRequest(new Request(`${DEV}${path}`, { method }), assets, app)).text();
-
-  it("answers pages, public files and missing files from the assets", async () => {
-    expect(await serve("/apps/abc")).toBe("shell");
-    expect(await serve("/favicon.svg")).toBe("icon");
-    expect(await serve("/missing.json")).toBe("shell");
-  });
-
-  it("hands server paths and other methods to the app", async () => {
-    expect(await serve("/api/health")).toBe("app GET");
-    expect(await serve("/_serverFn/abc", "POST")).toBe("app POST");
-    expect(await serve("/login", "POST")).toBe("app POST");
-  });
-
-  it("hands a page to the app while there is no shell yet (the build renders it)", async () => {
-    expect(await serve("/", "GET", assetsOf({}))).toBe("app GET");
-  });
-});
-
-describe("isServerPath", () => {
-  it("is true for server routes and server functions only", () => {
-    expect(isServerPath("/api/health")).toBe(true);
-    expect(isServerPath("/_serverFn/abc")).toBe(true);
-    expect(isServerPath("/apps/x")).toBe(false);
-    expect(isServerPath("/favicon.svg")).toBe(false);
-    expect(isServerPath("/api")).toBe(false);
   });
 });
 

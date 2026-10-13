@@ -181,6 +181,15 @@ jobs:
               exit 1
             fi
           done
+          # A build file the site does not have is a 404 browsers never keep
+          # (a kept one would break a page for a year after a deploy).
+          headers=$(curl -sS -D - -o /dev/null --retry 5 --retry-delay 3 --retry-all-errors \
+            "${PREVIEW_URL}/assets/no-such-file-0.js" | tr -d '\r')
+          grep -qE '^HTTP/[0-9.]+ 404' <<<"${headers}" &&
+            grep -qi '^cache-control: no-store$' <<<"${headers}" || {
+            echo "::error::${PREVIEW_URL}/assets/no-such-file-0.js is not a 404 with Cache-Control: no-store"
+            exit 1
+          }
           # `/` is the front page, not the documentation's index.
           if ! curl -sS --retry 5 --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/" |
             grep -q "Install Appflare"; then

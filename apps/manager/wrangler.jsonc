@@ -57,16 +57,22 @@
     // The client build output. The Vite plugin overwrites this with the resolved
     // client outDir in the generated dist/server/wrangler.json.
     "directory": "./dist/client",
-    // TanStack Start SPA mode: the prerendered shell is written to /index.html
-    // (vite.config.ts), and every unknown navigation falls back to it.
-    "not_found_handling": "single-page-application",
-    // With SPA fallback, browser navigations (Sec-Fetch-Mode: navigate) that match
-    // no asset are answered with index.html WITHOUT invoking the Worker. Every
-    // request except the hashed bundles under /assets/ reaches the Worker first:
-    // server routes (/api/*) and server functions (/_serverFn/*) must, and page
-    // requests must too, so that the workers.dev address can redirect them to
-    // Appflare's custom domain. The Worker serves pages from ASSETS (src/worker.ts).
-    "run_worker_first": ["/*", "!/assets/*"]
+    // A path that matches no file reaches the Worker, which answers pages with
+    // the SPA shell (TanStack Start SPA mode prerenders it to /index.html,
+    // vite.config.ts) and a request for a missing build file with a 404 that
+    // is never cached (src/server/static-files.ts). Not "single-page-application":
+    // that answers a missing /assets/ file with the shell, and `_headers`'
+    // one-year rule for /assets/* then makes browsers keep HTML as that script.
+    "not_found_handling": "none",
+    // Every page reaches the Worker, so the workers.dev address can redirect it
+    // to Appflare's custom domain and Access protection can check it: `/` is
+    // the only page with a file (the shell), so it runs the Worker first; every
+    // other page has no file and reaches it anyway. Existing files, the bundles
+    // under /assets/ included, are served without running the Worker. Not
+    // "/*" with "!/assets/*": a path excluded that way never reaches the
+    // Worker, so a missing bundle would get the static files' 404 with the
+    // one-year rule.
+    "run_worker_first": ["/"]
   },
   // The id of the version serving each request. Setup accepts an API token only
   // when the token's account holds this version, which proves the token is for
