@@ -67,9 +67,11 @@ export interface ProductUsage {
   /**
    * The account's use (every app) against what the plan allows: of the
    * included amount this month on Paid, of the free limit on Free (today's
-   * for a daily limit). Null when the plan sets none.
+   * for a daily limit). Null when the plan sets none. On Free, a daily
+   * limit counts the whole account: `other` is the share of the limit used
+   * today by what is not Appflare's apps, when the watcher read it.
    */
-  allowance: { share: number; daily: boolean } | null;
+  allowance: { share: number; daily: boolean; other?: number } | null;
   /** Paid: this app's part of the account's projected cost past included this month. */
   overageUsd: number | null;
 }
@@ -103,6 +105,8 @@ export type UsageStatus =
       limit: number;
       loopSince: number | null;
       appShare: number | null;
+      /** The share of the account's use not from Appflare's apps, when the watcher read it. */
+      otherShare?: number;
     }
   /** Far above normal: an unusual-usage episode, or the loop check trips. */
   | {

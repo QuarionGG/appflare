@@ -1,4 +1,5 @@
 import type { AccountPlan } from "../account/plan";
+import { accountToday as todayOf, withOtherUsage } from "./account-day";
 import type { PauseCause } from "./attention-cause";
 import { stillPastCap } from "./cap-status";
 import {
@@ -198,7 +199,7 @@ function allowanceOf(
   key: ProductKey,
   plan: AccountPlan,
   now: number,
-  account: { today: number; month: number; level: number },
+  account: { today: number; month: number; level: number; other: number },
 ): ProductUsage["allowance"] {
   const product = PRODUCTS[key];
   const level = product.measure === "level";
@@ -212,7 +213,11 @@ function allowanceOf(
   if (free === null || !(free.amount > 0)) return null;
   if (level) return { share: account.level / free.amount, daily: false };
   return free.per === "day"
-    ? { share: account.today / free.amount, daily: true }
+    ? {
+        share: account.today / free.amount,
+        daily: true,
+        ...(account.other > 0 ? { other: account.other / free.amount } : {}),
+      }
     : { share: account.month / free.amount, daily: false };
 }
 
@@ -244,6 +249,17 @@ export function buildUsageTab(input: UsageTabInput): UsageTabData {
   }
   const accountLevel = (key: string) =>
     [...(levelByInstall.get(key)?.values() ?? [])].reduce((t, v) => t + v.value, 0);
+  // Workers Free: the daily limits count the whole account. The watcher's
+  // reading of its totals adds what is not from Appflare's apps.
+  const accountOther = new Map<string, number>();
+  const totals = plan === "free" ? todayOf(input.watch?.account, now) : null;
+  for (const [key, total] of Object.entries(totals ?? {})) {
+    const { used, other } = withOtherUsage(accountToday.get(key) ?? 0, total);
+    if (other <= 0) continue;
+    // Today's figures only: the month stays Appflare's apps' own.
+    accountToday.set(key, used);
+    accountOther.set(key, other);
+  }
 
   const overage =
     plan === "paid"
@@ -307,6 +323,7 @@ export function buildUsageTab(input: UsageTabInput): UsageTabData {
       today: accountToday.get(key) ?? 0,
       month: accountMonth.get(key) ?? 0,
       level: accountLevel(key),
+      other: accountOther.get(key) ?? 0,
     };
     const allowance = allowanceOf(key, plan, now, account);
     const overageUsd = plan === "paid" ? (overage?.byProduct[key] ?? 0) : null;
@@ -417,16 +434,16 @@ export function buildUsageTab(input: UsageTabInput): UsageTabData {
     const product = known(limitToday.product) as ProductKey;
     const freeAmount = PRODUCTS[product].free?.amount ?? 0;
     const app = byKey.get(product);
+    const all = accountToday.get(product) ?? 0;
+    const other = accountOther.get(product) ?? 0;
     headline = product;
     status = {
       kind: "limit",
       product,
       limit: freeAmount,
       loopSince: input.unusualSince,
-      appShare:
-        app !== undefined && (accountToday.get(product) ?? 0) > 0
-          ? app.today / (accountToday.get(product) ?? 1)
-          : null,
+      appShare: app !== undefined && all > 0 ? app.today / all : null,
+      ...(other > 0 && all > 0 ? { otherShare: other / all } : {}),
     };
   } else if (
     input.unusualSince !== null ||

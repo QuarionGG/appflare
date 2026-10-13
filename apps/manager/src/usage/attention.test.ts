@@ -151,7 +151,7 @@ describe("usageAttentionCopy", () => {
     [
       "the budget",
       { reason: "budget", budget: 50, projected: 62.4 },
-      `The account's bill was on pace for about $62.40, past its $50.00 monthly budget, and this app had the largest share of the month's usage. Appflare paused it at 15:00. Visitors see a "paused" page. Resume it when the bill allows, or exempt it from the budget on its Usage tab.`,
+      `This month's Appflare usage, including the $5 plan, was on pace for about $62.40, past the $50.00 monthly budget, and this app had the largest share of it. Appflare paused it at 15:00. Visitors see a "paused" page. Resume it when the budget allows, or exempt it from the budget on its Usage tab.`,
     ],
     [
       "a cause it did not record",
@@ -190,6 +190,51 @@ describe("usageAttentionCopy", () => {
       description:
         "Short links is getting 64% of today's Worker requests. When the account's 100,000 free Worker requests for the day are used, every app stops answering until 00:00 UTC.",
     });
+  });
+
+  it("a free daily limit other usage in the account is pushing near: the app's small share and the rest", () => {
+    const item: UsageAttention = {
+      kind: "limit-near",
+      installId: "links",
+      product: "d1_rows_written",
+      limit: 100_000,
+      runsOutAt: at(21, 40),
+      appShare: 0.009,
+      otherShare: 0.99,
+    };
+    expect(usageAttentionCopy(item, "Short links", clock).description).toBe(
+      "Short links is getting under 1% of today's D1 rows written; 99% is other usage in this account (not Appflare apps). When the account's 100,000 free D1 rows written for the day are used, apps that need them fail until 00:00 UTC.",
+    );
+  });
+
+  it("a free daily limit used up mostly by other usage in the account", () => {
+    const item: UsageAttention = {
+      kind: "limit-used-up",
+      installId: "links",
+      product: "d1_rows_written",
+      limit: 100_000,
+      appShare: 0.02,
+      otherShare: 0.97,
+      loopSince: null,
+    };
+    expect(usageAttentionCopy(item, "Short links", clock).description).toBe(
+      "This account used its 100,000 free D1 rows written for today, 2% of them by Short links and 97% by other usage in this account (not Appflare apps). Cloudflare refuses more until 00:00 UTC, so apps that need them fail until then. The Free plan bills nothing; pausing stops it happening again tomorrow.",
+    );
+  });
+
+  it("leaves out other usage under 1% of the account's", () => {
+    const item: UsageAttention = {
+      kind: "limit-near",
+      installId: "links",
+      product: "workers_requests",
+      limit: 100_000,
+      runsOutAt: at(21, 40),
+      appShare: 0.64,
+      otherShare: 0.004,
+    };
+    expect(usageAttentionCopy(item, "Short links", clock).description).toMatch(
+      /^Short links is getting 64% of today's Worker requests\. When/,
+    );
   });
 });
 

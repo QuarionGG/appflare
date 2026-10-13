@@ -39,6 +39,7 @@ export const EVENT_LABELS: Record<NotificationEvent, string> = {
   usage_unusual: "Unusual usage",
   usage_alert: "Usage alert",
   usage_limit_near: "Free daily limit running out",
+  usage_account_limit: "Account near a free daily limit",
   app_paused: "App paused",
   app_resumed: "App resumed",
   app_pause_failed: "Pausing an app failed",
@@ -63,13 +64,15 @@ export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
   usage_alert: "When an app passes one of its usage alerts, once per alert and day, week or month.",
   usage_limit_near:
     "On the Free plan, once a day per app, when an app is on pace to use up one of the account's free daily limits before 00:00 UTC.",
+  usage_account_limit:
+    'On the Free plan, once a day per limit, when the whole account has used 90% of one of its free daily limits, whatever used it. A channel that also gets "Free daily limit running out" hears about a limit once a day, from whichever comes first.',
   app_paused: "When an app is paused, by someone or by Appflare, and why.",
   app_resumed:
     "When an app is resumed by Appflare, or by someone other than the person who paused it.",
   app_pause_failed:
     "When pausing an app does not finish, by someone or by Appflare: the app may still be running and using Cloudflare.",
   budget_reached:
-    "Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps.",
+    "Once a month, when this month's Appflare usage, including the $5 plan, is on pace to pass the monthly budget and Appflare starts pausing apps.",
   manager_update_available: "Once per release, when a newer Appflare release is published.",
   domain_active:
     "When an external domain starts serving its app: Cloudflare validated it and issued its certificate.",

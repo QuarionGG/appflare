@@ -1,7 +1,10 @@
 import type { AccountPlan } from "../account/plan";
+import { accountLimitWords } from "./account-limits";
 import { type PauseCause, pauseCauseSentence } from "./attention-cause";
 import {
   fullCount,
+  OTHER_USAGE,
+  otherShareShown,
   PERIOD_ADJECTIVE,
   percent,
   productLabel,
@@ -68,6 +71,8 @@ export type UsageAttention =
       limit: number;
       /** The app's share of the account's use of it today, when recorded. */
       appShare: number | null;
+      /** The share of the account's use not from Appflare's apps, when recorded. */
+      otherShare?: number | null;
       /** When the app's unusual usage began, when it is in such an episode. */
       loopSince: number | null;
     }
@@ -92,7 +97,46 @@ export type UsageAttention =
       /** When it runs out at the current pace (epoch ms). */
       runsOutAt: number;
       appShare: number | null;
+      /** The share of the account's use not from Appflare's apps, when recorded. */
+      otherShare?: number | null;
     };
+
+/**
+ * Workers Free: the whole account used 90% or more of a free daily limit
+ * today (account-limits.ts), whatever used it. Not tied to one app.
+ */
+export interface AccountLimitAttention {
+  product: string;
+  /** The account's free amount a day. */
+  limit: number;
+  /** What the whole account used of it today. */
+  used: number;
+  /** `used` over `limit` (1 or more once it ran out). */
+  share: number;
+  /** The share of `used` not from Appflare's apps. */
+  otherShare: number;
+  /** The Appflare app that used most of it, and its share of `used`; null when none. */
+  top: { installId: string; share: number } | null;
+}
+
+/** The words of the account's row; `topLabel` is what Home calls the top app, null when unknown. */
+export function accountLimitAttentionCopy(
+  item: AccountLimitAttention,
+  topLabel: string | null,
+): UsageAttentionCopy {
+  const words = accountLimitWords({
+    ...item,
+    top: item.top === null || topLabel === null ? null : { label: topLabel, share: item.top.share },
+  });
+  return {
+    badge:
+      item.share >= 1
+        ? { label: "Limit reached", variant: "error" }
+        : { label: "Near a free limit", variant: "warning" },
+    title: words.title,
+    description: words.description,
+  };
+}
 
 export interface UsageAttentionCopy {
   /** A badge before the title, for the rows that need action now. */
@@ -121,7 +165,7 @@ function afterPause(cause: PauseCause | null): string {
     case "cap":
       return `Visitors see a "paused" page. Resume it when its cap resets, or change the cap on its Usage tab.`;
     case "budget":
-      return `Visitors see a "paused" page. Resume it when the bill allows, or exempt it from the budget on its Usage tab.`;
+      return `Visitors see a "paused" page. Resume it when the budget allows, or exempt it from the budget on its Usage tab.`;
     default:
       return `Visitors see a "paused" page. Resume when the cause is fixed, for example by undoing the settings change that started it.`;
   }
@@ -172,10 +216,17 @@ export function usageAttentionCopy(
     case "limit-used-up": {
       const product = productLabel(item.product);
       const limit = `${fullCount(item.limit)} free ${product}`;
+      const other = otherShareShown(item.otherShare);
+      const shares =
+        item.appShare === null
+          ? other === null
+            ? ""
+            : `, ${percent(other)} of them by ${OTHER_USAGE}`
+          : `, ${percent(item.appShare)} of them by ${label}${other === null ? "" : ` and ${percent(other)} by ${OTHER_USAGE}`}`;
       const how =
         item.loopSince !== null
           ? `${label} went into a loop at ${clock(item.loopSince)} and used this account's ${limit} for today.`
-          : `This account used its ${limit} for today${item.appShare === null ? "" : `, ${percent(item.appShare)} of them by ${label}`}.`;
+          : `This account used its ${limit} for today${shares}.`;
       return {
         badge: { label: "Limit reached", variant: "error" },
         title: `Today's free ${product} are used up`,
@@ -203,10 +254,17 @@ export function usageAttentionCopy(
     }
     case "limit-near": {
       const product = productLabel(item.product);
+      const other = otherShareShown(item.otherShare);
+      const shares =
+        item.appShare === null
+          ? other === null
+            ? ""
+            : `${percent(other)} of today's ${product} is ${OTHER_USAGE}. `
+          : `${label} is getting ${percent(item.appShare)} of today's ${product}${other === null ? "" : `; ${percent(other)} is ${OTHER_USAGE}`}. `;
       return {
         badge: null,
         title: `Free ${product} run out around ${clock(item.runsOutAt)}`,
-        description: `${item.appShare === null ? "" : `${label} is getting ${percent(item.appShare)} of today's ${product}. `}When the account's ${fullCount(item.limit)} free ${product} for the day are used, ${limitEffect(item.product)} until 00:00 UTC.`,
+        description: `${shares}When the account's ${fullCount(item.limit)} free ${product} for the day are used, ${limitEffect(item.product)} until 00:00 UTC.`,
       };
     }
   }

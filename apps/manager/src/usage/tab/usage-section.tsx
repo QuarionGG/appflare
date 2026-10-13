@@ -12,6 +12,7 @@ import {
   amount,
   chartHeadline,
   label,
+  otherUsageNote,
   shortTimes,
   statusLine,
   type Tone,
@@ -182,6 +183,7 @@ export function UsageSection({
       />
     ) : undefined;
   const paid = data.plan === "paid";
+  const otherNote = paid ? null : otherUsageNote(products);
   return (
     <Section
       id="usage"
@@ -288,6 +290,13 @@ export function UsageSection({
               })}
             </Table.Body>
           </SectionTable>
+          {otherNote !== null && (
+            <div className="px-5 py-3">
+              <Text variant="secondary" size="sm">
+                {otherNote}
+              </Text>
+            </div>
+          )}
         </>
       )}
     </Section>

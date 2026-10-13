@@ -110,5 +110,17 @@ export function productRate(key: string, perHour: number): string {
   return `${label} at ${shown}${after} an hour`;
 }
 
+/**
+ * What uses a free daily limit besides Appflare's apps: Workers and
+ * resources Appflare did not install, and Appflare's own manager. On Workers
+ * Free, Cloudflare counts them all against the account's limits.
+ */
+export const OTHER_USAGE = "other usage in this account (not Appflare apps)";
+
+/** A share of the account's use worth naming as other usage: 1% or more. */
+export function otherShareShown(share: number | null | undefined): number | null {
+  return share != null && share >= 0.01 ? share : null;
+}
+
 export const PERIOD_NOUN = { day: "today", week: "this week", month: "this month" } as const;
 export const PERIOD_ADJECTIVE = { day: "daily", week: "weekly", month: "monthly" } as const;

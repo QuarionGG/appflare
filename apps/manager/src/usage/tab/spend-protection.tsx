@@ -363,8 +363,8 @@ function BudgetExemption({
   return (
     <div className="grid gap-1.5 rounded-lg px-4 py-3 ring-1 ring-kumo-hairline">
       <Text>
-        Monthly budget: Appflare may pause this app when the account's bill is on pace to pass{" "}
-        <span className="font-medium tabular-nums">{usd(budget)}</span>.{" "}
+        Monthly budget: Appflare may pause this app when this month's Appflare usage, including the
+        $5 plan, is on pace to pass <span className="font-medium tabular-nums">{usd(budget)}</span>.{" "}
         <Link href={SPEND_DEFAULTS_HREF}>Budget settings</Link>
       </Text>
       <Checkbox

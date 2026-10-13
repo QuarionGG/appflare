@@ -1,6 +1,16 @@
 import { createClient, type UsageRow } from "@appflare/cf-api";
 import { describe, expect, it } from "vitest";
-import { type CollectedHour, type CollectTarget, collectUsage, HOUR, productOf } from "./collect";
+import { ACCOUNT_DAY_PRODUCTS } from "./account-day";
+import {
+  ACCOUNT_DAY_DATASETS,
+  ACCOUNT_DAY_READ,
+  accountDayFrom,
+  type CollectedHour,
+  type CollectTarget,
+  collectUsage,
+  HOUR,
+  productOf,
+} from "./collect";
 import { changedHours, sameValue, storedIndex } from "./collect.server";
 import {
   type AnswerRow,
@@ -379,5 +389,87 @@ describe("changedHours", () => {
   it("compares readings that went through floating point", () => {
     expect(sameValue(0.1 + 0.2, 0.3)).toBe(true);
     expect(sameValue(1, 1.001)).toBe(false);
+  });
+});
+
+describe("accountDayFrom", () => {
+  it("knows the dataset of every product a reading holds", () => {
+    expect(Object.keys(ACCOUNT_DAY_DATASETS).sort()).toEqual([...ACCOUNT_DAY_PRODUCTS].sort());
+  });
+
+  it("asks only for the datasets of products with a Free daily limit, Workers AI aside", () => {
+    // Workers AI is already read for the whole account and shared by the apps that bind it.
+    expect(ACCOUNT_DAY_PRODUCTS).not.toContain("ai_neurons");
+    expect([...ACCOUNT_DAY_READ].sort()).toEqual([
+      "browserRenderingBrowserTimeUsageAdaptiveGroups",
+      "d1AnalyticsAdaptiveGroups",
+      "durableObjectsInvocationsAdaptiveGroups",
+      "durableObjectsPeriodicGroups",
+      "kvOperationsAdaptiveGroups",
+      "queueMessageOperationsAdaptiveGroups",
+      "workersAnalyticsEngineAdaptiveGroups",
+      "workersInvocationsAdaptive",
+      "workflowsAdaptiveGroups",
+    ]);
+  });
+
+  it("turns the account's totals into products, 0 for one read and not used", () => {
+    const day = accountDayFrom(
+      {
+        totals: [
+          { dataset: "workersInvocationsAdaptive", metric: "requests", value: 5731 },
+          { dataset: "d1AnalyticsAdaptiveGroups", metric: "rowsWritten", value: 90152 },
+          { dataset: "kvOperationsAdaptiveGroups", metric: "writes", value: 430 },
+          { dataset: "durableObjectsPeriodicGroups", metric: "durationGbs", value: 12.5 },
+          {
+            dataset: "browserRenderingBrowserTimeUsageAdaptiveGroups",
+            metric: "sessionDurationMs",
+            value: 1_800_000,
+          },
+        ],
+        failed: [],
+      },
+      RECORDED_NOW * 1000,
+    );
+    expect(day.at).toBe(RECORDED_NOW * 1000);
+    expect(day.used).toMatchObject({
+      workers_requests: 5731,
+      d1_rows_written: 90152,
+      kv_writes: 430,
+      do_duration: 12.5,
+      browser_hours: 0.5,
+      d1_rows_read: 0,
+      queues_operations: 0,
+    });
+    expect(Object.keys(day.used).sort()).toEqual([...ACCOUNT_DAY_PRODUCTS].sort());
+  });
+
+  it("leaves out the products of a dataset that could not be read", () => {
+    const day = accountDayFrom(
+      { totals: [], failed: [{ dataset: "kvOperationsAdaptiveGroups", error: new Error("x") }] },
+      0,
+    );
+    expect(day.used.kv_writes).toBeUndefined();
+    expect(day.used.kv_reads).toBeUndefined();
+    expect(day.used.workers_requests).toBe(0);
+  });
+});
+
+describe("collectUsage: the account's totals", () => {
+  it("reads them in the same request as the apps' datasets, when asked", async () => {
+    const graphql = fakeGraphQL(RECORDED);
+    const client = createClient({ accountId: "acc", token: "t", fetch: graphql.fetch });
+    const targets = [target({ installId: "notes", workers: [RECORDED_IDS.worker] })];
+    const without = await collectUsage(client.usage, targets, RECORDED_NOW);
+    expect(without.accountTotals).toBeNull();
+    const before = graphql.requests.count;
+    const withTotals = await collectUsage(client.usage, targets, RECORDED_NOW, {
+      accountTotals: true,
+    });
+    expect(graphql.requests.count - before).toBe(1);
+    expect(withTotals.accountTotals?.failed).toEqual([]);
+    expect(withTotals.queries).toBe(1 + ACCOUNT_DAY_READ.length);
+    // The account's totals are no app's: the app's hours are the same either way.
+    expect(withTotals.hours).toEqual(without.hours);
   });
 });

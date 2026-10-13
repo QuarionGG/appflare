@@ -20,7 +20,7 @@ import { UNUSUAL_FACTOR_ITEMS, unusualFactorOf } from "./unusual-factors";
 /**
  * Settings → Your account → Spend protection: what every app follows unless
  * its Usage tab sets its own, like "Automatically update apps" for updates.
- * Auto-pause and its triggers, a budget for the month's bill (Paid), and how
+ * Auto-pause and its triggers, a budget for the month's Appflare usage (Paid), and how
  * far above normal an hour must be to alert. Each control saves on its own;
  * members see it all, unchangeable. Live numbers show which apps the
  * settings would act on right now.
@@ -35,7 +35,7 @@ export const SPEND_PROTECTION_COPY = {
     "Off: Appflare alerts you and apps keep running. Each app can still turn it on for itself.",
   triggers: "Used by every app with auto-pause on, unless the app sets its own.",
   budget:
-    "A last line of defence for the whole bill. When this month's bill is on pace to pass it, Appflare pauses the apps spending the most until it isn't, even apps with auto-pause off.",
+    "A budget for this month's Appflare usage: what Appflare's apps use past what the plan includes, plus the $5 plan. When it's on pace to pass the budget, Appflare pauses the apps spending the most until it isn't, even apps with auto-pause off. Other Workers and resources in this Cloudflare account don't count toward it.",
   budgetFree:
     "Workers Free can't bill you for Workers, so there's no budget or dollar cap. R2 still bills past its free amount.",
   unusual:
@@ -279,7 +279,10 @@ function SpendProtectionSettings({
   );
 }
 
-/** The monthly budget (Paid): the switch, the amount, and where this month's bill stands. */
+/**
+ * The monthly budget (Paid): the switch, the amount, and where this month's
+ * Appflare usage (its apps' usage past included, plus the $5 plan) stands.
+ */
 function BudgetRow({
   data,
   budget,
@@ -341,7 +344,7 @@ function BudgetRow({
       {budget.on && (
         <div className="grid gap-3">
           <span className="flex flex-wrap items-center gap-2">
-            <Text>Keep this month's bill under</Text>
+            <Text>Keep this month's Appflare usage under</Text>
             <InputGroup
               className="w-28"
               disabled={onChange === undefined}

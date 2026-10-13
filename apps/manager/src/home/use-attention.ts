@@ -55,6 +55,7 @@ export function useAttention(
         downgrade: data.downgrade,
         reconnectNeeded: data.reconnectNeeded,
         usage: data.usage,
+        accountUsage: data.accountUsage,
         ...(leftForAdmin === undefined ? {} : { leftForAdmin }),
       }),
     [data, isAdmin, dismissed, leftForAdmin],

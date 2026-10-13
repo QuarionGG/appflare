@@ -1,5 +1,6 @@
 import type { AccountPlan } from "../account/plan";
 import type { UsageEvent } from "../notifications/usage-events.server";
+import { withOtherUsage } from "./account-day";
 import type { PauseCause } from "./attention-cause";
 import { usd } from "./attention-format";
 import {
@@ -56,7 +57,9 @@ import type { UsageState } from "./store/usage-state.server";
  * - Usage alert rules: each that holds fires once per period.
  * - Free plan: a free daily limit the account is on pace to use up today is
  *   told once per UTC day, about the app using most of it; when it actually
- *   runs out, a second `limit_near` entry says so (no second message).
+ *   runs out, a second `limit_near` entry says so (no second message). Once
+ *   the account itself was warned about the limit (account-limits.ts), the
+ *   app's message skips the channels that get the account's.
  * - Loop check: two checks in a row (the streak lives in the app's state).
  * - Spending cap: Workers Paid only, unless set aside until its period resets.
  * - Monthly budget (Workers Paid): the projected bill at or past the budget
@@ -133,6 +136,16 @@ export interface EvaluateInput {
    * parts passes each part the account's. Worked out here otherwise.
    */
   limitWarnings?: ReadonlyMap<string, LimitWarning>;
+  /**
+   * Workers Free: the whole account's use today of what the plan limits per
+   * day, by product, when the watcher read it (account-day.ts).
+   */
+  accountToday?: Readonly<Record<string, number>>;
+  /**
+   * Products the account was warned about today (account-limits.ts): an
+   * app's warning about one skips the channels that get the account's.
+   */
+  limitsCovered?: ReadonlySet<string>;
 }
 
 export type ActivityDraft = {
@@ -240,6 +253,8 @@ interface LimitRunningOut {
   limit: number;
   /** Used today by the account. */
   used: number;
+  /** Of `used`, what is not from Appflare's apps (other Workers and resources in the account). */
+  other: number;
   share: number;
   projectedShare: number;
   /** Epoch ms it runs out at this pace; null once it has. */
@@ -248,9 +263,20 @@ interface LimitRunningOut {
   byInstall: Map<string, number>;
 }
 
+/**
+ * Where each free daily limit stands. The account's use is Appflare's
+ * apps' (every install's stored hours), or the account's own total when
+ * the watcher read one (`accountToday`): Cloudflare counts every Worker
+ * and resource of the account against the limit. Appflare keeps no history
+ * of the use that is not its apps', so it cannot tell that use's pace: it
+ * is taken as done for the day, and only Appflare's pace projects the rest.
+ * When it does keep growing, the limit shows as used up once it is, rather
+ * than as about to run out at a time a burst made up.
+ */
 function limitsRunningOut(
   accountUsage: ReadonlyMap<string, Usage>,
   now: number,
+  accountToday?: Readonly<Record<string, number>>,
 ): LimitRunningOut[] {
   const day = dayStart(now);
   const out: LimitRunningOut[] = [];
@@ -266,19 +292,21 @@ function limitsRunningOut(
       all.push(series);
       byInstall.set(installId, sumBetween(series, day, now, now));
     }
+    // No app of Appflare's uses it: nothing of Appflare's to tell about.
     if (all.length === 0) continue;
     const p = project(addSeries(all), "day", now);
-    if (p.projected < limit) continue;
+    const { used, other } = withOtherUsage(p.used, accountToday?.[product]);
+    const projected = p.projected + other;
+    if (projected < limit) continue;
     const runsOutAt =
-      p.used >= limit || p.pace <= 0
-        ? null
-        : Math.round(now + ((limit - p.used) / p.pace) * HOUR_MS);
+      used >= limit || p.pace <= 0 ? null : Math.round(now + ((limit - used) / p.pace) * HOUR_MS);
     out.push({
       product,
       limit,
-      used: p.used,
-      share: p.used / limit,
-      projectedShare: p.projected / limit,
+      used,
+      other,
+      share: used / limit,
+      projectedShare: projected / limit,
       runsOutAt,
       byInstall,
     });
@@ -297,22 +325,28 @@ export interface LimitWarning {
   runsOutAt: number | null;
   /** The app's share of the account's use of it today. */
   appShare: number;
+  /** The share of the account's use of it today that is not from Appflare's apps. */
+  otherShare: number;
 }
 
 /**
  * Free plan: the free daily limits the account is on pace to use up today,
  * each told about the active app using most of it (one limit per app, the
  * one closest to running out). Account-wide: it needs every install's usage,
- * and only today's and the last day's hours of it.
+ * and only today's and the last day's hours of it, and, when the watcher
+ * read them, the account's own totals today (`accountToday`, by product),
+ * which count what is not Appflare's too. An app's share is of the
+ * account's total, however small a part Appflare's apps are of it.
  */
 export function freeLimitWarnings(
   accountUsage: ReadonlyMap<string, Usage>,
   activeIds: Iterable<string>,
   now: number,
+  accountToday?: Readonly<Record<string, number>>,
 ): Map<string, LimitWarning> {
   const active = new Set(activeIds);
   const warnings = new Map<string, LimitWarning>();
-  for (const limit of limitsRunningOut(accountUsage, now)) {
+  for (const limit of limitsRunningOut(accountUsage, now, accountToday)) {
     let top: string | null = null;
     for (const [id, used] of limit.byInstall) {
       if (!active.has(id) || used <= 0) continue;
@@ -326,6 +360,7 @@ export function freeLimitWarnings(
       share: limit.share,
       runsOutAt: limit.runsOutAt,
       appShare: Math.min(1, appShare),
+      otherShare: limit.used > 0 ? Math.min(1, limit.other / limit.used) : 0,
     });
   }
   return warnings;
@@ -366,6 +401,7 @@ export function evaluate(input: EvaluateInput): Decisions {
           input.accountUsage,
           input.apps.map((a) => a.installId),
           now,
+          input.accountToday,
         )
       : new Map<string, LimitWarning>());
 
@@ -545,6 +581,7 @@ export function evaluate(input: EvaluateInput): Decisions {
         share: warning.share,
         runsOutAt: warning.runsOutAt,
         appShare: warning.appShare,
+        ...(warning.otherShare > 0 ? { otherShare: warning.otherShare } : {}),
       };
       if (state.limitWarnedDay !== today) {
         next.limitWarnedDay = today;
@@ -556,6 +593,11 @@ export function evaluate(input: EvaluateInput): Decisions {
           used: warning.used,
           runsOutAt: warning.runsOutAt,
           appShare: facts.appShare,
+          ...(warning.otherShare > 0 ? { otherShare: warning.otherShare } : {}),
+          // The account was told about this limit today: its channels heard already.
+          ...(input.limitsCovered?.has(warning.product)
+            ? { exceptChannelsWith: "usage_account_limit" as const }
+            : {}),
         });
       } else if (warning.share >= 1 && (input.limitSharesToday.get(installId) ?? 0) < 1) {
         // Used up now: Home turns the row into "used up"; the day's message went already.

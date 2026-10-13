@@ -1,5 +1,6 @@
-import type { CloudflareClient, UsageRow } from "@appflare/cf-api";
-import { PRODUCTS, type ProductKey } from "./math";
+import type { CloudflareClient, UsageDataset, UsageRow, UsageTotals } from "@appflare/cf-api";
+import { ACCOUNT_DAY_PRODUCTS, type AccountDay } from "./account-day";
+import { dayStart, PRODUCTS, type ProductKey } from "./math";
 
 /**
  * The spend watcher's collector: what each installed app used of each
@@ -79,9 +80,13 @@ export type CollectSource =
   | "containers"
   | "browser"
   | "ai"
-  | "alarms";
+  | "alarms"
+  | "account";
 
-/** The products each source gives (the alarm read is a signal, not a product). */
+/**
+ * The products each source gives to apps (the alarm read is a signal; the
+ * account's totals are no app's).
+ */
 export const SOURCE_PRODUCTS: Readonly<Record<CollectSource, readonly ProductKey[]>> = {
   workers: ["workers_requests", "workers_cpu_ms"],
   durableObjects: ["do_requests", "do_duration", "do_rows_read", "do_rows_written", "do_storage"],
@@ -96,6 +101,7 @@ export const SOURCE_PRODUCTS: Readonly<Record<CollectSource, readonly ProductKey
   browser: ["browser_hours"],
   ai: ["ai_neurons"],
   alarms: [],
+  account: [],
 };
 
 /** A read that failed: which, for which apps, and why. */
@@ -127,7 +133,8 @@ type UsageReads = Pick<
   | "analyticsEngine"
   | "browserRendering"
   | "containers"
->;
+> &
+  Partial<Pick<CloudflareClient["usage"], "accountTotals">>;
 
 /** One product of one app in one hour. */
 export interface CollectedHour {
@@ -151,6 +158,11 @@ export interface Collected {
   failures: CollectFailure[];
   /** Reads that answered. */
   succeeded: number;
+  /**
+   * The whole account's totals since 00:00 UTC (account-day.ts), when asked
+   * for and some were read; null otherwise.
+   */
+  accountTotals: UsageTotals | null;
   /**
    * Apps some of whose usage this check could not read (a failed read, or
    * an `unread` source): their missing products keep their stored values,
@@ -202,7 +214,9 @@ const R2_CLASS_B = new Set([
  * requests), key-value Durable Object storage units, free R2 operations,
  * Vectorize query counts, container egress, Browser Rendering sessions.
  */
-export function productOf(row: UsageRow): [ProductKey, number] | null {
+export function productOf(
+  row: Pick<UsageRow, "dataset" | "metric" | "value">,
+): [ProductKey, number] | null {
   const v = row.value;
   switch (row.dataset) {
     case "workersInvocationsAdaptive":
@@ -262,6 +276,61 @@ export function productOf(row: UsageRow): [ProductKey, number] | null {
     default:
       return null;
   }
+}
+
+/** The dataset each product of a reading of the account's day comes from. */
+export const ACCOUNT_DAY_DATASETS: Readonly<Record<string, UsageDataset>> = {
+  workers_requests: "workersInvocationsAdaptive",
+  do_requests: "durableObjectsInvocationsAdaptiveGroups",
+  do_duration: "durableObjectsPeriodicGroups",
+  do_rows_read: "durableObjectsPeriodicGroups",
+  do_rows_written: "durableObjectsPeriodicGroups",
+  d1_rows_read: "d1AnalyticsAdaptiveGroups",
+  d1_rows_written: "d1AnalyticsAdaptiveGroups",
+  kv_reads: "kvOperationsAdaptiveGroups",
+  kv_writes: "kvOperationsAdaptiveGroups",
+  kv_deletes: "kvOperationsAdaptiveGroups",
+  kv_lists: "kvOperationsAdaptiveGroups",
+  queues_operations: "queueMessageOperationsAdaptiveGroups",
+  workflow_steps: "workflowsAdaptiveGroups",
+  analytics_engine_data_points: "workersAnalyticsEngineAdaptiveGroups",
+  browser_hours: "browserRenderingBrowserTimeUsageAdaptiveGroups",
+};
+
+/**
+ * The datasets a reading asks for: only those of products with a Free daily
+ * limit (`ACCOUNT_DAY_PRODUCTS`), each once. Every field counts against
+ * Cloudflare's GraphQL quota.
+ */
+export const ACCOUNT_DAY_READ: readonly UsageDataset[] = [
+  ...new Set(
+    ACCOUNT_DAY_PRODUCTS.flatMap((key) => {
+      const dataset = ACCOUNT_DAY_DATASETS[key];
+      return dataset === undefined ? [] : [dataset];
+    }),
+  ),
+];
+
+/**
+ * A reading of the account's day (account-day.ts) from cf-api's
+ * `accountTotals`, taken at `at` (epoch ms). A product whose dataset could
+ * not be read is left out, so its limit counts Appflare's apps alone.
+ */
+export function accountDayFrom(read: UsageTotals, at: number): AccountDay {
+  const failed = new Set(read.failed.map((f) => f.dataset));
+  const used: Record<string, number> = {};
+  for (const key of ACCOUNT_DAY_PRODUCTS) {
+    const dataset = ACCOUNT_DAY_DATASETS[key];
+    if (dataset !== undefined && !failed.has(dataset)) used[key] = 0;
+  }
+  for (const total of read.totals) {
+    const mapped = productOf(total);
+    if (mapped === null) continue;
+    const [key, value] = mapped;
+    const before = used[key];
+    if (before !== undefined) used[key] = before + value;
+  }
+  return { at, used };
 }
 
 export function isLevel(product: ProductKey): boolean {
@@ -340,11 +409,16 @@ function attribute(reading: Reading, rows: readonly UsageRow[], owner: Map<strin
  * its own `from`. Counts are hours with use; a storage product has a value
  * for every hour from the app's first sample (or `levelsBefore`) on, the
  * latest sample carried into hours without one.
+ *
+ * With `accountTotals` (Workers Free), it also reads the whole account's
+ * totals since 00:00 UTC for the free daily limits, in the same request as
+ * the rest: one dataset field each, one summed row each.
  */
 export async function collectUsage(
   reader: UsageReader,
   targets: readonly CollectTarget[],
   now: number,
+  options: { accountTotals?: boolean } = {},
 ): Promise<Collected> {
   const collected: Collected = {
     hours: [],
@@ -353,6 +427,7 @@ export async function collectUsage(
     failures: [],
     succeeded: 0,
     incomplete: new Set(),
+    accountTotals: null,
   };
   if (targets.length === 0) return collected;
   // Every read below starts in this turn: batched, they go out as one request.
@@ -490,6 +565,26 @@ export async function collectUsage(
             const list = collected.alarms.get(installId) ?? [];
             list.push({ object: namespace, alarms: Math.round(alarms) });
             collected.alarms.set(installId, list);
+          }
+        }),
+    );
+  }
+
+  // The account's totals for the free daily limits: no app's, so a failure
+  // leaves every app's usage complete.
+  if (options.accountTotals && usage.accountTotals !== undefined) {
+    collected.queries += ACCOUNT_DAY_READ.length;
+    settle(
+      "account",
+      [],
+      usage
+        .accountTotals({ from: dayStart(now * 1000) / 1000, to: now, datasets: ACCOUNT_DAY_READ })
+        .then((read) => {
+          collected.accountTotals = read;
+          // Some datasets answered: the reading leaves the others' products out.
+          const [first] = read.failed;
+          if (first !== undefined) {
+            collected.failures.push({ source: "account", installIds: [], error: first.error });
           }
         }),
     );

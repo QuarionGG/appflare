@@ -104,6 +104,25 @@ export interface EmitInput {
   occurredAt: number;
   /** Only channels created at or before this time get it (a finished job's end). */
   channelsCreatedBy?: number;
+  /**
+   * Channels that receive this other event do not get it: they hear about
+   * the same thing from that one (a free daily limit, from the account's
+   * warning or an app's).
+   */
+  exceptChannelsWith?: NotificationEvent;
+}
+
+/** The channels an event goes to: those that receive it, less those `exceptChannelsWith` leaves out. */
+export function receivers(
+  channels: readonly ChannelRow[],
+  type: NotificationEvent,
+  exceptChannelsWith?: NotificationEvent,
+): ChannelRow[] {
+  return channels.filter(
+    (c) =>
+      c.events.includes(type) &&
+      (exceptChannelsWith === undefined || !c.events.includes(exceptChannelsWith)),
+  );
 }
 
 /**
@@ -118,10 +137,8 @@ export async function emitEvent(
   input: EmitInput,
   now: number,
 ): Promise<{ eventId: string | null; queued: number }> {
-  const targets = channels.filter(
-    (c) =>
-      c.events.includes(input.type) &&
-      (input.channelsCreatedBy === undefined || c.createdAt <= input.channelsCreatedBy),
+  const targets = receivers(channels, input.type, input.exceptChannelsWith).filter(
+    (c) => input.channelsCreatedBy === undefined || c.createdAt <= input.channelsCreatedBy,
   );
   if (targets.length === 0) return { eventId: null, queued: 0 };
   const results = await db.batch([
@@ -322,6 +339,7 @@ const USAGE_EVENTS: readonly NotificationEvent[] = [
   "usage_unusual",
   "usage_alert",
   "usage_limit_near",
+  "usage_account_limit",
   "app_paused",
   "app_resumed",
   "app_pause_failed",

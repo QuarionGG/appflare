@@ -3,6 +3,7 @@ import { ACCOUNT_PLANS, type AccountPlan } from "../account/plan";
 import { known, type Read, read, readTogether } from "../db/batch";
 import { createDb, type Database } from "../db/client";
 import { SETTING, settingsRead } from "../db/settings";
+import { checkAccountLimits, deliverAccountLimitEvents } from "./account-limits.server";
 import { freeLimitWarnings, type LimitWarning } from "./evaluate";
 import {
   accountOverage,
@@ -92,6 +93,7 @@ const warningSchema = z.object({
   share: z.number(),
   runsOutAt: z.number().nullable(),
   appShare: z.number(),
+  otherShare: z.number().default(0),
 });
 
 export const shardInputSchema = z.object({
@@ -110,6 +112,11 @@ export const shardInputSchema = z.object({
   alarms: z.record(z.string(), alarmsSchema),
   /** The account's free daily limit warnings for the part's apps. */
   limitWarnings: z.record(z.string(), warningSchema),
+  /**
+   * Workers Free: the products the account was warned about today; an app's
+   * warning about one skips the channels that get the account's.
+   */
+  limitsCovered: z.array(z.string()).default([]),
   /** The resume windows of its apps resumed lately (math/resume.ts), as the check worked them out. */
   resumes: z
     .record(z.string(), z.object({ at: z.number(), base: z.record(z.string(), z.number()) }))
@@ -152,8 +159,10 @@ export function parseShardInput(raw: unknown): ShardInput {
         share: numberIn(x.share, `${at}.share`),
         runsOutAt: x.runsOutAt === null ? null : numberIn(x.runsOutAt, `${at}.runsOutAt`),
         appShare: numberIn(x.appShare, `${at}.appShare`),
+        otherShare: x.otherShare === undefined ? 0 : numberIn(x.otherShare, `${at}.otherShare`),
       };
     }),
+    limitsCovered: r.limitsCovered === undefined ? [] : stringsIn(r.limitsCovered, "limitsCovered"),
     resumes: r.resumes === undefined ? {} : resumesIn(r.resumes, "resumes"),
   };
 }
@@ -236,6 +245,7 @@ export async function runShard(
         limitWarnings: new Map(
           Object.entries(input.limitWarnings) as Array<[string, LimitWarning]>,
         ),
+        limitsCovered: new Set(input.limitsCovered),
         resumes,
       },
       deps,
@@ -427,14 +437,36 @@ export async function checkInShards(
     budget: number;
     /** The apps resumed lately, as the check worked them out (resume.server.ts). */
     resumes?: ReadonlyMap<string, ResumeWindow>;
+    /** Workers Free: the whole account's use today of what the plan limits per day (account-day.ts). */
+    accountToday?: Readonly<Record<string, number>>;
   },
   report: SpendWatchReport,
+  deps: SpendWatchDeps = {},
 ): Promise<string | null> {
   const unit = shardUnit(env);
   if (unit === null) throw new Error("the spendShard unit is not available");
+  // Workers Free: first the whole account's warning, which owns its products for the day.
+  // A check that judges apps: without a reading, the products the account
+  // was warned about today still come from what was recorded.
+  const account =
+    input.plan === "free" && input.judge.size > 0
+      ? await checkAccountLimits(
+          env,
+          db,
+          {
+            now: input.now,
+            accountToday: input.accountToday ?? null,
+            usage: input.sums,
+            listed: new Set(input.all.map((a) => a.installId)),
+          },
+          deps,
+          report,
+        )
+      : null;
+  const covered = account?.covered ?? new Set<string>();
   const warnings =
     input.plan === "free"
-      ? freeLimitWarnings(input.sums, input.judge, input.now)
+      ? freeLimitWarnings(input.sums, input.judge, input.now, input.accountToday)
       : new Map<string, LimitWarning>();
   const parts: Array<Array<{ installId: string; installedAt: number }>> = [];
   for (let i = 0; i < input.all.length; i += SHARD_APPS) {
@@ -463,6 +495,7 @@ export async function checkInShards(
         incomplete: ids.filter((id) => input.incomplete.has(id)),
         alarms: pick(input.alarms) as Record<string, ObjectAlarms[]>,
         limitWarnings: pick(warnings),
+        limitsCovered: [...covered],
         resumes: pick(input.resumes ?? new Map()),
       };
       try {
@@ -486,6 +519,10 @@ export async function checkInShards(
     for (const app of result.value.apps) worked.set(app.installId, app);
   }
   report.parts = { count: parts.length, ran: run.length, failed };
+  // The account warning's messages after the parts, which may have paused apps.
+  if (account !== null) {
+    await deliverAccountLimitEvents(env, account.deliver, input.budget, report);
+  }
   try {
     // One round trip: the open pauses (some may have started in a part just
     // now) and, when some apps were not worked out, their last numbers.

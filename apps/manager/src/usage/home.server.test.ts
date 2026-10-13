@@ -145,6 +145,52 @@ describe("readHomeUsage", () => {
     expect(usage.account.workers_requests?.today).toBe(1009);
   });
 
+  it("on Workers Free, adds the account's totals today as other usage", async () => {
+    await writeSettings(db(), { [SETTING.accountPlan]: "free" });
+    await install("a");
+    await record([
+      hour("a", Date.UTC(2026, 9, 12, 14), 1000),
+      hour("a", Date.UTC(2026, 9, 12, 14), 900, "d1_rows_written"),
+    ]);
+    const used = { workers_requests: 1000, d1_rows_written: 90_000, kv_writes: 0 };
+    await writeSpendWatchStatus(db(), {
+      state: "watching",
+      at: NOW - 5 * 60_000,
+      account: { at: NOW - 5 * 60_000, used },
+    });
+    const usage = await readHomeUsage(env.DB, env.KV, NOW);
+    // Today's limit counts the outside usage; the month stays Appflare's.
+    expect(usage.account.d1_rows_written).toEqual({ today: 90_000, month: 900, other: 89_100 });
+    // All of it Appflare's: nothing else to add.
+    expect(usage.account.workers_requests).toEqual({ today: 1000, month: 1000 });
+    expect(usage.account.kv_writes).toBeUndefined();
+
+    // Yesterday's reading says nothing about today.
+    await writeSpendWatchStatus(db(), {
+      state: "watching",
+      at: NOW,
+      account: { at: Date.UTC(2026, 9, 11, 23, 55), used },
+    });
+    expect((await readHomeUsage(env.DB, env.KV, NOW)).account.d1_rows_written).toEqual({
+      today: 900,
+      month: 900,
+    });
+  });
+
+  it("on Workers Paid, leaves any account reading out", async () => {
+    await install("a");
+    await record([hour("a", Date.UTC(2026, 9, 12, 14), 900, "d1_rows_written")]);
+    await writeSpendWatchStatus(db(), {
+      state: "watching",
+      at: NOW,
+      account: { at: NOW, used: { d1_rows_written: 90_000 } },
+    });
+    expect((await readHomeUsage(env.DB, env.KV, NOW)).account.d1_rows_written).toEqual({
+      today: 900,
+      month: 900,
+    });
+  });
+
   it("needs other permissions when the watcher found it could not read usage", async () => {
     await install("a");
     await writeSpendWatchStatus(db(), {

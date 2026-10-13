@@ -12,6 +12,7 @@ import m0008 from "./0008_access_hostnames_resync.sql?raw";
 import m0009 from "./0009_spend_protection.sql?raw";
 import m0010 from "./0010_notification_usage_events.sql?raw";
 import m0011 from "./0011_notification_pause_failed_event.sql?raw";
+import m0012 from "./0012_notification_account_limit_event.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -27,4 +28,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0009_spend_protection", sql: m0009 },
   { tag: "0010_notification_usage_events", sql: m0010 },
   { tag: "0011_notification_pause_failed_event", sql: m0011 },
+  { tag: "0012_notification_account_limit_event", sql: m0012 },
 ];

@@ -65,7 +65,7 @@ When the uninstall finishes, Appflare forgets the app's
 [spend protection](/guides/spend-protection/): its usage alerts, its automatic pause
 settings, and a pause that is still in place. A paused app can be uninstalled without
 resuming it first. The app's
-usage history stays, since this month's bill still counts what it used.
+usage history stays, since this month's Appflare usage still counts what it used.
 
 ## What you choose
 

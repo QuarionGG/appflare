@@ -10,7 +10,10 @@ import { grantRead } from "../cloudflare/grant-store.server";
 import { readTogether } from "../db/batch";
 import { createDb, type Database } from "../db/client";
 import { SETTING, settingsRead } from "../db/settings";
+import { type AccountDay, accountToday } from "./account-day";
+import { checkAccountLimits, deliverAccountLimitEvents } from "./account-limits.server";
 import {
+  accountDayFrom,
   type CollectSource,
   type CollectTarget,
   collectUsage,
@@ -43,7 +46,7 @@ import {
   writeOverview,
 } from "./watcher-judge.server";
 import { shardUnit } from "./watcher-shard.server";
-import { type SpendWatchStatus, writeSpendWatchStatus } from "./watcher-status";
+import { type SpendWatchStatus, storedAccountDay, writeSpendWatchStatus } from "./watcher-status";
 
 export type { SpendWatchDeps, SpendWatchEnv, SpendWatchReport } from "./watcher-judge.server";
 export { SUBREQUEST_BUDGET } from "./watcher-judge.server";
@@ -207,8 +210,16 @@ export async function watchSpend(
   };
   /** The pages' numbers a check on Workers Free worked out, stored with the status. */
   let overview: string | null = null;
-  const finish = async (status: SpendWatchStatus | null) => {
-    if (status !== null) {
+  /**
+   * Workers Free: the account's totals for the free daily limits, stored
+   * with the status: this check's reading, else the last one of the day.
+   */
+  let accountDay: AccountDay | null = null;
+  const finish = async (checked: SpendWatchStatus | null) => {
+    if (checked !== null) {
+      // A reading from an earlier day is no use to anyone: left out.
+      const day = accountDay !== null && accountToday(accountDay, now) !== null ? accountDay : null;
+      const status: SpendWatchStatus = day === null ? checked : { ...checked, account: day };
       report.status = status.state;
       if (status.state === "failed") report.error = status.error;
       try {
@@ -251,11 +262,13 @@ export async function watchSpend(
         watchedAppsRead(db),
         grantRead(db),
         accountPlanRead(db),
-        settingsRead(db, [SETTING.accountId]),
+        settingsRead(db, [SETTING.accountId, SETTING.spendWatch]),
         usageStatesRead(db, null),
         recentResumesRead(db, now),
         usageRead(db, { from: cutoff - HOUR, to: hourNow + HOUR, grain: "hour" }),
       ] as const);
+    // The day's last reading of the account's totals, kept unless this check reads them anew.
+    if (plan === "free") accountDay = storedAccountDay(account[SETTING.spendWatch]);
     /**
      * Workers Free: the rest of the check (the account's sums, the parts
      * that judge the apps, the pages' numbers) in an invocation of its own,
@@ -376,7 +389,19 @@ export async function watchSpend(
         unread,
       };
     });
-    const collected = await collectUsage(api.usage, targets, Math.floor(now / 1000));
+    // Workers Free: the whole account's totals for the free daily limits too,
+    // in the same request (nothing on Paid limits use per day).
+    const collected = await collectUsage(api.usage, targets, Math.floor(now / 1000), {
+      accountTotals: plan === "free",
+    });
+    if (collected.accountTotals !== null) {
+      const fresh = accountDayFrom(collected.accountTotals, now);
+      // A product whose dataset failed keeps the day's last reading of it:
+      // a count only grows during the day, so an older one is never too high.
+      const earlier = accountToday(accountDay, now) ?? {};
+      accountDay = { at: fresh.at, used: { ...earlier, ...fresh.used } };
+    }
+    const accountUsed = accountToday(accountDay, now);
     if (collected.failures.length > 0) {
       // Every read refused for lack of permission: the connection cannot read analytics.
       if (collected.succeeded === 0 && collected.failures.every((f) => isAccessRefusal(f.error))) {
@@ -439,6 +464,7 @@ export async function watchSpend(
           alarms: Object.fromEntries(collected.alarms),
           fresh: [...rewritten],
           resumes: Object.fromEntries(resumes),
+          ...(accountUsed === null ? {} : { accountToday: { ...accountUsed } }),
         },
         { history: true },
       );
@@ -446,6 +472,23 @@ export async function watchSpend(
       const history = await loadHistory(db, env.KV, now, ALL_HISTORY, { fresh: rewritten });
       report.history = history.source;
       const usage = usageByInstall(history.series, recent);
+      // Workers Free: first the whole account's warning, which owns its products for the day.
+      const account =
+        plan === "free"
+          ? await checkAccountLimits(
+              env,
+              db,
+              {
+                now,
+                accountToday: accountUsed,
+                usage,
+                listed: new Set(all.map((a) => a.installId)),
+              },
+              deps,
+              report,
+            )
+          : undefined;
+      const limitsCovered = account?.covered;
       const { paused } = await judge(
         env,
         db,
@@ -459,11 +502,17 @@ export async function watchSpend(
           incomplete: collected.incomplete,
           installed: new Set(all.map((a) => a.installId)),
           resumes,
+          ...(plan === "free" && accountUsed !== null ? { accountToday: accountUsed } : {}),
+          ...(limitsCovered === undefined ? {} : { limitsCovered }),
         },
         deps,
         budget,
         report,
       );
+      // After the apps: their pauses come first for the subrequests.
+      if (account !== undefined) {
+        await deliverAccountLimitEvents(env, account.deliver, budget, report);
+      }
       await writeOverview(env, db, { now, all, plan, usage, paused, resumes });
     }
     return await finish({ state: "watching", at: now });

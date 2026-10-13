@@ -3,7 +3,11 @@ import type { CapabilityId } from "../capabilities/capability-rows";
 import type { HealthStatus } from "../db/schema";
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
 import { installAgainLink } from "../installs/install-again";
-import { USAGE_ATTENTION_ORDER, type UsageAttention } from "../usage/attention";
+import {
+  type AccountLimitAttention,
+  USAGE_ATTENTION_ORDER,
+  type UsageAttention,
+} from "../usage/attention";
 
 /**
  * What needs someone's attention, in one list: Home's "Needs attention"
@@ -12,7 +16,9 @@ import { USAGE_ATTENTION_ORDER, type UsageAttention } from "../usage/attention";
  *
  * -1. spend protection: an app using far more than usual, a free daily
  *    limit an app used up, a paused app, a free daily limit about to run out
- *    (`usage/attention.ts`; everyone sees them, only admins pause and resume);
+ *    (`usage/attention.ts`; everyone sees them, only admins pause and resume),
+ *    then on Workers Free the whole account near a free daily limit,
+ *    whatever is using it (an account row: no app's dot);
  * 0. Appflare's connection to Cloudflare needs reconnecting (everyone sees
  *    it: until an administrator reconnects, nothing can change in the account);
  * 1. a job of an app that failed, with no job of that app finishing after it;
@@ -35,6 +41,7 @@ import { USAGE_ATTENTION_ORDER, type UsageAttention } from "../usage/attention";
 
 export type AttentionKind =
   | "usage"
+  | "account-usage"
   | "connection"
   | "failed-job"
   | "not-responding"
@@ -47,6 +54,7 @@ export type AttentionKind =
 /** The order rows appear in, most severe first. */
 export const SEVERITY_ORDER: readonly AttentionKind[] = [
   "usage",
+  "account-usage",
   "connection",
   "failed-job",
   "not-responding",
@@ -173,6 +181,8 @@ export interface AttentionInput {
   leftForAdmin?: ReadonlyMap<string, string>;
   /** Spend protection's rows (absent: none). */
   usage?: readonly UsageAttention[];
+  /** Workers Free: the free daily limits the whole account is near or used up (absent: none). */
+  accountUsage?: readonly AccountLimitAttention[];
 }
 
 interface AppItem {
@@ -182,6 +192,13 @@ interface AppItem {
 
 export type AttentionItem =
   | ({ kind: "usage"; key: string; usage: UsageAttention } & AppItem)
+  | {
+      kind: "account-usage";
+      key: string;
+      limit: AccountLimitAttention;
+      /** What Home calls the Appflare app that used most of it; null when none is listed. */
+      topLabel: string | null;
+    }
   | { kind: "connection"; key: string }
   | ({
       kind: "failed-job";
@@ -224,10 +241,14 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
   const apps = new Map(input.apps.map((a) => [a.id, a]));
   // Spend protection's rows of the apps Home lists, by kind, then by name.
   const rank = (u: UsageAttention) => USAGE_ATTENTION_ORDER.indexOf(u.kind);
+  // A limit the account's row is about needs no app row saying it is about
+  // to run out too (an app's used-up row stays: it offers Pause).
+  const accountLimits = new Set((input.accountUsage ?? []).map((l) => l.product));
   const usage: AttentionItem[] = (input.usage ?? [])
     .flatMap((u) => {
       const app = apps.get(u.installId);
       if (app === undefined || app.status === "uninstalled") return [];
+      if (u.kind === "limit-near" && accountLimits.has(u.product)) return [];
       return [
         {
           kind: "usage" as const,
@@ -239,6 +260,14 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
       ];
     })
     .sort((a, b) => rank(a.usage) - rank(b.usage) || byLabel(a, b));
+
+  // The whole account near a free daily limit: everyone sees it, like the apps' rows.
+  const accountUsage: AttentionItem[] = (input.accountUsage ?? []).map((limit) => ({
+    kind: "account-usage" as const,
+    key: `account-usage:${limit.product}`,
+    limit,
+    topLabel: limit.top === null ? null : (apps.get(limit.top.installId)?.label ?? null),
+  }));
 
   const failed: AttentionItem[] = input.failedJobs
     .flatMap((job) => {
@@ -346,6 +375,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
 
   return [
     ...usage,
+    ...accountUsage,
     ...connection,
     ...failed,
     ...notResponding,

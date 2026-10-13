@@ -286,7 +286,7 @@ describe("UsageTab", () => {
     );
     expect(banner()?.textContent).toContain("Fix the cause first");
     await show(pausedBy({ cause: { reason: "budget", budget: 50, projected: 66.45 } }));
-    expect(banner()?.textContent).toContain("past its $50.00 monthly budget");
+    expect(banner()?.textContent).toContain("past the $50.00 monthly budget");
     await show(pausedBy({ by: "Ada Lovelace", cause: { reason: "manual" } }));
     expect(banner()?.textContent).toContain("Paused by Ada Lovelace");
     expect(banner()?.textContent).toMatch(/Ada Lovelace paused it at /);
@@ -529,7 +529,7 @@ describe("spend protection changes", () => {
     );
     expect(text()).toContain("The account's triggers.");
     expect(text()).toContain(
-      "Monthly budget: Appflare may pause this app when the account's bill is on pace to pass $50.00.",
+      "Monthly budget: Appflare may pause this app when this month's Appflare usage, including the $5 plan, is on pace to pass $50.00.",
     );
     server.setAppSpend.mockResolvedValue(
       scenario("calm", {

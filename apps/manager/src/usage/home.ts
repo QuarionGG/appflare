@@ -1,6 +1,14 @@
 import type { AccountPlan } from "../account/plan";
 import type { UsageAttention } from "./attention";
-import { count, percent, productLabel, usd, withUnit } from "./attention-format";
+import {
+  count,
+  OTHER_USAGE,
+  otherShareShown,
+  percent,
+  productLabel,
+  usd,
+  withUnit,
+} from "./attention-format";
 import {
   billedPrice,
   DAY_MS,
@@ -11,6 +19,7 @@ import {
   PRODUCTS,
   type ProductKey,
 } from "./math";
+import { clock, dateTime } from "./ui/format";
 
 /**
  * Home's "Usage" section and the usage on each app card, shaped from what
@@ -87,6 +96,13 @@ export interface HomeUsageSeries {
 export interface AccountUse {
   today: number;
   month: number;
+  /**
+   * Workers Free: of `today`, what is not from Appflare's apps (Workers and
+   * resources it did not install, and the manager itself), when the watcher
+   * read the account's total. Not counted in `month`, which stays Appflare's
+   * apps' own (earlier days' outside usage is not known).
+   */
+  other?: number;
 }
 
 /** What the server returns for Home's usage (`getHomeUsage`). */
@@ -100,7 +116,11 @@ export interface HomeUsageData {
    * while usage can be read.
    */
   needsAccess: { via: "oauth" | "token" } | null;
-  /** This month's bill so far and projected (Paid: $5 plus usage past included; Free: R2 past its free amount). */
+  /**
+   * This month's Appflare usage so far and projected (Paid: $5 plus its
+   * apps' usage past included; Free: R2 past its free amount). Other
+   * Workers and resources in the account are not counted.
+   */
   bill: { now: number; projected: number };
   apps: HomeUsageApp[];
   /** Epoch ms: the start of the first of the 6 days before today. */
@@ -149,6 +169,12 @@ export interface ProductChart {
   series: ChartSeries[];
   /** "Last 7 days · 12% of today's free limit" (the share part when the product has an allowance). */
   caption: string;
+  /**
+   * Workers Free: today's use of the product's daily limit that is not from
+   * Appflare's apps, which the chart does not show (Appflare keeps no
+   * history of it); null when there is none to speak of.
+   */
+  other: string | null;
 }
 
 export type CardState = "fresh" | "paused" | "capped" | "runaway" | "busy" | "normal";
@@ -454,14 +480,15 @@ export function homeUsageView(input: {
       state === "fresh"
         ? "Just installed"
         : state === "paused"
-          ? "Paused · no usage since"
+          ? `${pausedWhen(rows.paused?.pausedAt, data.now)} · no usage since`
           : state === "runaway"
             ? data.plan === "paid" && n.burnPerHour > 0
               ? `${usd(n.burnPerHour)}/h · ${how}`
               : how
             : state === "capped"
               ? `${label}: today's free limit used up`
-              : share === null
+              : // No share line at 0%; a share under 1% reads "under 1%" (percent()).
+                share === null || share <= 0
                 ? `No requests today${busy}`
                 : `${percent(share)} of today's requests${busy}`;
     cards.set(app.id, {
@@ -536,6 +563,7 @@ export function homeUsageView(input: {
       product,
       series: own,
       caption: `Last 7 days${share === null ? "" : ` · ${percent(share.share)} of ${share.of}`}`,
+      other: otherLine(data, product),
     };
   };
 
@@ -548,13 +576,13 @@ export function homeUsageView(input: {
           {
             label: "Usage this month",
             value: usd(Math.max(0, data.bill.now - PAID_PLAN_MONTHLY_USD)),
-            note: "Past what the $5 plan includes (estimate)",
+            note: "Appflare's apps, past what the $5 plan includes (estimate)",
             bad: false,
           },
           {
             label: "Projected month",
             value: usd(data.bill.projected),
-            note: "Plan included, if the last day's pace holds",
+            note: "Appflare's apps and the $5 plan, if the last day's pace holds",
             bad: false,
           },
           burningNow(data, apps, runaway.length > 0),
@@ -576,6 +604,17 @@ export function homeUsageView(input: {
         ];
 
   return { tiles, products, initialProduct, chart, cards };
+}
+
+/**
+ * When a paused app was paused, in the reader's time: "Paused at 10:00 AM"
+ * today, "Paused on Oct 12, 3:00 PM" on an earlier day, "Paused" when the
+ * pause's time is not known.
+ */
+function pausedWhen(pausedAt: number | undefined, now: number): string {
+  if (pausedAt === undefined) return "Paused";
+  const sameDay = new Date(pausedAt).toDateString() === new Date(now).toDateString();
+  return sameDay ? `Paused at ${clock(pausedAt)}` : `Paused on ${dateTime(pausedAt)}`;
 }
 
 /** Paid: what every app costs an hour now, and which app most of it is when one runs away. */
@@ -622,10 +661,34 @@ function canBeBilled(data: HomeUsageData): UsageTile {
   };
 }
 
+/** A product's daily free amount on Workers Free; null when it has none per day. */
+function freePerDay(key: ProductKey): number | null {
+  const free = PRODUCTS[key].free;
+  return isCount(key) && free !== null && free.per === "day" && free.amount > 0
+    ? free.amount
+    : null;
+}
+
 /**
- * Free: the daily limit the account has used most of today, shared by every
- * app (removed ones too). A limit "Needs attention" says is used up reads as
- * at least 100%, even when the hours stored so far add up to less.
+ * Free: what the chart of `key` leaves out of the account's use today, the
+ * part not from Appflare's apps: "Not charted: other usage in this account
+ * (not Appflare apps), 89.8K rows today, 90% of today's free limit." Null
+ * when it is under 1% of the limit, or there is no reading of it.
+ */
+function otherLine(data: HomeUsageData, key: ProductKey): string | null {
+  const limit = freePerDay(key);
+  const other = data.account[key]?.other ?? 0;
+  if (data.plan !== "free" || limit === null || otherShareShown(other / limit) === null) {
+    return null;
+  }
+  return `Not charted: ${OTHER_USAGE}, ${productAmount(key, other)} today, ${percent(other / limit)} of today's free limit.`;
+}
+
+/**
+ * Free: the daily limit the account has used most of today: every app's
+ * use (removed ones too) and, once the watcher read the account's totals,
+ * everything else in the account. A limit "Needs attention" says is used up
+ * reads as at least 100%, even when the hours stored so far add up to less.
  */
 function closestDailyLimit(
   account: HomeUsageData["account"],
@@ -633,16 +696,21 @@ function closestDailyLimit(
 ): UsageTile {
   let best: { key: ProductKey; share: number } = { key: "workers_requests", share: 0 };
   for (const key of PRODUCT_KEYS) {
-    const free = PRODUCTS[key].free;
-    if (!isCount(key) || free === null || free.per !== "day") continue;
-    const used = (account[key]?.today ?? 0) / free.amount;
+    const limit = freePerDay(key);
+    if (limit === null) continue;
+    const used = (account[key]?.today ?? 0) / limit;
     const share = usedUp.includes(key) ? Math.max(1, used) : used;
     if (share > best.share) best = { key, share };
   }
+  const limit = freePerDay(best.key) ?? 1;
+  const other = otherShareShown((account[best.key]?.other ?? 0) / limit);
   return {
     label: "Closest daily limit",
     value: percent(best.share),
-    note: `${productLabel(best.key)}, shared by every app`,
+    note:
+      other === null
+        ? `${productLabel(best.key)}, counted for the whole account`
+        : `${productLabel(best.key)}: ${percent(other)} of the limit is ${OTHER_USAGE}`,
     bad: false,
   };
 }

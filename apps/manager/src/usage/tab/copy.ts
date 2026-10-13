@@ -4,6 +4,8 @@ import {
   count,
   fullCount,
   labelAfter,
+  OTHER_USAGE,
+  otherShareShown,
   percent,
   productLabel,
   productRate,
@@ -38,6 +40,20 @@ export function plural(key: string): boolean {
   const name = productLabel(key);
   const last = name.split(" ").at(-1) ?? "";
   return /s$/.test(last) || /\brows\b/.test(name);
+}
+
+/**
+ * Workers Free, under the product table: the part of each daily limit that
+ * is not this app's or any other Appflare app's, as a share of the limit;
+ * null when there is none to speak of.
+ */
+export function otherUsageNote(products: readonly ProductUsage[]): string | null {
+  const parts = products.flatMap((p) => {
+    const other = otherShareShown(p.allowance?.other);
+    return other === null ? [] : [`${percent(other)} of today's ${label(p.key)}`];
+  });
+  if (parts.length === 0) return null;
+  return `Free daily limits count the whole account, so "Of free limit" includes ${OTHER_USAGE}: ${listWords(parts)}.`;
 }
 
 /** A level as "3.4 GB"; under 10, one decimal. */
@@ -161,8 +177,8 @@ export function statusLine(
         tone: "good",
         text:
           status.requestsShare === null
-            ? "Normal for this app. Limits and included usage are shared by every app."
-            : `Normal for this app. ${percent(status.requestsShare)} of today's Worker requests in this account; limits and included usage are shared by every app.`,
+            ? "Normal for this app. Limits and included usage count the whole account."
+            : `Normal for this app. ${percent(status.requestsShare)} of today's Worker requests in this account; limits and included usage count the whole account.`,
       };
   }
 }
@@ -181,7 +197,7 @@ function fixFirst(status: Extract<UsageStatus, { kind: "paused" }>): string {
     case "cap":
       return "Resume it when its cap resets, or change the cap below.";
     case "budget":
-      return "Resume it when the bill allows, or exempt it from the budget below.";
+      return "Resume it when the budget allows, or exempt it from the budget below.";
     default:
       return "Fix the cause first, for example by undoing the settings change that started it.";
   }
@@ -214,13 +230,20 @@ export function stateBanner(status: UsageStatus, autoPause: boolean): BannerCopy
     }
     case "limit": {
       const free = `${fullCount(status.limit)} free ${label(status.product)}`;
+      const other = otherShareShown(status.otherShare);
+      const shares =
+        status.appShare === null
+          ? other === null
+            ? ""
+            : `, ${percent(other)} of them by ${OTHER_USAGE}`
+          : `, ${percent(status.appShare)} of them by this app${other === null ? "" : ` and ${percent(other)} by ${OTHER_USAGE}`}`;
       return {
         variant: "error",
         title: `Used up today's free ${label(status.product)}`,
         description:
           status.loopSince !== null
             ? `A loop from ${clock(status.loopSince)} used the account's ${free}. Cloudflare refuses more until 00:00 UTC, then the loop will start again. Nothing is billed on the Free plan.`
-            : `This account used its ${free} for today${status.appShare === null ? "" : `, ${percent(status.appShare)} of them by this app`}. Cloudflare refuses more until 00:00 UTC. Nothing is billed on the Free plan.`,
+            : `This account used its ${free} for today${shares}. Cloudflare refuses more until 00:00 UTC. Nothing is billed on the Free plan.`,
         action: "pause",
       };
     }

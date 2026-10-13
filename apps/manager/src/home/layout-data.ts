@@ -1,7 +1,7 @@
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
 import type { InstallRow } from "../installs/installs.functions";
 import type { ManagerStatus } from "../installs/pending-updates";
-import type { UsageAttention } from "../usage/attention";
+import type { AccountLimitAttention, UsageAttention } from "../usage/attention";
 import type { AccountAttentionRow, Downgrade, FailedJob } from "./attention";
 
 /**
@@ -35,4 +35,6 @@ export interface LayoutData {
   reconnectNeeded: boolean;
   /** Spend protection's rows: unusual usage, used-up and nearly used-up free limits, paused apps. */
   usage: UsageAttention[];
+  /** Workers Free: the free daily limits the whole account is near or used up today. */
+  accountUsage: AccountLimitAttention[];
 }

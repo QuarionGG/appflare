@@ -29,7 +29,7 @@ import { checkInstallHealth } from "../installs/health.functions";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
 import { type UpdateAllOutcome, updateAllSummary } from "../installs/update-all";
 import { startAllUpdates } from "../installs/update-all.functions";
-import { usageAttentionCopy } from "../usage/attention";
+import { accountLimitAttentionCopy, usageAttentionCopy } from "../usage/attention";
 import { accountRowLink } from "./account-attention";
 import {
   type AccountAttentionRow,
@@ -159,6 +159,7 @@ function AttentionRow({
 }) {
   if (item.kind === "deploy-copy") return <DeployCopyRow item={item} />;
   if (item.kind === "usage") return <UsageRow item={item} isAdmin={isAdmin} />;
+  if (item.kind === "account-usage") return <AccountUsageRow item={item} />;
   const { title, description } = attentionCopy(item);
   let action: ReactNode;
   switch (item.kind) {
@@ -307,6 +308,34 @@ function UsageRow({
           </LinkButton>
           {control}
         </>
+      }
+    />
+  );
+}
+
+/**
+ * Workers Free: the whole account near (or past) a free daily limit,
+ * whatever is using it. Not an app's row, so no Pause: "See usage" opens
+ * Home's Usage section.
+ */
+function AccountUsageRow({ item }: { item: Extract<AttentionItem, { kind: "account-usage" }> }) {
+  const { badge, title, description } = accountLimitAttentionCopy(item.limit, item.topLabel);
+  return (
+    <AttentionRowLayout
+      title={
+        <span className="flex items-start gap-2">
+          {/* Kumo: an inline mark sits centred on the first line of text. */}
+          <span className="flex h-lh shrink-0 items-center">
+            <Badge variant={badge?.variant ?? "warning"}>{badge?.label}</Badge>
+          </span>
+          <span>{title}</span>
+        </span>
+      }
+      description={description}
+      actions={
+        <LinkButton href="/#usage" variant="secondary" icon={<ArrowRightIcon />}>
+          See usage
+        </LinkButton>
       }
     />
   );

@@ -18,8 +18,9 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 | 10 D1 databases per account | The manager uses one. Each app that binds D1 uses one per database, per install. |
 
 Other free plan quotas, such as requests per day and KV writes per day, apply to
-your apps as usual. Every app shares them, and Appflare warns you before one runs out
-(see [Usage and spend protection](/guides/spend-protection/#free-daily-limit-running-out)). The manager keeps its own use low: job logs go to D1, not KV,
+your apps as usual. They count the whole account, including Workers and databases
+Appflare did not install, and Appflare warns you before one runs out
+(see [Usage and spend protection](/guides/spend-protection/#free-daily-limits)). The manager keeps its own use low: job logs go to D1, not KV,
 and the job page polls only while a job runs.
 
 ## Why does a health check say "Not verified yet"?
