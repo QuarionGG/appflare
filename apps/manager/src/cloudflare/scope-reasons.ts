@@ -11,13 +11,30 @@ import {
  * connection card's Details list them instead of scope ids. Client-safe.
  */
 
-/** OAuth scope id -> why Appflare asks for it. */
+/**
+ * Scopes earlier versions of Appflare asked for and this one does not. A
+ * sign-in made back then still holds them, and is not asked to reconnect
+ * over them; the connection card says what each one is, rather than
+ * showing its bare id.
+ */
+const FORMER_SCOPE_REASONS: ReadonlyArray<readonly [string, ScopeReason]> = [
+  [
+    "workers-tail.read",
+    {
+      label: "Workers Tail",
+      text: "Workers Tail lets a sign-in read a Worker's live logs. Earlier versions of Appflare asked for it; this version does not use it or ask for it.",
+    },
+  ],
+];
+
+/** OAuth scope id -> why Appflare asks for it, or why an earlier version did. */
 const REASON_BY_SCOPE: ReadonlyMap<string, ScopeReason> = new Map([
   ...Object.entries(MANAGER_OAUTH_SCOPE_BY_GROUP).flatMap(([group, scope]) => {
     const reason = (MANAGER_SCOPE_REASONS as Record<string, ScopeReason | undefined>)[group];
     return scope === null || reason === undefined ? [] : [[scope, reason] as const];
   }),
   [OFFLINE_ACCESS_SCOPE, OFFLINE_ACCESS_REASON],
+  ...FORMER_SCOPE_REASONS,
 ]);
 
 /**

@@ -50,4 +50,13 @@ describe("readRowsConnection", () => {
       missingScopes: ["d1.write", "zone.read"],
     });
   });
+
+  it("finds nothing missing in a sign-in made with a scope Appflare no longer asks for", async () => {
+    // Sign-ins from earlier versions hold Workers Tail; dropping it from the
+    // request must not ask them to reconnect.
+    await env.DB.batch(
+      replaceGrantStatements(env.DB, grant([...MANAGER_OAUTH_SCOPES, "workers-tail.read"])),
+    );
+    expect(await readRowsConnection(env.DB)).toEqual({ kind: "oauth", missingScopes: [] });
+  });
 });
