@@ -1,5 +1,33 @@
 # @appflare/manager
 
+## 0.5.0
+
+After updating, reconnect Cloudflare once when Appflare asks, so it can read usage (Account Analytics: Read).
+
+### Added
+
+- **Spend protection.** Appflare reads each app's usage from Cloudflare every 5 minutes and tells you when one runs far above its normal.
+- **Usage tab** on every app: a chart per product, this month's use and cost estimates at Cloudflare's prices.
+- **Usage on Home:** this month's cost, the projected month and what's burning now, or on Workers Free the closest daily limit, with a 7-day chart by app.
+- **Pause and Resume.** A paused app serves a "paused" page and keeps its data, bindings and secrets. Resume puts back the exact versions.
+- **Automatic pausing** (off by default) for an app that loops, and on Workers Paid one past its spending cap or the monthly budget. Settings > Your account > Spend protection.
+- **Usage alerts** written as a sentence, such as "when it has spent $6.00 this month".
+- **Notifications** for unusual usage, usage alerts, free daily limits, pauses and the monthly budget. Existing channels get them; untick any you don't want.
+- **Account-wide free limits (Workers Free).** Daily limits count the whole account, and Appflare warns at 90% even when something else used it.
+- Turn Workers Logs on or off for all of an app's Workers at once.
+
+### Changed
+
+- The scheduled check runs every 5 minutes instead of every 30.
+- Appflare no longer asks for Workers Tail access.
+- Settings > Usage data is now Settings > Anonymous report. Old links still work.
+
+### Fixed
+
+- A page could stop loading after an update until the browser cache was emptied.
+- Updating an app no longer turns its Workers Logs off.
+- Uninstalling an app also removes its queue consumers and container applications, so nothing keeps running or billing.
+
 ## 0.4.3
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # create-appflare
 
+## 0.1.1
+
+### Patch Changes
+
+- The README names the renamed Settings > Anonymous report page.
+
 ## 0.1.0
 
 ### Minor Changes

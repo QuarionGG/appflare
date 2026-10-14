@@ -1,5 +1,11 @@
 # @appflare/schema
 
+## 0.6.1
+
+### Patch Changes
+
+- Deploys keep each Worker's Workers Logs setting.
+
 ## 0.6.0
 
 ### Minor Changes

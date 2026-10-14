@@ -1,5 +1,11 @@
 # @appflare/pack
 
+## 0.4.1
+
+### Patch Changes
+
+- Deploys keep each Worker's Workers Logs setting.
+
 ## 0.4.0
 
 ### Minor Changes

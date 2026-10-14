@@ -1,5 +1,18 @@
 # @appflare/cf-api
 
+## 0.4.0
+
+### Minor Changes
+
+- `client.usage`: hourly usage per resource from Cloudflare's GraphQL Analytics API, with `batched()` to send reads as one request.
+- Calls to pause and resume an app's parts: `workers.getScriptSettings`, `workers.setObservability`, `containers.setMaxInstances`, `queues.getQueue`, `queues.setDeliveryPaused`, `workflows.listInstances`, `workflows.pauseInstance` and `workflows.resumeInstance`.
+- Sign-in asks for `account-analytics.read`; `missingSpendProtectionScopes` tells whether a grant lacks it.
+
+### Patch Changes
+
+- `client.usage.accountTotals()` reads the whole account's use of what Workers Free limits per day.
+- Sign-in no longer asks for `workers-tail.read`.
+
 ## 0.3.0
 
 ### Minor Changes
