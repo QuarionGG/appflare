@@ -2,88 +2,85 @@
 
 ## 0.6.1
 
-### Patch Changes
+### Fixed
 
 - Deploys keep each Worker's Workers Logs setting.
 
 ## 0.6.0
 
-### Minor Changes
+### Added
 
-- 0ce11ca: New `normalizeForD1Query` rewrites SQL so that D1's query API ends each trigger where SQLite does; only whitespace and the case of each trigger's own `BEGIN` and `END` change. New `d1QueryProblems` names what it cannot fix: `END;` inside a string or quoted name in a trigger body. It also names a trigger whose body has no `END` directly after a `;`, which SQLite refuses and which would otherwise hide every statement after it from the checks. `schemaFileProblems` and `baselineFileProblems` now report those too.
-  
-  `splitSqlStatements`, and with it the schema file and baseline checks, now finds a trigger's body as SQLite does: its `BEGIN` comes after the table the trigger is on, and its `END` directly after a `;`. A column, table or trigger named `end` or `begin` (`NEW.end`, `UPDATE OF begin`) used to end the body early and split the trigger, which refused such a schema file by mistake.
+- `normalizeForD1Query` rewrites SQL so D1's query API ends each trigger where SQLite does; `d1QueryProblems` names what it cannot fix.
+- `schemaFileProblems` and `baselineFileProblems` report those trigger problems too.
+
+### Fixed
+
+- `splitSqlStatements` finds a trigger's body as SQLite does, so a column or table named `end` or `begin` no longer splits the trigger.
 
 ## 0.5.0
 
-### Minor Changes
+### Added
 
-- 14277d5: A catalog manifest takes two optional lists for the app's page. `features`: 3 to 6 plain lines saying what the app does for the person who installs it, each at most 100 characters, one line without leading or trailing spaces, no trailing period, each once (`appFeaturesSchema`, `MIN_APP_FEATURES`, `MAX_APP_FEATURES`, `MAX_APP_FEATURE_LENGTH`). `alternativeTo`: 1 to 5 names of well-known products or services the app can replace, such as "Google Analytics", each at most 40 characters, each once, and a name rather than a URL (`appAlternativesSchema`, `MAX_APP_ALTERNATIVES`, `MAX_APP_ALTERNATIVE_LENGTH`). Repeats are found ignoring case.
-  
-  Like `tagline`, `licenseNote` and `authors`, both need no revision: they join `INDEX_ONLY_CATALOG_FIELDS`, and `REVISABLE_CATALOG_FIELDS` so a later revision may carry whatever copy is current. Index rows carry them as `features` and `alternativeTo`, written only when the manifest lists them; the row schema takes any non-empty strings there, so a later change to the manifest's limits cannot make a reader leave the app out. Managers from before this release strip both keys from manifests and index rows, as they strip any key they do not know; the packer and catalog checks refuse them until they run this release.
+- Catalog manifests take optional `features` (3 to 6 lines on what the app does) and `alternativeTo` (1 to 5 products it can replace).
+- Both need no revision and are carried in index rows (`appFeaturesSchema`, `appAlternativesSchema`).
 
-### Patch Changes
+### Changed
 
-- 89a6581: The manifest's `revision` description now says that on an entry that already publishes a revision, editing `tagline`, `features`, `alternativeTo`, `licenseNote` or `authors` needs a higher revision too.
+- The `revision` description says editing `tagline`, `features`, `alternativeTo`, `licenseNote` or `authors` needs a higher revision too.
 
 ## 0.4.0
 
-### Minor Changes
+### Added
 
-- bfb0d36: `install.emailRouting.worker` names the Worker of `install.workers` that receives an app's mail (`emailRoutingWorkerProblems`; `emailScriptName` gives its installed name, `installedScriptNames` every Worker name of an install). `{{emailDomain}}` and `{{emailZoneId}}` are placeholders for the zone an app with `install.emailRouting` receives email for, in var defaults, wrangler config vars, service binding props and post-install notes, refused in an entry without `install.emailRouting` (`EMAIL_PLACEHOLDERS`, `usesEmailPlaceholders`); placeholders in a JSON value's keys are filled in too (`mapJsonText`, `jsonTexts`), and an entry that writes any placeholder in an object key of a JSON var or of service binding props must list `email-placeholders` in `requires` (`placeholderInJsonKey`, `jsonKeys`), since older managers fill in values only. `resources.hyperdrive[binding].caching` turns Hyperdrive query caching on or off. Each comes with a `requires` value naming the manager feature, `email-worker`, `email-placeholders` and `hyperdrive-caching`, which the catalog checks require where the field or placeholder is used (`managerFeatureProblems`), so managers from before them leave such entries out; a revision may add `email-placeholders`.
-- a3b88f6: A catalog entry with `"plan": "free"` may list up to 24 Workers in `install.workers`, like any entry: the rule that an entry of more than three Workers must say `"plan": "paid"` is gone from the schema, its JSON Schema and the descriptions there. `MAX_FREE_PLAN_ENTRY_WORKERS` now equals `MAX_ENTRY_WORKERS` and is deprecated; it stays for one release for tools that read it by name.
-  
-  Managers from before this release refuse such an entry's release and install at most three Workers per app on Workers Free, so an index row can now name a manager feature in `requires` besides account capabilities: `MANAGER_FEATURES.spreadJobs` (`"manager:spread-jobs"`). Code that writes a catalog index should write `indexRequires(manifest)` instead of the manifest's `requires`; it adds the feature for a `"free"` entry of more than `ONE_INVOCATION_FREE_WORKERS` (three) Workers. Managers from before this release leave such a row out of their catalog and ask to be updated, as for any value they do not know. `indexAppSchema` and `indexJsonSchema` keep the value, so an index parsed and written again still carries it (their parsed types are now `PublishedIndexApp` and `PublishedIndexJson`); a reader drops the features it has with `readIndexApp` or `readIndexJson`, whose `IndexApp` and `IndexJson` list account capabilities only in `requires`, as before. A manager feature never goes in a catalog manifest.
-- fe88b64: A catalog entry's `tokenPermissions` may ask for the account group `Images` (template key `images`; "Images Read" and "Images Write" in Cloudflare's permission group list), for apps that call the Cloudflare Images REST API with a token of their own. A Worker's Images binding needs no token. Managers from before this release read the group too, as they read any group name, and list it for the admin to add by hand in the token form instead of selecting it; the packer and catalog checks refuse it until they run this release.
-- f6cab63: A catalog secret may have a `key` of its own, so an entry of several Workers can give each Worker its own value under one name (each gatekeeper's `CLIENT_ID`, say): the key is what the forms, the install's records, `derive.from`, seed params and a Pipelines sink's `tokenSecret` go by, and it defaults to the name (`secretKey`, `hasOwnSecretKey`). Secrets of one name must each list `workers`, and no Worker may get two of them; keys are unique (`secretKeyProblems`). A config patch may now set a var to text, with the placeholders a var's default takes, besides removing one; may add a Workers AI binding (`ai: { binding }`, only to a config without one); and may give a service binding to a Worker of the entry `props` (`configPatchManifestProblems`). Self and entry service bindings in an artifact may carry `props` (`serviceBindingPropsSchema`). A patched var may not share its name with a secret or a catalog var that goes to the same Worker. `requires` takes three values that name a manager feature rather than an account capability, `secret-keys`, `service-props` and `config-patch-values` (`MANAGER_FEATURE_REQUIREMENTS`, `accountRequirements`): the catalog checks require them where a key, props, patched var text or a patched `ai` binding is used, and a manager from before them leaves such an entry out of its catalog. A revision may add `secret-keys` with keys on the secrets it adds, never change a released secret's key (`secretKeysRevisionProblem`).
-- 03b5bd1: A config patch may drop `mtls_certificates` (`"mtls_certificates": null`), which Appflare cannot install, since a certificate is uploaded to one account with its private key, and may drop a top-level key the packer's wrangler does not know (`"email": null`). The packer refused both before with no way for a catalog entry to leave them out. Managers from before this release refuse an artifact whose config patch drops either, so an entry that needs one installs only on managers that run this release.
-- f71f0b9: An artifact Worker may record the settings its wrangler config gives each Workflow it defines, as `worker.workflowSettings` keyed by binding: `limits.steps`, `concurrency.limit`, `schedules` (always a list of cron expressions) and `default_retention` (`success_retention`, `error_retention`, in milliseconds or a duration such as `"3 days"`), with the names and checks wrangler uses (`workflowSettingsSchema`, `WORKFLOW_SETTING_KEYS`). The artifact checks refuse settings recorded for a binding the Worker does not have or for one that runs another Worker's Workflow (`workflowSettingsProblems`), and a Workflow on a schedule unless the catalog manifest says `"plan": "paid"`, since Cloudflare runs scheduled Workflows only on Workers Paid (`scheduledWorkflowPlanProblem`). The artifact format stays 1: a manager from before this field strips it and creates the Workflows with Cloudflare's defaults.
+- `install.emailRouting.worker` names the Worker that receives an app's mail; `{{emailDomain}}` and `{{emailZoneId}}` name its email zone.
+- `resources.hyperdrive[binding].caching` turns Hyperdrive query caching on or off.
+- A catalog secret may have its own `key`, so each Worker of an entry can get its own value under one name.
+- Config patches may set a var to text, add a Workers AI binding, give a service binding `props`, and drop `mtls_certificates` or an unknown key.
+- `worker.workflowSettings` records each Workflow's limits, concurrency, schedules and retention (`workflowSettingsSchema`).
+- `tokenPermissions` may ask for the account group `Images`.
+- `requires` can name manager features, such as `secret-keys` or `email-worker`, so older managers leave such entries out.
 
-### Patch Changes
+### Changed
 
-- bfb0d36: `{{emailDomain}}` and `{{emailZoneId}}` are now refused in an entry without `install.emailRouting`, in var defaults, config patches, post-install notes and the wrangler config's vars and service binding props. Before, they were not placeholders and were passed to the app as written; an entry that used that text for its own purposes must rename it or receive email.
-- db52a31: `SANDBOX_CONTAINERS` lists the sandbox Worker's two new container classes for the installers of self-deploying apps, with the container applications `appflare-sandbox-self-deploying-standard-1` and `appflare-sandbox-self-deploying-standard-2` (up to two instances each), and every entry now says which runs it serves (`use`: `build` or `self-deploying`).
+- A `"plan": "free"` entry may list up to 24 Workers; `indexRequires(manifest)` adds `manager:spread-jobs` for more than three.
+- `MAX_FREE_PLAN_ENTRY_WORKERS` now equals `MAX_ENTRY_WORKERS` and is deprecated.
+- A Workflow on a schedule needs `"plan": "paid"` (`scheduledWorkflowPlanProblem`).
+- `{{emailDomain}}` and `{{emailZoneId}}` are refused in an entry without `install.emailRouting`.
+- `SANDBOX_CONTAINERS` lists two container classes for self-deploying installers, and each entry says which runs it serves (`use`).
 
 ## 0.3.0
 
-### Minor Changes
+### Added
 
-- c900272: Catalog secrets and vars take an optional `link`, `{ "label", "url" }`, shown beside the field in the install, update and settings forms, such as `{ "label": "Get a key", "url": "https://openrouter.ai/settings/keys" }`. `label` is one line of at most 40 characters without leading or trailing spaces; `url` is an https:// URL of at most 500 characters without spaces, user name or password (`catalogFieldLinkSchema`, `CatalogFieldLink`). Help text stays plain text.
-  
-  A catalog manifest takes an optional top-level `openPath`, such as `"/dashboard"`: where the manager's Open buttons go within the app. It is a path only, at most 128 characters: it starts with `/`, has no query, fragment, empty, `.` or `..` segment, holds letters, digits and `- . _ ~ @ : + = ,`, and may end in `/`; `/` alone is refused (`openPathSchema`, `openPathProblem`, `OPEN_PATH_PATTERN`). `appOpenUrl(address, openPath)` puts it after an app's address. Health checks and `{{appUrl}}` stay the root.
-  
-  A catalog revision may add, change or remove both: `openPath` joins `REVISABLE_CATALOG_FIELDS`, and a `link` is part of `secrets` and `vars`, which a revision could already change. Managers from before this release strip both keys, as they strip any key they do not know, so an entry may use them without a new requirement: such a manager shows the field without its link and opens the app at its root. The packer and catalog checks refuse both keys until they run this release.
+- Catalog secrets and vars take an optional `link`, `{ "label", "url" }`, shown beside the field (`catalogFieldLinkSchema`).
+- A catalog manifest takes an optional `openPath`, such as `"/dashboard"`, where the Open buttons go (`openPathSchema`, `appOpenUrl`).
 
-### Patch Changes
+### Changed
 
-- afbe792: The descriptions of `bump` and `bump.autoMerge` follow the catalog's new rule. The catalog checks that each upstream release builds, matches its hashes and installs, and users decide whether to update, so the catalog's bump bot reads `autoMerge` from the manifest file itself: left out or `true`, a bump of an artifact tier entry that does not set `source.version` merges itself once the required checks pass; `"bump": { "autoMerge": false }` opts out. Sandbox and self-deploying entries are never merged by the bot and still may not set `true`. Parsing is unchanged: the parsed value still defaults to `false`, only so that released catalog manifests keep their bytes, and it does not mean the entry opts out.
-  
-  `codemod-manifest-v1` now keeps an explicit `"bump": { "autoMerge": false }` instead of dropping it as the default, since dropping it would now let the entry's bumps merge themselves.
-- 482eb0b: Correct the description of `definesWorkflow`: uploading a Worker does not create its Workflows; whoever deploys it creates them with a separate call.
+- The descriptions of `bump` and `bump.autoMerge` follow the catalog's new rule; parsing is unchanged.
+- `codemod-manifest-v1` keeps an explicit `"bump": { "autoMerge": false }`.
+
+### Fixed
+
+- The description of `definesWorkflow` no longer says that uploading a Worker creates its Workflows.
 
 ## 0.2.0
 
-### Minor Changes
+### Added
 
-- b2e7bfd: A catalog manifest can now say how its app goes with Cloudflare Access, in an optional `access` block. `"mode": "required"` means the app is installed only behind Access and its protection cannot be turned off; `"mode": "recommended"` starts the install form's protection switch on; without a mode protection is offered, switched off. `"bypass"` lists up to 10 paths that stay public while the app is protected, such as `"/s/*"` or `"/api/webhook"`: each starts with `/`, may end in `/*`, and has no other wildcard, query or fragment; `/` and `/*` are refused, and so is a path listed twice. The block is refused on the self-deploying tier, and the JSON Schema says so too. `accessOfferOf` and `accessBypassPaths` read it.
-  
-  Four new placeholders, for a var's value only: `{{accessTeamDomain}}` (`<team>.cloudflareaccess.com`), `{{accessTeamName}}` (the `<team>` alone, for an app that builds `https://<team>.cloudflareaccess.com` itself), `{{accessAud}}` (the audience tag of the app's Access application) and `{{accessCertsUrl}}` (`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`). All four are empty while the app is not protected. `postInstall` text does not take them; its placeholders are exported as `POST_INSTALL_PLACEHOLDERS`, and `PlaceholderValues` takes the protection as `access` (its `teamName` is worked out from `teamDomain` when absent, see `accessTeamNameOf`).
-  
-  `requires` takes a new value, `"access"`, and an entry must list it when its `access.mode` is `"required"` or a var (a catalog default, or a value in the app's wrangler config) uses an Access placeholder. Without `"mode": "required"` it holds only while the app is protected (`accessNeededOnlyIfProtected`): the app still installs unprotected anywhere. A manager from before this release strips the `access` block and leaves the placeholders as written, but its index schema does not know the `"access"` requirement, so it leaves such an entry out of its catalog instead of installing it unprotected.
-  
-  Index rows take an optional `accessOffer` (`"required"`, `"recommended"` or `"offered"`, from the entry's revised catalog manifest; see `indexAccessOffer`), a plain string so a later value never drops a row. `indexAccessNeededOnlyIfProtected` reads it: a row without it counts its `"access"` as always needed. Managers that predate it strip it, since index rows are parsed as plain objects.
-  
-  A catalog revision may now add, change or remove the `access` block, and add `"access"` to `requires` (nothing else about `requires`; `requirementsRevisionProblem` says why a change is refused), so a released app can take up Access without a new pin. The revised manifest is parsed like any other, so its placeholders and `access.mode` still need the requirement.
-  
-  Rollout: release this schema first, move the catalog's checks and its index generator onto it, and only then let entries use `access` or the new placeholders.
-- 1fa72de: An app of several Workers may run a Workflow that another of its Workers defines. A Workflow binding's `script_name` recorded as `{{workerName:<name>}}` now counts as a binding to that Worker (`bindingEntryRefs`), so the Worker that defines the Workflow is deployed first. The artifact checks require that Worker to define a Workflow of the same name and class, and refuse two Workers that define one Workflow. New helpers: `definesWorkflow(binding)` and `upstreamWorkflowName(binding)`.
+- An optional `access` block says how an app goes with Cloudflare Access: a `mode` and `bypass` paths that stay public (`accessOfferOf`, `accessBypassPaths`).
+- Var placeholders `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and `{{accessCertsUrl}}`, empty while the app is not protected.
+- `requires` takes `"access"`, and index rows take an optional `accessOffer` (`indexAccessOffer`).
+- A revision may change the `access` block and add `"access"` to `requires` (`requirementsRevisionProblem`).
+- A Workflow binding may name another Worker of the entry as `{{workerName:<name>}}`, with `definesWorkflow` and `upstreamWorkflowName`.
 
-### Patch Changes
+### Changed
 
-- b2e7bfd: The description of `install.health.mode` now says that Cloudflare Access's own sign-in redirect never counts as the app serving, under either mode, and that `"any-response"` is for apps whose health path asks for a sign-in, their own or one they check from Cloudflare Access.
+- The `install.health.mode` description says Cloudflare Access's sign-in redirect never counts as the app serving.
 
 ## 0.1.0
 
-### Minor Changes
+### Added
 
-- 346d608: The first public release of the schemas Appflare's manager, installer and catalog share. It defines version 1 of the catalog manifest (`appflare.jsonc`), the release artifact and the catalog index, as Zod schemas and as a JSON Schema for editors. It also carries the fixed list of catalog categories and the public keys that verify signed releases.
+- **First public release.** Zod schemas and a JSON Schema for version 1 of the catalog manifest (`appflare.jsonc`), the release artifact and the catalog index.
+- The fixed list of catalog categories and the public keys that verify signed releases.
