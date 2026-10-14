@@ -455,11 +455,17 @@ const managerAddress =
  * no longer accepts, or which (`?fixture=connection-missing-permission`) was
  * not allowed R2 storage.
  */
-const signInMissing = variant === "connection-missing-permission" ? ["workers-r2.write"] : [];
+const signInMissing =
+  variant === "connection-missing-permission"
+    ? ["workers-r2.write"]
+    : variant === "usage-reconnect"
+      ? ["account-analytics.read"]
+      : [];
 const connection: ConnectionView =
   variant === "connection-oauth" ||
   variant === "connection-needs-reconnect" ||
-  variant === "connection-missing-permission"
+  variant === "connection-missing-permission" ||
+  variant === "usage-reconnect"
     ? {
         kind: "oauth",
         state: variant === "connection-needs-reconnect" ? "needs_reconnect" : "connected",
@@ -498,7 +504,7 @@ const rowsConnection: RowsConnection = {
  * row (Reconnect Cloudflare) is the one pictured.
  */
 function accountRowsFixture() {
-  return variant === "connection-missing-permission"
+  return variant === "connection-missing-permission" || variant === "usage-reconnect"
     ? accountAttentionRows(
         // The fixture's capabilities are plain literals; the server functions return them as is.
         { ...capabilityRows, connection: rowsConnection } as unknown as CapabilityRowsInput,
@@ -547,6 +553,10 @@ function spendFixture(): SpendProtectionData {
         },
         overview: { apps: appsNamed() },
       });
+    case "usage-reconnect":
+      return spendData({
+        overview: { missingScopes: ["account-analytics.read"], apps: appsNamed() },
+      });
     case "spend-free":
       return spendData({
         overview: { plan: "free", bill: { now: 0.42, projected: 1.3 }, apps: appsNamed() },
@@ -573,12 +583,13 @@ function usageFixture(): UsageAttention[] {
           kind: "unusual",
           installId: "install-statusbeam",
           plan: "paid",
-          since: at - 1.5 * hour,
+          // The loop of Home's chart and the Usage tab: 4.4M an hour at $0.15 per million.
+          since: at - 2.7 * hour,
           product: "do_requests",
-          perHour: 2_880_000,
+          perHour: 4_400_000,
           times: 3000,
-          burnPerHour: 3.2,
-          spentToday: 4.85,
+          burnPerHour: 0.66,
+          spentToday: 1.8,
           freeShare: null,
           sentTo: ["Telegram", "Slack"],
         },

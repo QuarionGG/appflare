@@ -116,6 +116,8 @@ async function openPage(port, width, height) {
     deviceScaleFactor: 2,
     mobile: width < 600,
   });
+  // Usage periods and caps reset at 00:00 UTC, so the pictures show UTC times, as the docs do.
+  await page.send("Emulation.setTimezoneOverride", { timezoneId: "UTC" });
   await page.send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-color-scheme", value: "light" }],
   });
@@ -222,13 +224,61 @@ async function replaceText(page, from, to) {
   if (count === 0) throw new Error(`Text missing: ${from}`);
 }
 
+/** ECharts draws a chart's series over about a second; a shot of one waits this long. */
+const CHART_WAIT = 1500;
+
 const shots = [
+  {
+    // Needs attention on Home while Service status runs an alarm loop.
+    name: "usage-needs-attention",
+    path: "/?fixture=usage-runaway",
+    expected: "using far more than usual",
+    cropSelector: "#needs-attention",
+  },
+  {
+    // An app's Usage tab while it runs far above its normal after a settings change.
+    name: "usage-app-runaway",
+    path: "/apps/install-statusbeam?tab=usage&fixture=usage-runaway",
+    expected: "Usage by product",
+    viewportHeight: 1400,
+    wait: CHART_WAIT,
+    cropBottomSelector: "#usage",
+  },
+  {
+    // The front page's spend protection card: the same loop, from the tab's
+    // banner to its chart, at a width that fits the card's 16:10 frame.
+    name: "landing-spend",
+    path: "/apps/install-statusbeam?tab=usage&fixture=usage-runaway",
+    expected: "Usage by product",
+    viewportWidth: 1100,
+    viewportHeight: 1400,
+    wait: CHART_WAIT,
+    cropTopSelector: ":has(+ #usage)",
+    cropBottomSelector: "#usage [_echarts_instance_]",
+  },
+  {
+    // The Usage tab's spend protection of an app paused past its own daily cap.
+    name: "usage-app-spend-protection",
+    path: "/apps/install-statusbeam?tab=usage&fixture=usage-paused",
+    expected: "Pause automatically",
+    viewportHeight: 2400,
+    cropSelector: "#spend-protection",
+  },
+  {
+    // Home on a sign-in connection made before usage needed Account Analytics.
+    name: "usage-reconnect-home",
+    path: "/?fixture=usage-reconnect",
+    expected: "New permission for usage",
+    viewportHeight: 1400,
+    cropBottomSelector: "#usage",
+  },
   {
     name: "home-dashboard",
     path: "/",
     expected: "Needs attention",
     // Usage sits between "Needs attention" and the cards.
     viewportHeight: 2000,
+    wait: CHART_WAIT,
     cropBottomSelector: "#your-apps",
   },
   {
@@ -522,6 +572,16 @@ try {
         if (bottom === null || bottom > (shot.viewportHeight ?? 900) - 16)
           throw new Error(`${shot.name}: whole install card does not fit in viewport`);
         crop.height = Math.ceil(bottom + 16);
+      }
+      // Starts the crop at an element, leaving out what is above it.
+      if (shot.cropTopSelector) {
+        const top = await page.evaluate(`(() => {
+          const element = document.querySelector(${JSON.stringify(shot.cropTopSelector)});
+          return element?.getBoundingClientRect().top ?? null;
+        })()`);
+        if (top === null) throw new Error(`${shot.name}: crop top element missing`);
+        crop.top = Math.max(0, Math.floor(top - 16));
+        crop.height -= crop.top;
       }
       const { data } = await page.send("Page.captureScreenshot", {
         format: "png",

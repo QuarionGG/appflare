@@ -87,6 +87,16 @@ describe("the front page", () => {
     expect(html).toContain("Appflare can update itself the same way");
   });
 
+  it("says what Appflare does when an app runs up the bill, with the guide and a picture", () => {
+    const card = /<a[^>]*href="\/guides\/spend-protection\/"[^>]*>([\s\S]*?)<\/a>/.exec(html)?.[1];
+    expect(card).toContain("Spend protection");
+    expect(card).toContain("Automatic pausing is off by default");
+    expect(card).toContain("estimates at Cloudflare&#x27;s list prices");
+    expect(card).toMatch(
+      /<img[^>]*src="\/screenshots\/landing-spend.png"[^>]*width="1672"[^>]*height="1060"/,
+    );
+  });
+
   it("quotes the catalog's own numbers and links each app shown", () => {
     expect(html).toContain(`${data.apps} apps, ready to install`);
     for (const app of data.showcase) expect(html).toContain(`href="/apps/${app.slug}/"`);

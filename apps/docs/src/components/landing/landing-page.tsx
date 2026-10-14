@@ -5,6 +5,7 @@ import catalogAppSrcSet from "../../../public/screenshots/catalog-app.png?w=640;
 import catalogPhoneSrcSet from "../../../public/screenshots/catalog-phone.png?w=384;780&format=webp&as=srcset";
 import jobsLogSrcSet from "../../../public/screenshots/jobs-install-log.png?w=640;960;1280&format=webp&as=srcset";
 import landingHomeSrcSet from "../../../public/screenshots/landing-home.png?w=640;800;1024;1280;1920&format=webp&as=srcset";
+import landingSpendSrcSet from "../../../public/screenshots/landing-spend.png?w=640;960;1280&format=webp&as=srcset";
 import appflareUpdatesSrcSet from "../../../public/screenshots/settings-appflare-updates.png?w=640;960;1280&format=webp&as=srcset";
 import { appPath, appsPath } from "../../catalog/urls.ts";
 import { catalogRepositoryUrl, type LandingData, landingLinks } from "../../lib/landing.ts";
@@ -322,34 +323,54 @@ function Features() {
         title="Everything after the install, handled"
         lead="Appflare owns each install, so it can do what a copied repository cannot."
       />
-      <Link
+      <WideFeature
+        title="Automatic updates"
         href={landingLinks.automaticUpdates}
-        className="mt-12 grid gap-6 overflow-hidden rounded-2xl border border-fd-border bg-fd-card p-6 transition-colors hover:border-fd-foreground/20 md:grid-cols-[2fr_3fr] md:items-center md:gap-10 md:p-10"
+        shot="/screenshots/settings-appflare-updates.png"
+        srcSet={appflareUpdatesSrcSet}
+        alt="Settings, Updates: Automatically update apps, and Automatically update Appflare under Appflare version"
+        width={2352}
+        height={1700}
+        className="mt-12"
       >
-        <div className="grid gap-3">
-          <h3 className="m-0 font-semibold text-2xl tracking-tight">Automatic updates</h3>
-          <p className="m-0 text-fd-muted-foreground">
-            Turn on automatic updates for every app, or app by app. Every 30 minutes Appflare checks
-            the catalog and updates an app on its own when the new version needs nothing from you,
-            with the same snapshot and checks as an update you start. One that needs a new secret or
-            a confirmation waits for you on the app's page.
-          </p>
-          <p className="m-0 text-fd-muted-foreground">
-            Appflare can update itself the same way, when no other job is running.
-          </p>
-        </div>
-        <Shot
-          src="/screenshots/settings-appflare-updates.png"
-          srcSet={appflareUpdatesSrcSet}
-          sizes="(min-width: 1152px) 590px, (min-width: 768px) 55vw, calc(100vw - 80px)"
-          alt="Settings, Updates: Automatically update apps, and Automatically update Appflare under Appflare version"
-          width={2352}
-          height={1700}
-          chrome={false}
-          imgClassName="aspect-[16/10]"
-          className="shadow-none"
-        />
-      </Link>
+        <p className="m-0 text-fd-muted-foreground">
+          Turn on automatic updates for every app, or app by app. Every 30 minutes Appflare checks
+          the catalog and updates an app on its own when the new version needs nothing from you,
+          with the same snapshot and checks as an update you start. One that needs a new secret or a
+          confirmation waits for you on the app's page.
+        </p>
+        <p className="m-0 text-fd-muted-foreground">
+          Appflare can update itself the same way, when no other job is running.
+        </p>
+      </WideFeature>
+      <WideFeature
+        title="Spend protection"
+        href={landingLinks.spendProtection}
+        shot="/screenshots/landing-spend.png"
+        srcSet={landingSpendSrcSet}
+        alt="An app's Usage tab: Durable Objects requests far above normal right after a settings change, about $0.65 an hour, with Pause app, over the 24-hour chart of the jump"
+        width={1672}
+        height={1060}
+        shotFirst
+        className="mt-4"
+      >
+        <p className="m-0 text-fd-muted-foreground">
+          An app with a bug can loop and run up your bill. Every 5 minutes Appflare reads each app's
+          usage from Cloudflare's analytics, and tells you on Telegram, Slack, Discord or a webhook
+          when an hour reaches 5, 20 or 100 times the app's normal, or when a usage alert you wrote
+          comes true.
+        </p>
+        <p className="m-0 text-fd-muted-foreground">
+          Automatic pausing is off by default. Turn it on and Appflare pauses an app that loops. On
+          Workers Paid it also pauses an app past its spending cap for the day, week or month, and a
+          monthly budget pauses the biggest spender. A pause keeps the app's data, bindings and
+          secrets, and Resume puts back the exact versions.
+        </p>
+        <p className="m-0 text-fd-muted-foreground text-sm">
+          On Workers Free, Appflare warns before a free daily limit runs out. Dollar amounts are
+          estimates at Cloudflare's list prices.
+        </p>
+      </WideFeature>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <BigFeature
           title="Every install is a job with a log"
@@ -386,8 +407,8 @@ function Features() {
           One owner, admins who change things, members who can only look. Sign in with a passkey.
         </SmallFeature>
         <SmallFeature title="Notifications" href={landingLinks.notifications}>
-          Updates, finished jobs and failing health checks, sent to Telegram, Slack, Discord or a
-          signed webhook.
+          Updates, finished jobs, failing health checks, unusual usage and paused apps, sent to
+          Telegram, Slack, Discord or a signed webhook.
         </SmallFeature>
         <SmallFeature title="Your apps outlive it" href={landingLinks.faq}>
           Installed apps are ordinary Workers. They keep running if the manager breaks or is
@@ -395,6 +416,58 @@ function Features() {
         </SmallFeature>
       </ul>
     </section>
+  );
+}
+
+/**
+ * A feature across the whole column: its words beside a screenshot on a wide
+ * screen (the screenshot first with `shotFirst`), the words first on a phone.
+ */
+function WideFeature({
+  title,
+  href,
+  shot,
+  srcSet,
+  alt,
+  width,
+  height,
+  shotFirst = false,
+  className = "",
+  children,
+}: {
+  title: string;
+  href: string;
+  shot: string;
+  srcSet: string;
+  alt: string;
+  width: number;
+  height: number;
+  shotFirst?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`grid gap-6 overflow-hidden rounded-2xl border border-fd-border bg-fd-card p-6 transition-colors hover:border-fd-foreground/20 md:items-center md:gap-10 md:p-10 ${shotFirst ? "md:grid-cols-[3fr_2fr]" : "md:grid-cols-[2fr_3fr]"} ${className}`}
+    >
+      <div className="grid gap-3">
+        <h3 className="m-0 font-semibold text-2xl tracking-tight">{title}</h3>
+        {children}
+      </div>
+      <Shot
+        src={shot}
+        srcSet={srcSet}
+        // Three fifths of the 72rem column on a wide screen, less the card's padding.
+        sizes="(min-width: 1152px) 590px, (min-width: 768px) 55vw, calc(100vw - 80px)"
+        alt={alt}
+        width={width}
+        height={height}
+        chrome={false}
+        imgClassName="aspect-[16/10]"
+        className={`shadow-none ${shotFirst ? "md:order-first" : ""}`}
+      />
+    </Link>
   );
 }
 
