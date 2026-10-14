@@ -9,6 +9,7 @@ import {
   MAX_PRODUCT_TABS,
 } from "./home";
 import { DAY_MS, HOUR_MS, type ProductKey } from "./math";
+import { clock, dateTime } from "./ui/format";
 
 // Oct 12, 15:30 UTC: the month began Oct 1, 11 days before today; the chart
 // shows Oct 6 to 11, and today has 16 hours, the last half done.
@@ -106,13 +107,13 @@ describe("Home's usage totals", () => {
       {
         label: "Usage this month",
         value: "$2.85",
-        note: "Past what the $5 plan includes (estimate)",
+        note: "Appflare's apps, past what the $5 plan includes (estimate)",
         bad: false,
       },
       {
         label: "Projected month",
         value: "$66.45",
-        note: "Plan included, if the last day's pace holds",
+        note: "Appflare's apps and the $5 plan, if the last day's pace holds",
         bad: false,
       },
       {
@@ -179,11 +180,51 @@ describe("Home's usage totals", () => {
       {
         label: "Closest daily limit",
         value: "160%",
-        note: "KV writes, shared by every app",
+        note: "KV writes, counted for the whole account",
         bad: false,
       },
       { label: "Apps needing a look", value: "1", note: "Loops, limits and pauses", bad: false },
     ]);
+  });
+
+  it("Free: other usage in the account counts toward the closest limit, as one line", () => {
+    const own = series("a", "d1_rows_written", 0, 900 / HOURS);
+    const v = view(
+      data({
+        plan: "free",
+        bill: { now: 0, projected: 0 },
+        series: [series("a", "workers_requests", 24_000, 1_000), own],
+        account: {
+          workers_requests: { today: 16_000, month: 16_000 },
+          // 900 rows from the app, 89,100 from a database Appflare did not install.
+          d1_rows_written: { today: 90_000, month: 90_000, other: 89_100 },
+        },
+      }),
+    );
+    expect(v.tiles[1]).toEqual({
+      label: "Closest daily limit",
+      value: "90%",
+      note: "D1 rows written: 89% of the limit is other usage in this account (not Appflare apps)",
+      bad: false,
+    });
+    const chart = v.chart("d1_rows_written");
+    expect(chart.caption).toBe("Last 7 days · 90% of today's free limit");
+    // The chart shows Appflare's apps only; the rest is one line under it.
+    expect(chart.series.map((s) => s.installId)).toEqual(["a"]);
+    expect(chart.other).toBe(
+      "Not charted: other usage in this account (not Appflare apps), 89.1K rows today, 89% of today's free limit.",
+    );
+    // Under 1% of the limit is not worth a line.
+    expect(v.chart("workers_requests").other).toBeNull();
+  });
+
+  it("Paid: no line about other usage", () => {
+    const v = view(
+      data({
+        account: { workers_requests: { today: 96_000, month: 1_000_000, other: 50_000 } },
+      }),
+    );
+    expect(v.chart("workers_requests").other).toBeNull();
   });
 
   it("Free: R2 past its free amount can be billed, even on Free", () => {
@@ -227,7 +268,7 @@ describe("Home's usage totals", () => {
     );
     expect(v.tiles[1]).toMatchObject({
       value: "100%",
-      note: "Durable Objects requests, shared by every app",
+      note: "Durable Objects requests, counted for the whole account",
     });
   });
 
@@ -487,18 +528,35 @@ describe("Home's usage on an app card", () => {
     });
   });
 
-  it("a paused app: grey, and Resume", () => {
+  it("a paused app: grey, when it was paused, and Resume", () => {
     const d = data({
       apps: [app("a"), app("b", { paused: true })],
       series: [...data().series, series("b", "do_requests", 2_000_000, 0)],
     });
-    expect(view(d).cards.get("b")).toMatchObject({
+    const pausedAt = NOW - 2 * HOUR_MS;
+    const row: UsageAttention = {
+      kind: "paused",
+      installId: "b",
+      pausedAt,
+      pausedBy: null,
+      cause: null,
+      loopSince: null,
+      stillPastCap: null,
+    };
+    expect(view(d, [row]).cards.get("b")).toMatchObject({
       state: "paused",
       product: "do_requests",
       tone: { kind: "muted" },
-      line: "Paused · no usage since",
+      line: `Paused at ${clock(pausedAt)} · no usage since`,
       action: "resume",
     });
+    // A pause on an earlier day says the day too.
+    const yesterday = NOW - DAY_MS;
+    expect(view(d, [{ ...row, pausedAt: yesterday }]).cards.get("b")?.line).toBe(
+      `Paused on ${dateTime(yesterday)} · no usage since`,
+    );
+    // The pause's time comes from its row; without one, the card says only that.
+    expect(view(d).cards.get("b")?.line).toBe("Paused · no usage since");
   });
 
   it("a brand-new app: no chart yet, and nothing to press", () => {
@@ -544,5 +602,15 @@ describe("Home's usage on an app card", () => {
   it("an app with no requests today says so", () => {
     const d = data({ series: [] });
     expect(view(d).cards.get("a")?.line).toBe("No requests today");
+  });
+
+  it("a share of the account's requests: under 1% when tiny, no share at 0", () => {
+    const account = { workers_requests: { today: 100_000, month: 100_000 } };
+    // 0.1% of the account's requests today: not "0%".
+    const tiny = data({ series: [series("a", "workers_requests", 0, 100 / HOURS)], account });
+    expect(view(tiny).cards.get("a")?.line).toBe("under 1% of today's requests");
+    // Nothing of its own today while the account had requests: no "0%" line.
+    const none = data({ series: [series("a", "workers_requests", 24_000, 0)], account });
+    expect(view(none).cards.get("a")?.line).toBe("No requests today");
   });
 });

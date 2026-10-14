@@ -195,7 +195,9 @@ describe("Home's Usage section", () => {
     const sections = [...container.querySelectorAll("section")].map((s) => s.id);
     expect(sections.indexOf("usage")).toBeLessThan(sections.indexOf("your-apps"));
     const text = section()?.textContent ?? "";
-    expect(text).toContain("Usage this month$2.85Past what the $5 plan includes (estimate)");
+    expect(text).toContain(
+      "Usage this month$2.85Appflare's apps, past what the $5 plan includes (estimate)",
+    );
     expect(text).toContain("Projected month$66.45");
     expect(text).toContain("Burning now$1.03/hMostly Service status");
     expect(section()?.querySelector(".text-kumo-danger")?.textContent).toBe("$1.03/h");
@@ -300,7 +302,7 @@ describe("usage on Home's app cards", () => {
     render(usage(), [PAUSED]);
     const status = card("status");
     expect(status?.querySelector("[data-card-chart]")?.getAttribute("data-tone")).toBe("muted");
-    expect(status?.textContent).toContain("Paused · no usage since");
+    expect(status?.textContent).toMatch(/Paused at \d{1,2}:\d{2}\s?[AP]M · no usage since/);
     expect(buttons(status)).toEqual(["Resume", "Open", "Manage"]);
     // Named with the app, like Open and Manage.
     expect(

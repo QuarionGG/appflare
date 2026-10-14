@@ -2,7 +2,16 @@ import { z } from "zod";
 import { ACCOUNT_PLANS, type AccountPlan } from "../account/plan";
 import { createDb } from "../db/client";
 import type { ResumeWindow } from "./math";
-import { alarmsIn, appsIn, isRecord, need, numberIn, resumesIn, stringsIn } from "./plain-input";
+import {
+  alarmsIn,
+  appsIn,
+  isRecord,
+  need,
+  numberIn,
+  recordIn,
+  resumesIn,
+  stringsIn,
+} from "./plain-input";
 import { readUsage } from "./store/series.server";
 import {
   historyBounds,
@@ -47,6 +56,11 @@ export const checkInputSchema = z.object({
     z.string(),
     z.object({ at: z.number(), base: z.record(z.string(), z.number()) }),
   ),
+  /**
+   * Workers Free: the whole account's use today of what the plan limits per
+   * day, by product (account-day.ts), when the check has a reading of it.
+   */
+  accountToday: z.record(z.string(), z.number()).optional(),
 });
 export type CheckInput = z.infer<typeof checkInputSchema>;
 
@@ -70,6 +84,9 @@ export function parseCheckInput(raw: unknown): CheckInput {
     fresh: stringsIn(r.fresh, "fresh"),
     budget: numberIn(r.budget, "budget"),
     resumes: resumesIn(r.resumes, "resumes"),
+    ...(r.accountToday === undefined
+      ? {}
+      : { accountToday: recordIn(r.accountToday, "accountToday", (n, at) => numberIn(n, at)) }),
   };
 }
 
@@ -92,7 +109,7 @@ export type CheckUnitResult = { ok: true; value: CheckResult } | { ok: false; er
 export async function runCheck(
   env: SpendWatchEnv,
   input: CheckInput,
-  _deps: SpendWatchDeps = {},
+  deps: SpendWatchDeps = {},
 ): Promise<CheckResult> {
   const db = createDb(env.DB);
   const hourNow = Math.floor(input.now / 3_600_000) * 3_600;
@@ -128,8 +145,10 @@ export async function runCheck(
       fresh,
       budget: input.budget,
       resumes: new Map(Object.entries(input.resumes) as Array<[string, ResumeWindow]>),
+      ...(input.accountToday === undefined ? {} : { accountToday: input.accountToday }),
     },
     report,
+    deps,
   );
   return {
     overview,

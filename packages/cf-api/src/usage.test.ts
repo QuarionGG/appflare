@@ -7,6 +7,7 @@ import {
   createUsage,
   USAGE_BATCH_FIELDS,
   USAGE_MAX_ROWS,
+  USAGE_TOTAL_DATASETS,
   type UsageReads,
   UsageRowLimitError,
 } from "./namespaces/usage";
@@ -808,5 +809,179 @@ describe("usage: batched", () => {
     const results = await Promise.allSettled(reads);
     expect(results.every((r) => r.status === "fulfilled")).toBe(true);
     expect(bodies.map((b) => b.fields.length)).toEqual([USAGE_BATCH_FIELDS, USAGE_BATCH_FIELDS, 1]);
+  });
+});
+
+describe("usage: account totals", () => {
+  /** 00:00 UTC of NOW's day. */
+  const DAY = Date.UTC(2026, 9, 12) / 1000;
+  /** Answers as Cloudflare gave on a Workers Free account: one row per dataset, KV one per operation. */
+  const TOTAL_ROWS: Record<string, unknown[]> = {
+    workersInvocationsAdaptive: [{ sum: { requests: 5731 } }],
+    durableObjectsInvocationsAdaptiveGroups: [],
+    durableObjectsPeriodicGroups: [{ sum: { duration: 12.5, rowsRead: 0, rowsWritten: 40 } }],
+    d1AnalyticsAdaptiveGroups: [{ sum: { rowsRead: 723090, rowsWritten: 90152 } }],
+    kvOperationsAdaptiveGroups: [
+      { dimensions: { actionType: "delete" }, sum: { requests: 97 } },
+      { dimensions: { actionType: "read" }, sum: { requests: 2441 } },
+      { dimensions: { actionType: "write" }, sum: { requests: 430 } },
+      { dimensions: { actionType: "list" }, sum: { requests: 24 } },
+    ],
+    queueMessageOperationsAdaptiveGroups: [],
+    workflowsAdaptiveGroups: [{ sum: { stepCount: 128 } }],
+    aiInferenceAdaptiveGroups: [],
+    workersAnalyticsEngineAdaptiveGroups: [{ count: 2 }],
+    browserRenderingBrowserTimeUsageAdaptiveGroups: [{ sum: { totalSessionDurationMs: null } }],
+  };
+
+  it("reads each dataset once for the whole account, with no resource or hour", async () => {
+    const { usage, log } = make((s) => TOTAL_ROWS[s.dataset] ?? []);
+    const { totals, failed } = await usage.accountTotals({ from: DAY });
+    expect(failed).toEqual([]);
+
+    expect(log.map((s) => s.dataset).sort()).toEqual(Object.keys(TOTAL_ROWS).sort());
+    expect(log).toHaveLength(USAGE_TOTAL_DATASETS);
+    for (const s of log) {
+      expect(s.query).not.toContain("datetimeHour");
+      expect(Object.keys(s.variables.filter).sort()).toEqual([
+        "datetime_geq",
+        "datetime_leq",
+        "datetime_lt",
+      ]);
+      expect(s.variables.filter.datetime_geq).toBe("2026-10-12T00:00:00.000Z");
+      expect(s.variables.filter.datetime_lt).toBe("2026-10-12T10:30:00.000Z");
+    }
+    const kv = log.find((s) => s.dataset === "kvOperationsAdaptiveGroups");
+    expect(kv?.query).toContain("dimensions { actionType }");
+    expect(log.find((s) => s.dataset === "d1AnalyticsAdaptiveGroups")?.query).not.toContain(
+      "dimensions",
+    );
+    // Every request is unique, so no answer comes from Cloudflare's cache.
+    expect(new Set(log.map((s) => s.variables.filter.datetime_leq)).size).toBe(log.length);
+
+    const by = (dataset: string, metric: string) =>
+      totals.find((t) => t.dataset === dataset && t.metric === metric)?.value;
+    expect(by("workersInvocationsAdaptive", "requests")).toBe(5731);
+    expect(by("d1AnalyticsAdaptiveGroups", "rowsWritten")).toBe(90152);
+    expect(by("d1AnalyticsAdaptiveGroups", "rowsRead")).toBe(723090);
+    expect(by("kvOperationsAdaptiveGroups", "reads")).toBe(2441);
+    expect(by("kvOperationsAdaptiveGroups", "writes")).toBe(430);
+    expect(by("kvOperationsAdaptiveGroups", "deletes")).toBe(97);
+    expect(by("kvOperationsAdaptiveGroups", "lists")).toBe(24);
+    expect(by("durableObjectsPeriodicGroups", "durationGbs")).toBe(12.5);
+    expect(by("durableObjectsPeriodicGroups", "rowsWritten")).toBe(40);
+    expect(by("workflowsAdaptiveGroups", "steps")).toBe(128);
+    expect(by("workersAnalyticsEngineAdaptiveGroups", "dataPoints")).toBe(2);
+    // No use, no total: an empty answer, a zero, a null.
+    expect(by("durableObjectsPeriodicGroups", "rowsRead")).toBeUndefined();
+    expect(by("durableObjectsInvocationsAdaptiveGroups", "requests")).toBeUndefined();
+    expect(
+      by("browserRenderingBrowserTimeUsageAdaptiveGroups", "sessionDurationMs"),
+    ).toBeUndefined();
+    expect(totals).toHaveLength(11);
+  });
+
+  it("adds up several rows of one metric", async () => {
+    const { usage } = make((s) =>
+      s.dataset === "d1AnalyticsAdaptiveGroups"
+        ? [{ sum: { rowsRead: 1, rowsWritten: 2 } }, { sum: { rowsRead: 3, rowsWritten: 4 } }]
+        : [],
+    );
+    expect((await usage.accountTotals({ from: DAY })).totals).toEqual([
+      { dataset: "d1AnalyticsAdaptiveGroups", metric: "rowsRead", value: 4 },
+      { dataset: "d1AnalyticsAdaptiveGroups", metric: "rowsWritten", value: 6 },
+    ]);
+  });
+
+  it("reads nothing for an empty range", async () => {
+    const { usage, log } = make(() => []);
+    expect(await usage.accountTotals({ from: NOW, to: NOW })).toEqual({ totals: [], failed: [] });
+    expect(log).toHaveLength(0);
+  });
+
+  it("reads only the datasets asked for", async () => {
+    const { usage, log } = make((s) => TOTAL_ROWS[s.dataset] ?? []);
+    const { totals } = await usage.accountTotals({
+      from: DAY,
+      datasets: ["d1AnalyticsAdaptiveGroups", "workersInvocationsAdaptive"],
+    });
+    expect(log.map((s) => s.dataset).sort()).toEqual([
+      "d1AnalyticsAdaptiveGroups",
+      "workersInvocationsAdaptive",
+    ]);
+    expect(totals.map((t) => t.metric).sort()).toEqual(["requests", "rowsRead", "rowsWritten"]);
+    expect(await usage.accountTotals({ from: DAY, datasets: [] })).toEqual({
+      totals: [],
+      failed: [],
+    });
+  });
+
+  it("leaves out a dataset that fails and keeps the others", async () => {
+    const { usage } = make((s) => {
+      if (s.dataset === "aiInferenceAdaptiveGroups") throw new Error("no AI here");
+      return TOTAL_ROWS[s.dataset] ?? [];
+    });
+    const { totals, failed } = await usage.accountTotals({ from: DAY });
+    expect(failed.map((f) => f.dataset)).toEqual(["aiInferenceAdaptiveGroups"]);
+    expect(totals.find((t) => t.metric === "rowsWritten" && t.value === 90152)).toBeDefined();
+  });
+
+  it("fails when every dataset's request fails", async () => {
+    const http = createHttpApi({
+      accountId: ACCOUNT,
+      token: "t",
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            data: null,
+            errors: [{ message: "not authorized", extensions: { code: "authz" } }],
+          }),
+        ),
+    });
+    const error = await createUsage(http, { now: () => NOW_MS })
+      .accountTotals({ from: DAY })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloudflareGraphQLError);
+  });
+
+  it("goes out in the same combined query as the reads started with it", async () => {
+    const bodies: Array<{ query: string; variables: Record<string, Record<string, unknown>> }> = [];
+    const fetch = async (input: string, init?: RequestInit) => {
+      const body = (await new Request(input, init).json()) as (typeof bodies)[number];
+      bodies.push(body);
+      const fields = [...body.query.matchAll(/(\w+): (\w+)\(limit/g)];
+      const account = Object.fromEntries(
+        fields.map(([, alias, dataset]) => [alias, TOTAL_ROWS[dataset ?? ""] ?? []]),
+      );
+      return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const http = createHttpApi({ accountId: ACCOUNT, token: "t", fetch });
+    const usage = createUsage(http, { now: () => NOW_MS }).batched();
+    const [workers, totals] = await Promise.all([
+      usage.workers({ ids: ["a"], from: NOW - 3 * H }),
+      usage.accountTotals({ from: DAY }),
+    ]);
+    expect(bodies).toHaveLength(1);
+    const query = bodies[0]?.query ?? "";
+    // The app's read by resource and hour, then one field per dataset of the totals.
+    expect(query).toContain(
+      "r0: workersInvocationsAdaptive(limit: 10000, filter: $f0) {\n        dimensions { scriptName datetimeHour }\n        sum { requests subrequests errors cpuTimeUs }",
+    );
+    expect(query).toContain(
+      "r1: workersInvocationsAdaptive(limit: 10000, filter: $f1) {\n        sum { requests }\n      }",
+    );
+    expect(query).toContain(
+      "r4: d1AnalyticsAdaptiveGroups(limit: 10000, filter: $f4) {\n        sum { rowsRead rowsWritten }\n      }",
+    );
+    expect(query).toContain("dimensions { actionType }");
+    expect([...query.matchAll(/ r\d+: /g)]).toHaveLength(11);
+    expect(bodies[0]?.variables.f0?.scriptName_in).toEqual(["a"]);
+    expect(bodies[0]?.variables.f4?.datetime_geq).toBe("2026-10-12T00:00:00.000Z");
+    expect(workers).toEqual([]);
+    expect(
+      totals.totals.find((t) => t.metric === "rowsWritten" && t.value === 90152),
+    ).toBeDefined();
   });
 });

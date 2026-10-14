@@ -133,6 +133,11 @@ function ProductChart({ view }: { view: HomeUsageView }) {
       >
         <UsageByAppChart chart={chart} />
       </div>
+      {chart.other !== null && (
+        <Text variant="secondary" size="sm">
+          {chart.other}
+        </Text>
+      )}
     </div>
   );
 }

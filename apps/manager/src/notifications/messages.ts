@@ -4,9 +4,12 @@ import { ACCOUNT_PLANS } from "../account/plan";
 import { appLink, appTabLink } from "../components/app-links";
 import { settingsLink } from "../components/settings-links";
 import { managerSiteLink } from "../site-links";
+import { accountLimitWords } from "../usage/account-limits";
 import { pauseCauseSchema, pauseCauseSentence } from "../usage/attention-cause";
 import {
   fullCount,
+  OTHER_USAGE,
+  otherShareShown,
   PERIOD_NOUN,
   percent,
   productLabel,
@@ -150,6 +153,11 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     runsOutAt: epochMs.nullable(),
     /** The app's share of the account's use of it today. */
     appShare: z.number().min(0).max(1),
+    /**
+     * The share of the account's use of it today that is not from Appflare's
+     * apps (other Workers and resources in the account), when there is some.
+     */
+    otherShare: z.number().min(0).max(1).optional(),
     /** The unix second the UTC day began. */
     day: z.number().int(),
   }),
@@ -181,6 +189,21 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
      * "cut"`); empty when everything is back and the app runs as before.
      */
     left: z.array(z.string().min(1)),
+  }),
+  z.object({
+    /** Workers Free: the whole account used 90% of a free daily limit today, whatever used it. */
+    type: z.literal("usage_account_limit"),
+    product,
+    /** The account's free amount of the product a day. */
+    limit: z.number().positive(),
+    /** What the whole account used of it today. */
+    used: z.number().nonnegative(),
+    /** The share of `used` not from Appflare's apps. */
+    otherShare: z.number().min(0).max(1),
+    /** The Appflare app that used most of it today, and its share of `used`; null when none. */
+    top: z.object({ app: appRef, share: z.number().min(0).max(1) }).nullable(),
+    /** The unix second the UTC day began. */
+    day: z.number().int(),
   }),
   z.object({
     type: z.literal("budget_reached"),
@@ -328,6 +351,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
     case "usage_unusual":
     case "usage_alert":
     case "usage_limit_near":
+    case "usage_account_limit":
     case "app_paused":
     case "app_resumed":
     case "app_pause_failed":
@@ -409,6 +433,7 @@ type UsageFacts = Extract<
       | "usage_unusual"
       | "usage_alert"
       | "usage_limit_near"
+      | "usage_account_limit"
       | "app_paused"
       | "app_resumed"
       | "app_pause_failed"
@@ -476,11 +501,12 @@ function usageMessage(facts: UsageFacts, managerUrl: string | null): Message {
       const { instance } = facts.app;
       const label = productLabel(facts.product);
       const limit = `${fullCount(facts.limit)} free ${label}`;
+      const other = otherShareShown(facts.otherShare);
       if (facts.runsOutAt === null) {
         return {
           title: `Free ${label} used up for today`,
           lines: [
-            `This account used its ${limit} for today, ${percent(facts.appShare)} of them by ${instance}. Cloudflare refuses more until 00:00 UTC, so ${limitEffect(facts.product)} until then.`,
+            `This account used its ${limit} for today, ${percent(facts.appShare)} of them by ${instance}${other === null ? "" : ` and ${percent(other)} by ${OTHER_USAGE}`}. Cloudflare refuses more until 00:00 UTC, so ${limitEffect(facts.product)} until then.`,
             `The Free plan bills nothing; pausing ${instance} stops it happening again tomorrow.`,
           ],
           url: usageUrl(facts.app.installId),
@@ -489,7 +515,7 @@ function usageMessage(facts: UsageFacts, managerUrl: string | null): Message {
       return {
         title: `Free ${label} run out around ${utcClock(facts.runsOutAt)}`,
         lines: [
-          `${instance} is getting ${percent(facts.appShare)} of today's ${label}. When the account's ${limit} for the day are used, ${limitEffect(facts.product)} until 00:00 UTC.`,
+          `${instance} is getting ${percent(facts.appShare)} of today's ${label}${other === null ? "" : `; ${percent(other)} is ${OTHER_USAGE}`}. When the account's ${limit} for the day are used, ${limitEffect(facts.product)} until 00:00 UTC.`,
         ],
         url: usageUrl(facts.app.installId),
       };
@@ -531,12 +557,27 @@ function usageMessage(facts: UsageFacts, managerUrl: string | null): Message {
         url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
       };
     }
+    case "usage_account_limit": {
+      const words = accountLimitWords({
+        product: facts.product,
+        limit: facts.limit,
+        used: facts.used,
+        share: facts.used / facts.limit,
+        otherShare: facts.otherShare,
+        top: facts.top === null ? null : { label: facts.top.app.instance, share: facts.top.share },
+      });
+      return {
+        title: words.title,
+        lines: [words.description],
+        url: managerLink(managerUrl, "/#usage"),
+      };
+    }
     case "budget_reached":
       return {
         title: "Monthly budget reached",
         lines: [
-          `This month's bill is on pace for about ${usd(facts.projected)} at Cloudflare's prices, past the ${usd(facts.budget)} budget (the $5 plan included).`,
-          "Appflare pauses apps, the one with the largest share of this month's usage first, until the bill fits. Apps set to never pause for the budget keep running.",
+          `This month's Appflare usage, including the $5 plan, is on pace for about ${usd(facts.projected)} at Cloudflare's prices, past the ${usd(facts.budget)} budget. It counts Appflare's apps only, not other Workers and resources in the account.`,
+          "Appflare pauses apps, the one with the largest share of this month's usage first, until it fits the budget. Apps set to never pause for the budget keep running.",
         ],
         url: managerLink(managerUrl, settingsLink("account")),
       };

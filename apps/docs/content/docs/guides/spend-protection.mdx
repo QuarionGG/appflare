@@ -4,7 +4,7 @@ description: How Appflare watches what each app uses, the alerts it sends, pausi
 ---
 
 A Worker that loops can run up a bill overnight, or use up a free daily limit that
-every app in the account shares. Appflare reads what each installed app uses every
+the whole account shares. Appflare reads what each installed app uses every
 5 minutes, shows it on Home and on the app's page, tells you when something looks
 wrong, and can pause an app that runs away. Pausing is off until you turn it on.
 
@@ -19,6 +19,11 @@ queues, Workflows, Vectorize indexes, Analytics Engine datasets, container
 applications, and the Browser Run sessions of its Workers. It matches usage to apps by the resources' ids, not by name, and it keeps
 its own hourly history: 45 days of hours and 400 days of daily totals. That history
 outlives a deleted Durable Object namespace, whose analytics Cloudflare deletes with it.
+
+On Workers Free it also reads the whole account's use today of each product with a
+free daily limit, because Cloudflare counts everything in the account against those
+limits, including Workers and databases Appflare did not install. See
+[Free daily limits](#free-daily-limits).
 
 Cloudflare's analytics are a few minutes behind, and they can still change for a
 while. Each check reads the last 3 hours again.
@@ -40,22 +45,29 @@ All money is an estimate: usage times Cloudflare's list price. See
 
 ### Home
 
-**Usage** sits above **Your apps**. It covers the whole Cloudflare account, by app.
+**Usage** sits above **Your apps**. It covers the Cloudflare account's apps, by app.
 
-- On Workers Paid, three totals: **Usage this month** (what the account used past what
-  the $5 plan includes), **Projected month** (the bill with the $5 plan, if the last
+- On Workers Paid, three totals: **Usage this month** (what Appflare's apps used past
+  what the $5 plan includes), **Projected month** (that with the $5 plan, if the last
   day's pace holds) and **Burning now** (what every app's activity costs an hour at list
   price, before included usage). Paused apps count as using nothing more, and removed
-  apps count only for what they used before.
+  apps count only for what they used before. Workers and resources Appflare did not
+  install are not counted, so these are not the account's whole bill.
 - On Workers Free: **Can be billed** ($0, unless R2 is past its free amount, see
   [below](#workers-free-and-workers-paid)), **Closest daily limit** (the free daily
-  limit the account has used most of today) and **Apps needing a look**.
+  limit the account has used most of today, everything in the account counted, with
+  how much of it is other usage in this account, not Appflare apps) and **Apps needing
+  a look**.
 - A chart of the last 7 days, hour by hour, for the product you pick in the tabs above
   it, stacked by app with one color per app. Past six apps, the smallest share one
-  color as **Other apps**.
+  color as **Other apps**. On Workers Free, a line under the chart gives today's other
+  usage in this account (not Appflare apps) of the product's daily limit, which the
+  chart does not show.
 
 Each app's card adds a small 7-day chart of its most telling product and one line on
-its usage, such as "12% of today's requests" or "Paused · no usage since". The chart
+its usage, such as "12% of today's requests" ("under 1%" for a tiny share, and "No
+requests today" when it has none) or "Paused at 10:00 AM · no usage since" (with the
+date when it was paused on an earlier day). The chart
 turns red when the app runs far above its normal or used up a free daily limit, and
 grey while it is paused. In those cases the card also leads with **Pause** or
 **Resume** for admins.
@@ -68,9 +80,13 @@ Spend protection puts its rows at the top of **Needs attention** on Home:
   a lot** ([unusual usage](#unusual-usage)), with **Pause app**;
 - a free daily limit **used up** for today, with **Pause app**;
 - an app that is **paused**, with **Resume**;
-- a free daily limit **about to run out** today, with **See usage**.
+- a free daily limit **about to run out** today, with **See usage**;
+- on Workers Free, the whole account **near a free daily limit** (90% used) or past
+  it, whatever used it, with **See usage**
+  ([free daily limits](#free-daily-limits)).
 
-The sidebar and the app's card show a dot for each.
+The sidebar and the app's card show a dot for each app's row. The account's row is not
+an app's, so it has no dot, but it counts on the sidebar's Home item like every row.
 
 ### The app's Usage tab
 
@@ -85,7 +101,9 @@ Every installed app's page has a **Usage** tab, after **Overview**.
 - A table of every product the app uses: the last 24 hours, today, this month, where
   the month is heading (**Projected**), how much of what the plan includes the account
   has used (or of the free limit, on Workers Free), and on Workers Paid the app's part
-  of the **Cost past included**. Select a row to chart it.
+  of the **Cost past included**. Select a row to chart it. On Workers Free, a daily
+  limit's share counts the whole account, and a line under the table says how much of
+  it is other usage in this account (not Appflare apps).
 - **Spend protection**: the app's own [alerts](#alerts) and
   [automatic pausing](#pause-apps-automatically), and for admins **Pause app** while
   the app is running.
@@ -170,18 +188,46 @@ On Workers Free, a usage alert is a share of a free daily limit, for today only,
 as "When it is on pace to use 50% of a free daily limit by the end of the day". Dollar
 alerts and weeks or months do not apply there and show **Not used**.
 
-### Free daily limit running out
+### Free daily limits
 
 On Workers Free, the daily limits belong to the account, not to an app: 100,000 Worker
-requests a day are shared by every app. Once one is used up, Cloudflare refuses more
-until 00:00 UTC, so apps that need it fail until then. The limits are in the
+requests a day are shared by every Worker in the account. They count everything in the
+account, including what Appflare did not install: Workers you deployed yourself, other
+databases and namespaces, test or CI deployments, and Appflare's own Worker. Once a
+limit is used up, Cloudflare refuses more until 00:00 UTC, so Appflare's apps that need
+it fail until then too, whatever used it up. The limits are in the
 [table below](#what-the-numbers-are).
+
+So on every check, Appflare reads the whole account's use today of each product with a
+daily limit, along with its apps' usage. It uses that total wherever a daily limit is
+judged or shown: **Closest daily limit** on Home, the share of the free limit on an
+app's **Usage** tab, and the alerts below. The part that is not from Appflare's apps
+shows as other usage in this account (not Appflare apps). Appflare keeps only today's
+total of it: it does not chart it, keep its history, split it by Worker, or cap or
+pause anything that is not Appflare's. Workers AI is counted for the whole account and
+shared by the apps that bind it, so it never shows other usage.
 
 When the account is on pace to use up a daily limit before 00:00 UTC, Appflare tells
 you about the app using most of it (**Free daily limit running out**,
-`usage_limit_near`). Each app gets at most one such message a day, about the limit
-closest to running out; another limit, used most by another app, sends its own. Home shows when it runs out at this pace, then that it is used
-up. R2 has no daily limit: it bills past its monthly free amount instead.
+`usage_limit_near`), with that app's share of the account's use and how much of it is
+other usage. Each app gets at most one such message a day, about the limit closest to
+running out; another limit, used most by another app, sends its own. Home shows when it
+runs out at this pace, then that it is used up. Appflare has no history of the other
+usage, so its pace counts only Appflare's apps: other usage that keeps growing shows as
+used up once the limit is reached. R2 has no daily limit: it bills past its monthly
+free amount instead.
+
+Once the whole account has used 90% of a daily limit, Appflare also warns about the
+account, whatever used it: a row in **Needs attention** and a message (**Account near a
+free daily limit**, `usage_account_limit`), such as "This account has used 90% of today's
+free D1 rows written (90.3K of 100K), mostly other usage in this account. Cloudflare stops D1 for
+the whole account when it runs out, until 00:00 UTC." It says who used most of it:
+"mostly other usage in this account", or the Appflare app that did. The row turns into "used up" if
+the limit runs out. A channel hears about a limit once a day, from whichever warning
+comes first among the events it receives: a channel that gets both the app's and the
+account's is told once, and a channel that gets only one of them always hears that one.
+Home shows the account's row in place of an app's row saying the same limit is about to
+run out.
 
 ## Pause an app
 
@@ -323,23 +369,27 @@ running. The dialog links to the app's cap if you would rather change it.
 ## Monthly budget
 
 On Workers Paid, **Settings > Your account > Spend protection > Monthly budget** keeps
-the whole account's bill under an amount: "Keep this month's bill under $50 including
-the $5 plan". It is off by default, and the amount starts at $50 when you turn it on.
+this month's Appflare usage under an amount: "Keep this month's Appflare usage under
+$50 including the $5 plan". It is off by default, and the amount starts at $50 when you
+turn it on.
 
-The bill it counts is the $5 plan plus the account's usage past what the plan
-includes, projected to the end of the month at the current pace. It is the part a
-pause can lower, unlike the list-price spend of usage alerts and caps.
+What it counts is the $5 plan plus Appflare's apps' usage past what the plan includes,
+projected to the end of the month at the current pace. It is the part a pause can
+lower, unlike the list-price spend of usage alerts and caps. It counts only Appflare's
+apps: Workers and resources Appflare did not install are not read on Workers Paid, so
+the account's real bill can be higher. For a check on the whole bill, see
+[Cloudflare's budget alerts](#what-the-numbers-are).
 
-When the projected bill reaches the budget, Appflare tells you once that month
+When the projection reaches the budget, Appflare tells you once that month
 (**Monthly budget reached**, `budget_reached`) and pauses the app with the largest
 projected share of the month's usage past included. It pauses one app per check, every
 5 minutes, until the projection fits, counting paused apps as stopped. The budget pauses
-apps even when their automatic pausing is off. The section shows the bill against the
-budget, and which app it would pause first.
+apps even when their automatic pausing is off. The section shows this month's Appflare
+usage against the budget, and which app it would pause first.
 
 An app that costs more to stop than to pay for can opt out: on its **Usage** tab, tick
-**Never pause this app for the budget**. Its usage still counts toward the bill, so
-Appflare pauses other apps first. When no app Appflare may pause adds to the bill, the
+**Never pause this app for the budget**. Its usage still counts toward the budget, so
+Appflare pauses other apps first. When no app Appflare may pause adds to it, the
 budget pauses nothing more.
 
 ## Workers Free and Workers Paid
@@ -352,9 +402,10 @@ Dollar alerts, spending caps and the monthly budget all apply.
 
 On **Workers Free**, Cloudflare cannot bill you for Workers: past a daily limit it
 refuses instead. So there is no spending cap and no monthly budget. Usage alerts and the
-loop check measure shares of the free daily limits, and Appflare warns before a limit
-runs out. R2 is the exception: it bills past its free amount on any plan, so Home's **Can
-be billed** shows what R2 costs when an app is past it.
+loop check measure an app's shares of the free daily limits, and Appflare warns before
+a limit runs out, counting the whole account's use of it. R2 is the exception: it bills
+past its free amount on any plan, so Home's **Can be billed** shows what R2 costs when
+an app is past it.
 
 ## Permissions
 
@@ -382,8 +433,8 @@ Once it has the permission, spend protection starts with the first numbers it re
 
 Every amount is usage times Cloudflare's list price. It is an estimate, not your bill:
 Cloudflare rounds some meters up, and **Billing** in the Cloudflare dashboard has the
-real amounts. **Cost past included** and the monthly bill split the account's usage
-past included across apps by each app's share of each product.
+real amounts. **Cost past included** and this month's Appflare usage split the apps'
+usage past included across apps by each app's share of each product.
 
 Appflare estimates with these prices and allowances, from Cloudflare's pricing pages:
 
@@ -427,8 +478,10 @@ Some usage cannot be told apart by app, or is not counted at all:
 - **Workers Logs** are not counted. Cloudflare bills them per log event today, and from
   December 1, 2026 under its Observability pricing.
 - **Anything Appflare did not install**, such as Appflare's own Worker or Workers you
-  deployed yourself, is not read. It still uses the account's included usage and free daily limits, so the
-  account's real totals can be higher than Appflare's.
+  deployed yourself, is not split by app. On Workers Free, Appflare reads the account's
+  total for each daily limit, so the limits count it as other usage in this account
+  (not Appflare apps). On Workers Paid it is not read: it still uses the account's
+  included usage, so the account's real totals and bill can be higher than Appflare's.
 
 For a check that does not depend on Appflare, Cloudflare can email you when the
 account's usage-based spend for the billing period passes an amount. In the Cloudflare

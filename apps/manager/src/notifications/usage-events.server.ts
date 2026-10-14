@@ -6,7 +6,7 @@ import type { PauseCause } from "../usage/attention-cause";
 import { dayStart, freeDailyLimit, type Period, type ProductKey } from "../usage/math";
 import { appRefOf, type InstallRow, readMessageLabels } from "./events.server";
 import type { NotificationFacts } from "./messages";
-import { type EmitInput, emitEvent, readChannels, wants } from "./outbox.server";
+import { type EmitInput, emitEvent, readChannels, receivers } from "./outbox.server";
 import type { NotificationEvent } from "./schema";
 import { selfNotificationUnits } from "./units";
 
@@ -32,6 +32,12 @@ import { selfNotificationUnits } from "./units";
 interface Base {
   /** When it happened (epoch ms); now by default. */
   at?: number;
+  /**
+   * Channels that receive this other event do not get it, since they hear
+   * about the same free daily limit from that one: an app's warning skips
+   * the channels told by the account's warning, and the other way round.
+   */
+  exceptChannelsWith?: NotificationEvent;
 }
 
 /** The account's plan, when the caller knows it; read from settings otherwise. */
@@ -80,6 +86,8 @@ export type UsageEvent =
       /** Epoch ms; null once it has run out. */
       runsOutAt: number | null;
       appShare: number;
+      /** The share of the account's use that is not from Appflare's apps, when there is some. */
+      otherShare?: number;
     })
   | (Base & {
       type: "app_paused";
@@ -111,6 +119,16 @@ export type UsageEvent =
       cause: PauseCause;
       /** What could not be put back, in words; empty when the app runs as before. */
       left: string[];
+    })
+  | (Base & {
+      /** Workers Free: the whole account used 90% of a free daily limit today. One message per product and UTC day. */
+      type: "usage_account_limit";
+      product: ProductKey;
+      limit: number;
+      used: number;
+      otherShare: number;
+      /** The Appflare app that used most of it today, and its share of `used`. */
+      top: { installId: string; share: number } | null;
     })
   | (Base & {
       type: "budget_reached";
@@ -168,6 +186,8 @@ export function usageEventKey(event: UsageEvent, at: number): string {
     case "app_pause_failed":
       // A pause carried on by another job can fail again: each failed job is news.
       return `app_pause_failed:${event.pauseId ?? "none"}:${event.jobId}`;
+    case "usage_account_limit":
+      return `usage_account_limit:${event.product}:${dayStart(at) / 1000}`;
     case "budget_reached":
       return `budget_reached:${event.monthStart}`;
   }
@@ -224,6 +244,26 @@ async function factsOf(
       monthStart: event.monthStart,
     };
   }
+  if (event.type === "usage_account_limit") {
+    // About the account; the top app is named when it is still installed.
+    const row = event.top === null ? null : await readInstallRow(db, event.top.installId);
+    const top =
+      row === null || event.top === null
+        ? null
+        : {
+            app: appRefOf(row, await readMessageLabels(db, [row])),
+            share: Math.min(1, Math.max(0, event.top.share)),
+          };
+    return {
+      type: "usage_account_limit",
+      product: event.product,
+      limit: event.limit,
+      used: event.used,
+      otherShare: Math.min(1, Math.max(0, event.otherShare)),
+      top,
+      day: dayStart(at) / 1000,
+    };
+  }
   if (event.type === "app_resumed" && !resumeIsNews(event.pausedBy, event.resumedBy)) {
     return { status: "skipped", reason: "own-resume" };
   }
@@ -273,6 +313,9 @@ async function factsOf(
         used: event.used,
         runsOutAt: event.runsOutAt,
         appShare: Math.min(1, Math.max(0, event.appShare)),
+        ...(event.otherShare === undefined
+          ? {}
+          : { otherShare: Math.min(1, Math.max(0, event.otherShare)) }),
         day: dayStart(at) / 1000,
       };
     }
@@ -304,6 +347,25 @@ async function factsOf(
   }
 }
 
+/**
+ * Asks the delivery unit over `SELF` to send an event already in the outbox
+ * (recorded by {@link emitUsageEvent} without `SELF`). Returns whether it
+ * asked; what it could not send waits for the scheduled run. Never throws.
+ */
+export async function deliverRecordedEvent(env: UsageEventEnv, eventId: string): Promise<boolean> {
+  const units = selfNotificationUnits(env);
+  if (units === undefined) return false;
+  try {
+    await units.deliverNotifications({ eventId });
+  } catch (error) {
+    console.warn("usage notification not sent now", {
+      eventId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return true;
+}
+
 /** When the event happened: an episode when it began, everything else when it was noticed. */
 function occurredAt(event: UsageEvent, now: number): number {
   return event.at ?? (event.type === "usage_unusual" ? event.since : now);
@@ -321,7 +383,7 @@ export async function emitUsageEvent(
   const now = (deps.now ?? Date.now)();
   try {
     const channels = await readChannels(env.DB);
-    if (!wants(channels, event.type satisfies NotificationEvent)) {
+    if (receivers(channels, event.type, event.exceptChannelsWith).length === 0) {
       return { status: "skipped", reason: "no-channel" };
     }
     const at = occurredAt(event, now);
@@ -332,6 +394,9 @@ export async function emitUsageEvent(
       dedupeKey: usageEventKey(event, at),
       facts,
       occurredAt: at,
+      ...(event.exceptChannelsWith === undefined
+        ? {}
+        : { exceptChannelsWith: event.exceptChannelsWith }),
     };
     const { eventId, queued } = await emitEvent(env.DB, channels, input, now);
     if (eventId === null) return { status: "skipped", reason: "no-channel" };

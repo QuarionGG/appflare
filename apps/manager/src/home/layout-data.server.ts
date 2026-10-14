@@ -27,7 +27,7 @@ import {
 import { countRemovedAppsCore } from "../installs/removed-apps.server";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
 import { runningVersion } from "../server/build-version";
-import { readUsageAttention } from "../usage/attention.server";
+import { readSpendAttention } from "../usage/attention.server";
 import { accountAttentionRows } from "./account-attention";
 import type { Downgrade } from "./attention";
 import { readFailedJobs, readUpdateNeeds } from "./attention.server";
@@ -78,7 +78,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     deployCopy,
     migrated,
     reconnectNeeded,
-    usage,
+    spend,
   ] = await Promise.all([
     recordsRead,
     rowsRead,
@@ -104,8 +104,9 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     ensureMigrated(env),
     // One read: whether a stored Cloudflare grant needs reconnecting.
     connectionNeedsReconnecting(env),
-    // Spend protection's rows: three reads beside the installs; more only for a row.
-    readUsageAttention(env.DB, {
+    // Spend protection's rows, the apps' and (Workers Free) the account's free
+    // limits: three reads beside the installs; more only for a row.
+    readSpendAttention(env.DB, {
       installIds: rowsRead.then((r) =>
         r.filter((row) => row.status !== "uninstalled").map((row) => row.id),
       ),
@@ -158,6 +159,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     deployCopy,
     downgrade,
     reconnectNeeded,
-    usage,
+    usage: spend.apps,
+    accountUsage: spend.account,
   };
 }

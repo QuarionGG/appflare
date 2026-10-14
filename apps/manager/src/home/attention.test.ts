@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NEEDS_ADMIN_COPY } from "../auto-update/auto-update";
+import type { UsageAttention } from "../usage/attention";
 import {
   type AccountAttentionRow,
   type AttentionApp,
@@ -97,6 +98,16 @@ const EVERYTHING = input({
       stillPastCap: null,
     },
   ],
+  accountUsage: [
+    {
+      product: "d1_rows_written",
+      limit: 100_000,
+      used: 90_329,
+      share: 0.90329,
+      otherShare: 0.99,
+      top: { installId: "links", share: 0.01 },
+    },
+  ],
 });
 
 const kinds = (items: readonly AttentionItem[]) => items.map((i) => i.kind);
@@ -107,6 +118,7 @@ describe("attentionItems", () => {
     expect(kinds(items)).toEqual([...SEVERITY_ORDER]);
     expect(SEVERITY_ORDER).toEqual([
       "usage",
+      "account-usage",
       "connection",
       "failed-job",
       "not-responding",
@@ -327,10 +339,48 @@ describe("attentionItems", () => {
   });
 });
 
+describe("the account near a free daily limit", () => {
+  it("is an account row, for members too, naming the top app as Home names it, with no app's dot", () => {
+    const items = attentionItems({ ...EVERYTHING, isAdmin: false });
+    const row = items.find((i) => i.kind === "account-usage");
+    expect(row).toMatchObject({
+      key: "account-usage:d1_rows_written",
+      topLabel: "Links",
+      usageShown: true,
+    });
+    // With no app installed there is no Usage section for "See usage" to open.
+    const alone = attentionItems({ ...EVERYTHING, apps: [], failedJobs: [] });
+    expect(alone.find((i) => i.kind === "account-usage")).toMatchObject({
+      topLabel: null,
+      usageShown: false,
+    });
+    expect(row !== undefined && "installId" in row).toBe(false);
+    expect(appSignals(items).get("links")).toBe("update");
+  });
+
+  it("stands in for an app's row saying the same limit is about to run out", () => {
+    const near: UsageAttention = {
+      kind: "limit-near",
+      installId: "links",
+      product: "d1_rows_written",
+      limit: 100_000,
+      runsOutAt: Date.UTC(2026, 9, 12, 21, 40),
+      appShare: 0.01,
+    };
+    const items = attentionItems({ ...EVERYTHING, usage: [near] });
+    expect(kinds(items).filter((k) => k === "usage" || k === "account-usage")).toEqual([
+      "account-usage",
+    ]);
+    // Another limit's row stays.
+    const other = attentionItems({ ...EVERYTHING, usage: [{ ...near, product: "kv_writes" }] });
+    expect(kinds(other).filter((k) => k === "usage")).toEqual(["usage"]);
+  });
+});
+
 describe("the sidebar's count and dots", () => {
   it("counts every row on Home", () => {
     const items = attentionItems(EVERYTHING);
-    expect(attentionBadge(items)).toEqual({ count: 9, label: "9 things need your attention" });
+    expect(attentionBadge(items)).toEqual({ count: 10, label: "10 things need your attention" });
     expect(attentionBadge(items.slice(0, 1))).toEqual({
       count: 1,
       label: "1 thing needs your attention",

@@ -110,6 +110,77 @@ describe("buildUsageTab", () => {
     expect(dos?.overageUsd).toBeNull();
   });
 
+  describe("the account's own totals (Free)", () => {
+    const today = s(Date.UTC(2026, 9, 12));
+    // The app wrote 900 D1 rows today and another Appflare app 100; the
+    // watcher read 90,000 for the whole account.
+    const input = (over: Partial<UsageTabInput> = {}) =>
+      bare({
+        plan: "free",
+        watch: {
+          state: "watching",
+          at: NOW - 60_000,
+          account: { at: NOW - 60_000, used: { d1_rows_written: 90_000, workers_requests: 0 } },
+        },
+        appHourly: [{ installId: "app", product: "d1_rows_written", t: today + 3600, value: 900 }],
+        appDaily: [{ installId: "app", product: "d1_rows_written", t: today, value: 900 }],
+        accountDaily: [
+          { installId: "app", product: "d1_rows_written", t: today, value: 900 },
+          { installId: "b", product: "d1_rows_written", t: today, value: 100 },
+        ],
+        ...over,
+      });
+
+    it("measures a daily limit against the whole account, the rest as other usage", () => {
+      const d1 = buildUsageTab(input()).products.find((p) => p.key === "d1_rows_written");
+      expect(d1?.allowance).toEqual({ share: 0.9, daily: true, other: 0.89 });
+      expect(d1?.today).toBe(900);
+    });
+
+    it("gives the app's and the other usage's shares of a limit used up", () => {
+      const tab = buildUsageTab(
+        input({
+          events: [
+            {
+              id: "l",
+              at: NOW - HOUR_MS,
+              kind: "limit_near",
+              product: "d1_rows_written",
+              share: 1,
+              runsOutAt: null,
+            },
+          ],
+        }),
+      );
+      expect(tab.status).toEqual({
+        kind: "limit",
+        product: "d1_rows_written",
+        limit: 100_000,
+        loopSince: null,
+        appShare: 900 / 90_000,
+        otherShare: 89_000 / 90_000,
+      });
+    });
+
+    it("leaves out a reading from another day, and on Paid", () => {
+      const yesterday = buildUsageTab(
+        input({
+          watch: {
+            state: "watching",
+            at: NOW,
+            account: { at: NOW - DAY_MS, used: { d1_rows_written: 90_000 } },
+          },
+        }),
+      ).products.find((p) => p.key === "d1_rows_written");
+      expect(yesterday?.allowance).toEqual({ share: 0.01, daily: true });
+      const paid = buildUsageTab(input({ plan: "paid" })).products.find(
+        (p) => p.key === "d1_rows_written",
+      );
+      expect(paid?.allowance?.other).toBeUndefined();
+      expect(paid?.allowance?.share).toBeCloseTo(1_000 / 50e6, 9);
+    });
+  });
+
   it("busy: well above its normal without a loop", () => {
     const tab = usageTabFixture("busy", { now: NOW });
     const status = tab.status;

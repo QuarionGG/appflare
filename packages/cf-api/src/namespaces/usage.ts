@@ -184,15 +184,40 @@ const uuidKey = (id: string): string => id.replaceAll("-", "").toLowerCase();
 const filterType = (dataset: string): string =>
   `Account${dataset.charAt(0).toUpperCase()}${dataset.slice(1)}Filter_InputObject`;
 
-function queryText(spec: DatasetSpec): string {
-  const dims = [spec.idField, "datetimeHour", ...(spec.dimensions ?? [])].join(" ");
-  const order = spec.orderBy ? `, orderBy: ${spec.orderBy}` : "";
-  return `query Usage($accountTag: string!, $filter: ${filterType(spec.dataset)}!) {
+/**
+ * What one request asks a dataset for: the dimensions its rows are grouped
+ * by (none for one total row) and the aggregates.
+ */
+interface FieldSpec {
+  dataset: UsageDataset;
+  groupBy: readonly string[];
+  select: string;
+  orderBy?: string;
+}
+
+/** A read by resource and hour: grouped by the resource's id, the hour and its own dimensions. */
+function byResource(spec: DatasetSpec): FieldSpec {
+  return {
+    dataset: spec.dataset,
+    groupBy: [spec.idField, "datetimeHour", ...(spec.dimensions ?? [])],
+    select: spec.select,
+    ...(spec.orderBy === undefined ? {} : { orderBy: spec.orderBy }),
+  };
+}
+
+function selection(field: FieldSpec): string {
+  const dims =
+    field.groupBy.length > 0 ? `dimensions { ${field.groupBy.join(" ")} }\n        ` : "";
+  return `${dims}${field.select}`;
+}
+
+function queryText(field: FieldSpec): string {
+  const order = field.orderBy ? `, orderBy: ${field.orderBy}` : "";
+  return `query Usage($accountTag: string!, $filter: ${filterType(field.dataset)}!) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
-      rows: ${spec.dataset}(limit: ${USAGE_MAX_ROWS}, filter: $filter${order}) {
-        dimensions { ${dims} }
-        ${spec.select}
+      rows: ${field.dataset}(limit: ${USAGE_MAX_ROWS}, filter: $filter${order}) {
+        ${selection(field)}
       }
     }
   }
@@ -204,29 +229,33 @@ interface Answer {
 }
 
 /** One dataset's field in a combined query, as alias `r<i>` with filter `$f<i>`. */
-function fieldText(spec: DatasetSpec, i: number): string {
-  const dims = [spec.idField, "datetimeHour", ...(spec.dimensions ?? [])].join(" ");
-  const order = spec.orderBy ? `, orderBy: ${spec.orderBy}` : "";
-  return `r${i}: ${spec.dataset}(limit: ${USAGE_MAX_ROWS}, filter: $f${i}${order}) {
-        dimensions { ${dims} }
-        ${spec.select}
+function fieldText(field: FieldSpec, i: number): string {
+  const order = field.orderBy ? `, orderBy: ${field.orderBy}` : "";
+  return `r${i}: ${field.dataset}(limit: ${USAGE_MAX_ROWS}, filter: $f${i}${order}) {
+        ${selection(field)}
       }`;
 }
 
 /** Several datasets' requests as one query: each its own aliased field and filter variable. */
-function combinedQueryText(specs: readonly DatasetSpec[]): string {
-  const vars = specs.map((s, i) => `$f${i}: ${filterType(s.dataset)}!`).join(", ");
+function combinedQueryText(fields: readonly FieldSpec[]): string {
+  const vars = fields.map((f, i) => `$f${i}: ${filterType(f.dataset)}!`).join(", ");
   return `query Usage($accountTag: string!, ${vars}) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
-      ${specs.map((s, i) => fieldText(s, i)).join("\n      ")}
+      ${fields.map((f, i) => fieldText(f, i)).join("\n      ")}
     }
   }
 }`;
 }
 
-/** Requests in one combined query at most; more go in further queries. */
-export const USAGE_BATCH_FIELDS = 20;
+/**
+ * Requests in one combined query at most; more go in further queries. A
+ * check of every product an app can use, with the account's daily totals,
+ * is about 30 fields. Cloudflare limits the fields ("nodes") per request
+ * without publishing the number, and answered 32 in one query on a Workers
+ * Free account (2026-10-13).
+ */
+export const USAGE_BATCH_FIELDS = 32;
 
 /** A raw row with the caller's id for it and its hour. */
 interface Located {
@@ -248,7 +277,7 @@ export interface UsageOptions {
 
 /** A request waiting for the combined query it goes out in. */
 interface Pending {
-  spec: DatasetSpec;
+  field: FieldSpec;
   filter: Record<string, unknown>;
   resolve(rows: RawRow[]): void;
   reject(error: unknown): void;
@@ -284,8 +313,8 @@ function usageReads(http: HttpApi, options: UsageOptions) {
     return lastStamp;
   }
 
-  async function single(spec: DatasetSpec, filter: Record<string, unknown>): Promise<RawRow[]> {
-    const data = await gql.query<Answer>(queryText(spec), {
+  async function single(field: FieldSpec, filter: Record<string, unknown>): Promise<RawRow[]> {
+    const data = await gql.query<Answer>(queryText(field), {
       accountTag: http.accountId,
       filter,
     });
@@ -335,7 +364,7 @@ function usageReads(http: HttpApi, options: UsageOptions) {
    * so no request is left waiting.
    */
   async function sendGroup(group: Pending[]): Promise<void> {
-    const alone = (p: Pending) => single(p.spec, p.filter).then(p.resolve, p.reject);
+    const alone = (p: Pending) => single(p.field, p.filter).then(p.resolve, p.reject);
     if (group.length === 1) {
       const [only] = group;
       if (only !== undefined) await alone(only);
@@ -347,7 +376,7 @@ function usageReads(http: HttpApi, options: UsageOptions) {
         variables[`f${i}`] = p.filter;
       });
       const answer = (await http.send("POST", GRAPHQL_PATH, {
-        json: { query: combinedQueryText(group.map((p) => p.spec)), variables },
+        json: { query: combinedQueryText(group.map((p) => p.field)), variables },
       })) as unknown as {
         data?: { viewer?: { accounts?: Array<Record<string, RawRow[] | null>> } } | null;
         errors?: unknown;
@@ -382,28 +411,37 @@ function usageReads(http: HttpApi, options: UsageOptions) {
     }
   }
 
+  /** The time part of a filter for `[start, end)`, unique to this request. */
+  function window(start: number, end: number): Record<string, unknown> {
+    return {
+      datetime_geq: new Date(start * 1000).toISOString(),
+      datetime_lt: new Date(end * 1000).toISOString(),
+      datetime_leq: new Date(stamp()).toISOString(),
+    };
+  }
+
+  /** Sends one request, alone or (batched) with the others started in the same turn. */
+  function send(field: FieldSpec, filter: Record<string, unknown>): Promise<RawRow[]> {
+    if (!options.batch) return single(field, filter);
+    return new Promise<RawRow[]>((resolve, reject) => {
+      // The reads a caller starts together make their first requests in the
+      // same turn: they go out together once it ends.
+      if (queue.length === 0) setTimeout(() => void flush(), 0);
+      queue.push({ field, filter, resolve, reject });
+    });
+  }
+
   async function request(
     spec: DatasetSpec,
     ids: readonly string[] | null,
     start: number,
     end: number,
   ): Promise<RawRow[]> {
-    const filter: Record<string, unknown> = {
-      ...spec.filter,
-      datetime_geq: new Date(start * 1000).toISOString(),
-      datetime_lt: new Date(end * 1000).toISOString(),
-      datetime_leq: new Date(stamp()).toISOString(),
-    };
+    const filter: Record<string, unknown> = { ...spec.filter, ...window(start, end) };
     if (ids !== null) {
       filter[`${spec.idField}_in`] = spec.sendWithoutDashes ? ids.map(uuidKey) : [...ids];
     }
-    if (!options.batch) return single(spec, filter);
-    return new Promise<RawRow[]>((resolve, reject) => {
-      // The reads a caller starts together make their first requests in the
-      // same turn: they go out together once it ends.
-      if (queue.length === 0) setTimeout(() => void flush(), 0);
-      queue.push({ spec, filter, resolve, reject });
-    });
+    return send(byResource(spec), filter);
   }
 
   /** Reads `[start, end)` for `ids`, splitting the window, then the ids, while an answer is full. */
@@ -665,7 +703,74 @@ function usageReads(http: HttpApi, options: UsageOptions) {
     containers(query: UsageQuery): Promise<UsageRow[]> {
       return read(SPECS.containers, query);
     },
+
+    /**
+     * The whole account's use over a range (the current UTC day, say) of
+     * what the Workers Free plan limits per day, every resource counted,
+     * whoever made it: Worker `requests`; Durable Objects `requests`,
+     * `durationGbs`, `rowsRead`, `rowsWritten`; D1 `rowsRead`,
+     * `rowsWritten`; KV `reads`, `writes`, `deletes`, `lists`; Queues
+     * `operations`; Workflow `steps`; Workers AI `neurons`; Analytics
+     * Engine `dataPoints`; Browser Rendering `sessionDurationMs`. Metrics
+     * are named and counted as the per-product reads name them, so a total
+     * matches the sum of those reads over every resource.
+     *
+     * One request per dataset (one field each, batched), each grouped by
+     * nothing (KV by operation type): an answer is a row or a few, however
+     * much the account holds. A metric with no use is left out. Each
+     * dataset settles on its own: one that fails is listed in `failed` and
+     * the others still answer. Rejects only when every dataset fails (with
+     * the first one's error), as when the token may not read analytics. The
+     * range should lie within the last 31 days, which every dataset read
+     * here answers for. `datasets` limits the read to those datasets (each
+     * field counts against Cloudflare's GraphQL quota); all of them by
+     * default. A dataset the account has never used answers with no rows,
+     * not an error (checked on a Workers Free and a Workers Paid account,
+     * 2026-10-13).
+     */
+    async accountTotals(
+      range: UsageRange & { datasets?: readonly UsageDataset[] },
+    ): Promise<UsageTotals> {
+      const now = Math.floor(clock() / 1000);
+      const end = Math.min(range.to ?? now, now);
+      const wanted = range.datasets === undefined ? null : new Set(range.datasets);
+      const specs = TOTALS.filter((t) => wanted === null || wanted.has(t.dataset));
+      if (!(range.from < end) || specs.length === 0) return { totals: [], failed: [] };
+      const settled = await Promise.allSettled(
+        specs.map(async (total) => {
+          const sums = new Map<string, number>();
+          for (const row of await send(total, window(range.from, end))) {
+            for (const [metric, value] of total.metrics(row)) {
+              sums.set(metric, (sums.get(metric) ?? 0) + value);
+            }
+          }
+          return [...sums].flatMap(([metric, value]) =>
+            value === 0 ? [] : [{ dataset: total.dataset, metric, value }],
+          );
+        }),
+      );
+      const out: UsageTotals = { totals: [], failed: [] };
+      settled.forEach((result, i) => {
+        if (result.status === "fulfilled") out.totals.push(...result.value);
+        else out.failed.push({ dataset: specs[i]?.dataset as UsageDataset, error: result.reason });
+      });
+      if (out.failed.length === specs.length) throw out.failed[0]?.error;
+      return out;
+    },
   };
+}
+
+/** One metric's total for the whole account over a range (see `accountTotals`). */
+export interface UsageTotal {
+  dataset: UsageDataset;
+  metric: string;
+  value: number;
+}
+
+/** What `accountTotals` read: the totals, and the datasets that could not be read. */
+export interface UsageTotals {
+  totals: UsageTotal[];
+  failed: Array<{ dataset: UsageDataset; error: unknown }>;
 }
 
 const KV_ACTIONS: Record<string, string> = {
@@ -866,3 +971,87 @@ const SPECS = {
     ],
   },
 } satisfies Record<string, DatasetSpec>;
+
+/** A request for the whole account's total of a dataset, and the metrics of its rows. */
+interface TotalSpec extends FieldSpec {
+  metrics(row: RawRow): Array<[metric: string, value: number]>;
+}
+
+/**
+ * The account-wide totals `accountTotals` reads: the per-product reads'
+ * datasets and metrics that a Workers Free daily limit counts, without the
+ * resource and hour dimensions (all accepted on a Workers Free account,
+ * 2026-10-13).
+ */
+const TOTALS: readonly TotalSpec[] = [
+  {
+    dataset: "workersInvocationsAdaptive",
+    groupBy: [],
+    select: "sum { requests }",
+    metrics: (r) => [["requests", num(r.sum?.requests)]],
+  },
+  {
+    dataset: "durableObjectsInvocationsAdaptiveGroups",
+    groupBy: [],
+    select: "sum { requests }",
+    metrics: (r) => [["requests", num(r.sum?.requests)]],
+  },
+  {
+    dataset: "durableObjectsPeriodicGroups",
+    groupBy: [],
+    select: "sum { duration rowsRead rowsWritten }",
+    metrics: (r) => [
+      ["durationGbs", num(r.sum?.duration)],
+      ["rowsRead", num(r.sum?.rowsRead)],
+      ["rowsWritten", num(r.sum?.rowsWritten)],
+    ],
+  },
+  {
+    dataset: "d1AnalyticsAdaptiveGroups",
+    groupBy: [],
+    select: "sum { rowsRead rowsWritten }",
+    metrics: (r) => [
+      ["rowsRead", num(r.sum?.rowsRead)],
+      ["rowsWritten", num(r.sum?.rowsWritten)],
+    ],
+  },
+  {
+    dataset: "kvOperationsAdaptiveGroups",
+    groupBy: ["actionType"],
+    select: "sum { requests }",
+    metrics: SPECS.kvOperations.metrics,
+  },
+  {
+    dataset: "queueMessageOperationsAdaptiveGroups",
+    groupBy: [],
+    select: "sum { billableOperations }",
+    metrics: (r) => [["operations", num(r.sum?.billableOperations)]],
+  },
+  {
+    dataset: "workflowsAdaptiveGroups",
+    groupBy: [],
+    select: "sum { stepCount }",
+    metrics: (r) => [["steps", num(r.sum?.stepCount)]],
+  },
+  {
+    dataset: "aiInferenceAdaptiveGroups",
+    groupBy: [],
+    select: "sum { totalNeurons }",
+    metrics: (r) => [["neurons", num(r.sum?.totalNeurons)]],
+  },
+  {
+    dataset: "workersAnalyticsEngineAdaptiveGroups",
+    groupBy: [],
+    select: "count",
+    metrics: (r) => [["dataPoints", num(r.count)]],
+  },
+  {
+    dataset: "browserRenderingBrowserTimeUsageAdaptiveGroups",
+    groupBy: [],
+    select: "sum { totalSessionDurationMs }",
+    metrics: (r) => [["sessionDurationMs", num(r.sum?.totalSessionDurationMs)]],
+  },
+];
+
+/** Datasets `accountTotals` reads: one field each in a batched query. */
+export const USAGE_TOTAL_DATASETS = TOTALS.length;

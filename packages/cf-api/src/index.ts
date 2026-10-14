@@ -136,6 +136,8 @@ export type {
   UsageQuery,
   UsageRange,
   UsageRow,
+  UsageTotal,
+  UsageTotals,
 } from "./namespaces/usage";
 export {
   createUsage,
@@ -143,6 +145,7 @@ export {
   USAGE_MAX_ROWS,
   USAGE_MAX_WINDOW_HOURS,
   USAGE_RETENTION_DAYS,
+  USAGE_TOTAL_DATASETS,
   UsageRowLimitError,
 } from "./namespaces/usage";
 export type {

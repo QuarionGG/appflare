@@ -1,4 +1,5 @@
 import { createDb } from "../db/client";
+import { accountToday, withOtherUsage } from "./account-day";
 import { type AccountUse, CHART_PAST_DAYS, type HomeUsageData, type HomeUsageSeries } from "./home";
 import {
   DAY_MS,
@@ -119,8 +120,18 @@ async function readBatch(d1: D1Database, now: number): Promise<Batch> {
   };
 }
 
-/** The account's use of each counted product today and this month, every install counted. */
-function accountUse(batch: Batch, now: number): Partial<Record<ProductKey, AccountUse>> {
+/**
+ * The account's use of each counted product today and this month, every
+ * install counted; on Workers Free, with the account's own totals today
+ * where the watcher read them (`accountTotals`), the part not from
+ * Appflare's apps as `other` (counted in today's use only, for the daily
+ * limits; the month stays Appflare's apps' own).
+ */
+export function accountUse(
+  batch: Pick<Batch, "daily" | "hourly">,
+  now: number,
+  accountTotals: Readonly<Record<string, number>> | null,
+): Partial<Record<ProductKey, AccountUse>> {
   const w = windows(now);
   const out: Partial<Record<ProductKey, AccountUse>> = {};
   const add = (product: string, today: number, month: number) => {
@@ -132,6 +143,14 @@ function accountUse(batch: Batch, now: number): Partial<Record<ProductKey, Accou
   };
   for (const r of batch.daily) if (r.t * 1000 >= w.monthStart) add(r.product, 0, r.value);
   for (const r of batch.hourly) if (r.t * 1000 >= w.today) add(r.product, r.value, r.value);
+  for (const [product, total] of Object.entries(accountTotals ?? {})) {
+    if (!isCountProduct(product)) continue;
+    const { other } = withOtherUsage(out[product]?.today ?? 0, total);
+    if (other <= 0) continue;
+    // Today only: earlier days' outside usage is not known, so the month stays Appflare's.
+    add(product, other, 0);
+    (out[product] as AccountUse).other = other;
+  }
   return out;
 }
 
@@ -279,6 +298,11 @@ export async function readHomeUsage(
         ? dailySeries(batch, listed, now)
         : hourlySeries(history, batch, listed, now),
     // Every install, removed ones too: they count toward the account's limits and included amounts.
-    account: accountUse(batch, now),
+    // On Workers Free, so does everything else in the account, read by the watcher.
+    account: accountUse(
+      batch,
+      now,
+      overview.plan === "free" ? accountToday(watch?.account, now) : null,
+    ),
   };
 }

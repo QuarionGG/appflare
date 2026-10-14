@@ -89,7 +89,7 @@ export function pauseCauseSentence(cause: PauseCause): string | null {
     case "cap":
       return `It passed its ${usd(cause.amount)} ${PERIOD_ADJECTIVE[cause.period]} cap.`;
     case "budget":
-      return `The account's bill was on pace for about ${usd(cause.projected)}, past its ${usd(cause.budget)} monthly budget, and this app had the largest share of the month's usage.`;
+      return `This month's Appflare usage, including the $5 plan, was on pace for about ${usd(cause.projected)}, past the ${usd(cause.budget)} monthly budget, and this app had the largest share of it.`;
     case "loop": {
       if (cause.alarms != null) {
         return `One of its Durable Objects ran its alarm ${count(cause.alarms)} times in an hour, which only a loop does.`;

@@ -6,7 +6,7 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
 import { addChannel, SLACK_URL } from "../test/notification-fixtures";
-import { readUsageAttention } from "./attention.server";
+import { readSpendAttention, readUsageAttention } from "./attention.server";
 import { recordActivity } from "./store/activity.server";
 import { writeAppSpendSettings } from "./store/app-settings.server";
 import { writeSpendDefaults } from "./store/defaults.server";
@@ -257,7 +257,11 @@ describe("readUsageAttention", () => {
   });
 
   it("shows today's free daily limit warnings: about to run out, and used up", async () => {
-    await limitNear("a", { appShare: 0.64, runsOutAt: Date.UTC(2026, 9, 12, 21, 40) });
+    await limitNear("a", {
+      appShare: 0.64,
+      otherShare: 0.3,
+      runsOutAt: Date.UTC(2026, 9, 12, 21, 40),
+    });
     await limitNear("b", { product: "do_requests", share: 1, runsOutAt: null, appShare: 0.97 });
     // Yesterday's warning, and one about an app Home does not list.
     await limitNear("c", {}, Date.UTC(2026, 9, 11, 22));
@@ -272,6 +276,8 @@ describe("readUsageAttention", () => {
         limit: 100_000,
         runsOutAt: Date.UTC(2026, 9, 12, 21, 40),
         appShare: 0.64,
+        // The rest of the account's use, not from Appflare's apps.
+        otherShare: 0.3,
       },
       {
         kind: "limit-used-up",
@@ -279,12 +285,50 @@ describe("readUsageAttention", () => {
         product: "do_requests",
         limit: 100_000,
         appShare: 0.97,
+        otherShare: null,
         loopSince: SINCE,
       },
     ]);
     // Once the time it was to run out passes, it reads as used up.
     const later = await read({ now: Date.UTC(2026, 9, 12, 22) });
     expect(later.find((r) => r.installId === "a")).toMatchObject({ kind: "limit-used-up" });
+  });
+
+  it("reads today's account-level warnings for Home's account rows, the newest of each", async () => {
+    const account = (facts: Record<string, unknown>, at: number) =>
+      recordActivity(db(), {
+        installId: null,
+        kind: "limit_near",
+        facts: { product: "d1_rows_written", runsOutAt: null, limit: 100_000, ...facts } as never,
+        at: new Date(at),
+      });
+    await account({ share: 0.91, used: 91_000, otherShare: 0.99 }, NOW - 3_600_000);
+    await account(
+      { share: 1.01, used: 101_000, otherShare: 0.98, topInstallId: "a", topShare: 0.02 },
+      NOW - 600_000,
+    );
+    // Yesterday's, and an app's own: not account rows.
+    await account({ share: 0.95, used: 95_000 }, Date.UTC(2026, 9, 11, 22));
+    await limitNear("a", {});
+    const spend = () =>
+      readSpendAttention(env.DB, { installIds: ["a", "b", "c"], isAdmin: true, now: NOW });
+    await writeSettings(db(), { [SETTING.accountPlan]: "free" });
+    const { apps, account: rows } = await spend();
+    expect(rows).toEqual([
+      {
+        product: "d1_rows_written",
+        limit: 100_000,
+        used: 101_000,
+        share: 1.01,
+        otherShare: 0.98,
+        top: { installId: "a", share: 0.02 },
+      },
+    ]);
+    // The apps' rows leave the account's entries out.
+    expect(apps.map((r) => r.installId)).toEqual(["a"]);
+    // Workers Paid: no account rows, even from a day spent on Free.
+    await writeSettings(db(), { [SETTING.accountPlan]: "paid" });
+    expect((await spend()).account).toEqual([]);
   });
 
   it("reads nothing for apps Home does not list", async () => {

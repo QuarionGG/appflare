@@ -70,9 +70,10 @@ export interface SpendOverview {
    */
   missingScopes: string[];
   /**
-   * This month's bill so far and projected: on Paid the $5 plan plus usage
-   * past included, on Free what bills past its free amount (R2). Counts apps
-   * removed this month too.
+   * This month's Appflare usage so far and projected: on Paid the $5 plan
+   * plus its apps' usage past included, on Free what bills past its free
+   * amount (R2). Counts apps removed this month too; other Workers and
+   * resources in the account are not counted, so it is not the whole bill.
    */
   bill: { now: number; projected: number };
   /**

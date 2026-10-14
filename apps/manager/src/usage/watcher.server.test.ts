@@ -1,15 +1,21 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
-import type { UsageEvent, UsageEventOutcome } from "../notifications/usage-events.server";
+import {
+  emitUsageEvent,
+  type UsageEvent,
+  type UsageEventOutcome,
+} from "../notifications/usage-events.server";
 import { ACC, TOKEN } from "../test/fake-account";
 import { fakeCloudflare } from "../test/fake-cloudflare";
-import { HOUR, LEVEL_PRODUCTS } from "./collect";
+import { addChannel, SLACK_URL } from "../test/notification-fixtures";
+import { ACCOUNT_DAY_READ, HOUR, LEVEL_PRODUCTS } from "./collect";
 import { WATCHED_APPS_SQL } from "./collect.server";
 import {
   type AnswerRow,
@@ -38,6 +44,7 @@ import { createSpendWatcherUnits } from "./watcher-unit";
 const NOW = RECORDED_NOW * 1000; // 2026-10-12 16:50 UTC
 const HOUR_NOW = Math.floor(RECORDED_NOW / HOUR) * HOUR;
 const DAY_MS = 86_400_000;
+const DAY_START = Math.floor(NOW / DAY_MS) * DAY_MS;
 const db = () => createDb(env.DB);
 const A = `/accounts/${ACC}`;
 
@@ -161,11 +168,21 @@ describe("watchSpend: collect and store", () => {
     const w = world(RECORDED);
     const first = await watchSpend(watchEnv(), {}, w.deps());
     expect(first).toMatchObject({ status: "watching", apps: 1, newApps: 0, history: "database" });
-    // The namespace list, then one request asking for every dataset at once.
+    // The namespace list, then one request asking for every dataset at once:
+    // the app's resources, and on Workers Free the whole account's totals
+    // for the daily limits (no resource ids, since 00:00 UTC).
     expect(first.subrequests).toBe(1 + 1);
     expect(w.graphqlRequests.count).toBe(1);
-    expect(w.graphql).toHaveLength(9);
-    expect(new Set(w.graphql.map((s) => s.dataset)).size).toBe(w.graphql.length);
+    expect(w.graphql).toHaveLength(9 + ACCOUNT_DAY_READ.length);
+    const byResource = w.graphql.filter((s) =>
+      Object.keys(s.filter).some((k) => k.endsWith("_in")),
+    );
+    expect(byResource).toHaveLength(9);
+    expect(new Set(byResource.map((s) => s.dataset)).size).toBe(byResource.length);
+    const totals = w.graphql.filter((s) => !byResource.includes(s));
+    expect(totals.every((s) => s.filter.datetime_geq === new Date(DAY_START).toISOString())).toBe(
+      true,
+    );
     expect(await hourly("notes", "workers_requests")).toEqual([
       [-4 * HOUR, 2],
       [-3 * HOUR, 2],
@@ -176,14 +193,25 @@ describe("watchSpend: collect and store", () => {
     // Storage has a point for every hour from the first sample on.
     expect(await hourly("notes", "do_storage")).toHaveLength(5);
     expect(first.rowsWritten).toBeGreaterThan(20);
-    expect(await readSpendWatchStatus(db())).toEqual({ state: "watching", at: NOW });
+    // The account's day is the app's own here: nothing else in the recorded account.
+    const status = await readSpendWatchStatus(db());
+    expect(status).toMatchObject({ state: "watching", at: NOW, account: { at: NOW } });
+    const todays = async (product: string) =>
+      (await hourly("notes", product))
+        .filter(([t]) => (t ?? 0) + HOUR_NOW >= DAY_START / 1000)
+        .reduce((sum, [, v]) => sum + (v ?? 0), 0);
+    expect(status?.account?.used.workers_requests).toBe(await todays("workers_requests"));
+    expect(status?.account?.used.d1_rows_read).toBe(await todays("d1_rows_read"));
+    expect(status?.account?.used.queues_operations).toBe(0);
 
     // Five minutes later the analytics say the same: nothing to write.
     const second = await watchSpend(watchEnv(), {}, w.deps(NOW + 5 * 60_000));
     expect(second.rowsWritten).toBe(0);
     expect(second.history).toBe("cache");
     // Only the recent hours are read again.
-    const workers = w.graphql.filter((s) => s.dataset === "workersInvocationsAdaptive");
+    const workers = w.graphql.filter(
+      (s) => s.dataset === "workersInvocationsAdaptive" && "scriptName_in" in s.filter,
+    );
     expect(workers[1]?.filter.datetime_geq).toBe(
       new Date((HOUR_NOW - 3 * HOUR - 3 * HOUR) * 1000).toISOString(),
     );
@@ -214,13 +242,15 @@ describe("watchSpend: collect and store", () => {
     const w = world(RECORDED);
     const report = await watchSpend(watchEnv(), {}, w.deps());
     expect(report).toMatchObject({ status: "watching", apps: 0, newApps: 1, rowsWritten: 0 });
-    expect(w.graphql).toEqual([]);
+    // Nothing of the app; on Workers Free, the account's totals alone.
+    expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+    expect(w.graphql.some((s) => Object.keys(s.filter).some((k) => k.endsWith("_in")))).toBe(false);
     expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
 
     // Its first check reads from its install on.
     const later = await watchSpend(watchEnv(), {}, w.deps(NOW + 20 * 60_000));
     expect(later.apps).toBe(1);
-    expect(w.graphql[0]?.filter.datetime_geq).toBe(
+    expect(w.graphql.find((s) => "scriptName_in" in s.filter)?.filter.datetime_geq).toBe(
       new Date((HOUR_NOW - 3 * HOUR) * 1000).toISOString(),
     );
   });
@@ -294,8 +324,12 @@ describe("watchSpend: a read that fails", () => {
       refuse: { message: "timeout", datasets: ["d1AnalyticsAdaptiveGroups"] },
     });
     const report = await watchSpend(watchEnv(), {}, w.deps());
-    expect(report).toMatchObject({ status: "watching", failedReads: ["d1"] });
-    expect(spendWatchLog(report)).toContain("failed reads: d1");
+    // The account's totals lose D1 too, and keep the rest.
+    expect(report).toMatchObject({ status: "watching", failedReads: ["d1", "account"] });
+    expect(spendWatchLog(report)).toContain("failed reads: d1, account");
+    const used = (await readSpendWatchStatus(db()))?.account?.used ?? {};
+    expect(used.d1_rows_written).toBeUndefined();
+    expect(used.workers_requests).toBeGreaterThan(0);
     // The rest of the app's usage, and the other app's, are stored.
     expect(await hourly("notes", "workers_requests")).toHaveLength(5);
     expect(await hourly("notes", "kv_storage")).toHaveLength(5);
@@ -306,6 +340,377 @@ describe("watchSpend: a read that fails", () => {
     // Only the app fully read counts as checked now.
     expect((await readUsageState(db(), "other")).lastCheckedAt).toBe(NOW);
     expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
+  });
+});
+
+describe("watchSpend: the account's free daily limits", () => {
+  const OTHER_DB = "ffffffff-0000-4000-8000-000000000001";
+  /**
+   * The recorded app writing 300 D1 rows an hour for the last three hours,
+   * and, with `other`, a database Appflare did not install that wrote that
+   * many rows early today.
+   */
+  function d1Answers(other: number, perHour = 300): Record<string, AnswerRow[]> {
+    const own = [HOUR_NOW - 2 * HOUR, HOUR_NOW - HOUR, HOUR_NOW].map((h) =>
+      answerRow("databaseId", RECORDED_IDS.d1, h, { sum: { rowsRead: 0, rowsWritten: perHour } }),
+    );
+    const outside =
+      other > 0
+        ? [
+            answerRow("databaseId", OTHER_DB, DAY_START / 1000 + 2 * HOUR, {
+              sum: { rowsRead: 0, rowsWritten: other },
+            }),
+          ]
+        : [];
+    return { ...RECORDED, d1AnalyticsAdaptiveGroups: [...own, ...outside] };
+  }
+
+  it("warns an app on pace to use up a limit mostly used by others, with its share of the account's", async () => {
+    await seedRecordedApp();
+    // The app: 2,500 rows an hour (7,500 today); outside: 78,000. The account is
+    // at 85.5%, under the account warning, and on pace to run out at the app's pace.
+    const w = world(d1Answers(78_000, 2_500));
+    await watchSpend(watchEnv(), {}, w.deps());
+    expect(w.events.filter((e) => e.type === "usage_account_limit")).toEqual([]);
+    const near = w.events.filter((e) => e.type === "usage_limit_near");
+    expect(near).toEqual([
+      expect.objectContaining({ installId: "notes", product: "d1_rows_written", used: 85_500 }),
+    ]);
+    const event = near[0] as Extract<UsageEvent, { type: "usage_limit_near" }>;
+    // The app's share is of the whole account's use.
+    expect(event.appShare).toBeCloseTo(7_500 / 85_500, 6);
+    expect(event.otherShare).toBeCloseTo(78_000 / 85_500, 6);
+    const [entry] = await listActivity(db(), { installId: "notes", kinds: ["limit_near"] });
+    expect(entry?.facts).toMatchObject({
+      product: "d1_rows_written",
+      otherShare: event.otherShare,
+    });
+  });
+
+  it("warns the account at 90% of a limit once a day; the app's warning skips the account's channels", async () => {
+    await seedRecordedApp();
+    const w = world(d1Answers(98_000));
+    await watchSpend(watchEnv(), {}, w.deps());
+    expect(w.events.filter((e) => e.type === "usage_account_limit")).toEqual([
+      {
+        type: "usage_account_limit",
+        product: "d1_rows_written",
+        limit: 100_000,
+        used: 98_900,
+        otherShare: 98_000 / 98_900,
+        top: { installId: "notes", share: 900 / 98_900 },
+      },
+    ]);
+    // The app is on pace to run it out too: warned, but not on the channels the
+    // account's warning reached.
+    expect(w.events.filter((e) => e.type === "usage_limit_near")).toEqual([
+      expect.objectContaining({
+        installId: "notes",
+        product: "d1_rows_written",
+        exceptChannelsWith: "usage_account_limit",
+      }),
+    ]);
+    const entries = await listActivity(db(), { installId: null, kinds: ["limit_near"] });
+    expect(entries.map((e) => e.facts)).toEqual([
+      expect.objectContaining({ product: "d1_rows_written", account: true, used: 98_900 }),
+    ]);
+    // Five minutes on: nothing more, from the account or the app.
+    await watchSpend(watchEnv(), {}, w.deps(NOW + 5 * 60_000));
+    expect(w.events.filter((e) => e.type.startsWith("usage_"))).toHaveLength(2);
+    // Used up later that day: recorded for Home, without a second message.
+    await watchSpend(watchEnv(), {}, world(d1Answers(99_500)).deps(NOW + 10 * 60_000));
+    const latest = await listActivity(db(), { installId: null, kinds: ["limit_near"] });
+    expect(latest[0]?.facts).toMatchObject({ share: 100_400 / 100_000 });
+    expect(w.events.filter((e) => e.type.startsWith("usage_"))).toHaveLength(2);
+  });
+
+  it("warns the account about a limit an app was warned about first, past the app's channels", async () => {
+    await seedRecordedApp();
+    await recordActivity(db(), {
+      installId: "notes",
+      kind: "limit_near",
+      facts: { product: "d1_rows_written", share: 0.8, runsOutAt: NOW + HOUR * 1000 },
+      at: new Date(NOW - 60 * 60_000),
+    });
+    const w = world(d1Answers(98_000));
+    await watchSpend(watchEnv(), {}, w.deps());
+    expect(w.events.filter((e) => e.type === "usage_account_limit")).toEqual([
+      expect.objectContaining({
+        product: "d1_rows_written",
+        exceptChannelsWith: "usage_limit_near",
+      }),
+    ]);
+  });
+
+  describe("each channel hears about a limit once a day", () => {
+    const deliveries = async () =>
+      (
+        await env.DB.prepare(
+          `SELECT c.label AS channel, e.type AS type FROM notification_deliveries d
+           JOIN notification_events e ON e.id = d.event_id
+           JOIN notification_channels c ON c.id = d.channel_id ORDER BY c.label, e.type`,
+        ).all<{ channel: string; type: string }>()
+      ).results.map((r) => `${r.channel}: ${r.type}`);
+    const channel = (label: string, events: Array<"usage_limit_near" | "usage_account_limit">) =>
+      addChannel(
+        { label, events, settings: { kind: "slack", webhookUrl: SLACK_URL } },
+        NOW - DAY_MS,
+      );
+
+    it("one that gets both hears the first; one that gets one event always hears it", async () => {
+      await seedRecordedApp();
+      await channel("both", ["usage_limit_near", "usage_account_limit"]);
+      await channel("app only", ["usage_limit_near"]);
+      await channel("account only", ["usage_account_limit"]);
+      // The account's warning first, then the app's in the same check.
+      await watchSpend(
+        watchEnv(),
+        {},
+        { ...world(d1Answers(98_000)).deps(), emit: emitUsageEvent },
+      );
+      expect(await deliveries()).toEqual([
+        "account only: usage_account_limit",
+        "app only: usage_limit_near",
+        "both: usage_account_limit",
+      ]);
+    });
+
+    it("after an app's warning, the account's reaches only the channels that did not hear it", async () => {
+      await seedRecordedApp();
+      await channel("both", ["usage_limit_near", "usage_account_limit"]);
+      await channel("account only", ["usage_account_limit"]);
+      // The app was warned an hour ago, under the account's 90%.
+      await watchSpend(
+        watchEnv(),
+        {},
+        { ...world(d1Answers(78_000, 4_000)).deps(NOW - 60 * 60_000), emit: emitUsageEvent },
+      );
+      expect(await deliveries()).toEqual(["both: usage_limit_near"]);
+      await watchSpend(
+        watchEnv(),
+        {},
+        { ...world(d1Answers(80_000, 4_000)).deps(), emit: emitUsageEvent },
+      );
+      expect(await deliveries()).toEqual([
+        "account only: usage_account_limit",
+        "both: usage_limit_near",
+      ]);
+    });
+  });
+
+  describe("with no app to read", () => {
+    /** Outside usage only: a database Appflare did not install wrote 95,000 rows today. */
+    const OUTSIDE = {
+      d1AnalyticsAdaptiveGroups: [
+        answerRow("databaseId", OTHER_DB, DAY_START / 1000 + 2 * HOUR, {
+          sum: { rowsRead: 0, rowsWritten: 95_000 },
+        }),
+      ],
+    };
+    const limitsChannel = () =>
+      addChannel(
+        {
+          label: "Limits",
+          events: ["usage_account_limit"],
+          settings: { kind: "slack", webhookUrl: SLACK_URL },
+        },
+        NOW - DAY_MS,
+      );
+    const outbox = async () =>
+      (
+        await env.DB.prepare(
+          `SELECT e.type, d.status FROM notification_events e
+           JOIN notification_deliveries d ON d.event_id = e.id`,
+        ).all<{ type: string; status: string }>()
+      ).results;
+
+    it("Workers Free, no apps: reads the account alone and warns past 90%", async () => {
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const deps = { ...w.deps(), emit: emitUsageEvent };
+      const kicks: string[] = [];
+      const self: Record<string, (input: unknown) => Promise<unknown>> = {};
+      const units = createSpendWatcherUnits({ ...watchEnv(), SELF: self }, deps);
+      self.spendCheck = (input: unknown) => units.spendCheck(structuredClone(input));
+      self.spendShard = (input: unknown) => units.spendShard(structuredClone(input));
+      self.deliverNotifications = async (input: unknown) => {
+        kicks.push((input as { eventId: string }).eventId);
+        return { ok: true, value: { sent: 0, retrying: 0, failed: 0 } };
+      };
+      const report = await watchSpend({ ...watchEnv(), SELF: self }, {}, deps);
+      expect(report).toMatchObject({ status: "watching", apps: 0 });
+      // One request for the account's datasets, and nothing about apps.
+      expect(w.graphqlRequests.count).toBe(1);
+      expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+      expect(w.rest).toEqual([]);
+      // The check's own invocation, the request, and asking for the message to be sent.
+      expect(report.subrequests).toBe(3);
+      expect((await readSpendWatchStatus(db()))?.account?.used.d1_rows_written).toBe(95_000);
+      const entries = await listActivity(db(), { installId: null, kinds: ["limit_near"] });
+      expect(entries.map((e) => e.facts)).toEqual([
+        expect.objectContaining({ product: "d1_rows_written", used: 95_000, otherShare: 1 }),
+      ]);
+      expect(await outbox()).toEqual([{ type: "usage_account_limit", status: "pending" }]);
+      expect(kicks).toHaveLength(1);
+    });
+
+    it("Workers Free, every app too new: the same, and the app is left for later", async () => {
+      await seedRecordedApp("notes", NOW - 5 * 60_000);
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const report = await watchSpend(watchEnv(), {}, { ...w.deps(), emit: emitUsageEvent });
+      expect(report).toMatchObject({ status: "watching", apps: 0, newApps: 1 });
+      expect(w.graphql).toHaveLength(ACCOUNT_DAY_READ.length);
+      expect((await readUsageState(db(), "notes")).lastCheckedAt).toBeNull();
+      expect(await listActivity(db(), { installId: null, kinds: ["limit_near"] })).toHaveLength(1);
+      expect(await outbox()).toEqual([{ type: "usage_account_limit", status: "pending" }]);
+    });
+
+    it("Workers Paid, no apps: no read of the account", async () => {
+      await writeAccountPlan(db(), "paid");
+      await limitsChannel();
+      const w = world(OUTSIDE);
+      const report = await watchSpend(watchEnv(), {}, { ...w.deps(), emit: emitUsageEvent });
+      expect(report).toMatchObject({ status: "watching", apps: 0, subrequests: 0 });
+      expect(w.graphql).toEqual([]);
+      expect((await readSpendWatchStatus(db()))?.account).toBeUndefined();
+      expect(await listActivity(db(), { kinds: ["limit_near"] })).toEqual([]);
+      expect(await outbox()).toEqual([]);
+    });
+  });
+
+  it("puts the account's warning in the outbox even when judging the apps fails", async () => {
+    await seedRecordedApp();
+    await addChannel(
+      {
+        label: "Limits",
+        events: ["usage_account_limit"],
+        settings: { kind: "slack", webhookUrl: SLACK_URL },
+      },
+      NOW - DAY_MS,
+    );
+    const report = await watchSpend(
+      watchEnv(),
+      {},
+      {
+        ...world(d1Answers(98_000)).deps(),
+        emit: (e, event, d) => {
+          if (event.type === "usage_account_limit") return emitUsageEvent(e, event, d);
+          // Judging the app sends its own warning: make that blow up.
+          throw new Error("judging failed");
+        },
+      },
+    );
+    expect(report.status).toBe("failed");
+    const row = await env.DB.prepare(
+      `SELECT e.type, d.status FROM notification_events e
+       JOIN notification_deliveries d ON d.event_id = e.id`,
+    ).all<{ type: string; status: string }>();
+    // The scheduled run sends it.
+    expect(row.results).toEqual([{ type: "usage_account_limit", status: "pending" }]);
+  });
+
+  it("stores nothing of what is not Appflare's", async () => {
+    await seedRecordedApp();
+    await watchSpend(watchEnv(), {}, world(d1Answers(98_000)).deps());
+    // Nothing of the other database is stored or attributed.
+    expect(
+      (await readUsage(db(), { from: 0, to: HOUR_NOW + HOUR, grain: "hour" })).every(
+        (r) => r.installId === "notes",
+      ),
+    ).toBe(true);
+    expect(await hourly("notes", "d1_rows_written")).toEqual([
+      [-2 * HOUR, 300],
+      [-HOUR, 300],
+      [0, 300],
+    ]);
+  });
+
+  it("does not warn about the same app without the other usage", async () => {
+    await seedRecordedApp();
+    const w = world(d1Answers(0));
+    await watchSpend(watchEnv(), {}, w.deps());
+    expect(w.events.filter((e) => e.type === "usage_limit_near")).toEqual([]);
+  });
+
+  it("hands the account's totals to the check's own invocation on Workers Free", async () => {
+    await seedRecordedApp();
+    const w = world(d1Answers(98_000));
+    const checks: CheckInput[] = [];
+    const self: Record<string, (input: unknown) => Promise<unknown>> = {};
+    const units = createSpendWatcherUnits({ ...watchEnv(), SELF: self }, w.deps());
+    self.spendCheck = (input: unknown) => {
+      checks.push(input as CheckInput);
+      return units.spendCheck(structuredClone(input));
+    };
+    self.spendShard = (input: unknown) => units.spendShard(structuredClone(input));
+    await watchSpend({ ...watchEnv(), SELF: self }, {}, w.deps());
+    expect(checks[0]?.accountToday?.d1_rows_written).toBe(98_900);
+    // The account's warning, once, from the check's own invocation; no app's.
+    // The account's warning from the check's own invocation; the app's from its
+    // part, past the channels the account's reached.
+    expect(w.events.map((e) => e.type)).toEqual(["usage_account_limit", "usage_limit_near"]);
+    expect(w.events[1]).toMatchObject({ exceptChannelsWith: "usage_account_limit" });
+  });
+
+  it("reads no account totals on Workers Paid", async () => {
+    await writeAccountPlan(db(), "paid");
+    await seedRecordedApp();
+    const w = world(d1Answers(98_000));
+    await watchSpend(watchEnv(), {}, w.deps());
+    expect(w.graphql).toHaveLength(9);
+    expect(w.graphql.every((s) => Object.keys(s.filter).some((k) => k.endsWith("_in")))).toBe(true);
+    expect((await readSpendWatchStatus(db()))?.account).toBeUndefined();
+    expect(
+      w.events.filter((e) => e.type === "usage_limit_near" || e.type === "usage_account_limit"),
+    ).toEqual([]);
+    expect(await listActivity(db(), { kinds: ["limit_near"] })).toEqual([]);
+  });
+
+  it("merges a partly failed reading with today's earlier one, and judges with the merge", async () => {
+    await seedRecordedApp();
+    await watchSpend(watchEnv(), {}, world(d1Answers(98_000)).deps());
+    const before = (await readSpendWatchStatus(db()))?.account?.used ?? {};
+    expect(before.d1_rows_written).toBe(98_900);
+    // Five minutes on, the outside database wrote more, but D1's total cannot be read:
+    // D1 keeps the earlier total, every other product is read anew.
+    const later = d1Answers(99_500);
+    later.workersInvocationsAdaptive = [
+      ...(later.workersInvocationsAdaptive ?? []),
+      answerRow("scriptName", "not-appflare", HOUR_NOW, { sum: { requests: 40_000 } }),
+    ];
+    const noD1 = world(later, {
+      refuse: { message: "timeout", datasets: ["d1AnalyticsAdaptiveGroups"] },
+    });
+    const checks: CheckInput[] = [];
+    const self: Record<string, (input: unknown) => Promise<unknown>> = {};
+    const units = createSpendWatcherUnits({ ...watchEnv(), SELF: self }, noD1.deps());
+    self.spendCheck = (input: unknown) => {
+      checks.push(input as CheckInput);
+      return units.spendCheck(structuredClone(input));
+    };
+    self.spendShard = (input: unknown) => units.spendShard(structuredClone(input));
+    await watchSpend({ ...watchEnv(), SELF: self }, {}, noD1.deps(NOW + 5 * 60_000));
+    const merged = (await readSpendWatchStatus(db()))?.account;
+    expect(merged?.at).toBe(NOW + 5 * 60_000);
+    expect(merged?.used.d1_rows_written).toBe(98_900);
+    expect(merged?.used.workers_requests).toBe((before.workers_requests ?? 0) + 40_000);
+    expect(merged?.used.kv_reads).toBe(before.kv_reads);
+    // The check's own invocation judges the limits with the merged reading.
+    expect(checks[0]?.accountToday?.d1_rows_written).toBe(98_900);
+    expect(checks[0]?.accountToday?.workers_requests).toBe(merged?.used.workers_requests);
+  });
+
+  it("keeps the day's last reading through a check that reads none, and drops it the next day", async () => {
+    await seedRecordedApp();
+    await watchSpend(watchEnv(), {}, world(d1Answers(98_000)).deps());
+    const failing = world(RECORDED, { refuse: { message: "timeout" } });
+    await watchSpend(watchEnv(), {}, failing.deps(NOW + 5 * 60_000));
+    const kept = await readSpendWatchStatus(db());
+    expect(kept).toMatchObject({ state: "watching", at: NOW + 5 * 60_000, account: { at: NOW } });
+    expect(kept?.account?.used.d1_rows_written).toBe(98_900);
+    await watchSpend(watchEnv(), {}, failing.deps(DAY_START + DAY_MS + 60_000));
+    expect((await readSpendWatchStatus(db()))?.account).toBeUndefined();
   });
 });
 
@@ -484,12 +889,14 @@ describe("watchSpend: judging", () => {
           return (deps.startPause ?? (() => Promise.reject(new Error("no"))))(e, r);
         },
         emit: async (e, ev, d) => {
-          order.push(`send ${ev.type}`);
+          // Into the outbox only (no `SELF`): no subrequest, so it may come first.
+          order.push(`send ${ev.type}${e.SELF === undefined ? " (outbox)" : ""}`);
           return (deps.emit ?? (() => Promise.reject(new Error("no"))))(e, ev, d);
         },
       },
     );
-    expect(order[0]).toBe("pause");
+    expect(order.filter((o) => !o.endsWith("(outbox)"))[0]).toBe("pause");
+    expect(order).toContain("send usage_account_limit (outbox)");
     expect(report.pauses).toBe(1);
   });
 
@@ -577,6 +984,59 @@ describe("watchSpend: judging", () => {
       );
       expect(w.pauses.map((p) => [p.installId, p.reason])).toEqual([["loopy", "loop"]]);
       expect(report.pauses).toBe(1);
+    });
+
+    it("asks for the account warning's delivery only after the parts' pauses", async () => {
+      await seedApp("loopy", { worker: "loopy" });
+      await seedCalmHistory("loopy");
+      await writeAppSpendSettings(
+        db(),
+        "loopy",
+        { autoPause: "on", customTriggers: true, loopOn: true, loopLevel: "strict", capOn: false },
+        { userId: "u", now: new Date(NOW - DAY_MS) },
+      );
+      // Its second check in a row: this one pauses it.
+      await env.DB.prepare(
+        "INSERT INTO app_usage_state (install_id, loop_checks) VALUES ('loopy', 1)",
+      ).run();
+      await addChannel(
+        {
+          label: "Limits",
+          events: ["usage_account_limit"],
+          settings: { kind: "slack", webhookUrl: SLACK_URL },
+        },
+        NOW - DAY_MS,
+      );
+      const w = world(loopAnswers("ns-loopy"), {
+        namespaces: [{ id: "ns-loopy", script: "loopy" }],
+      });
+      const order: string[] = [];
+      const deps: SpendWatchDeps = {
+        ...w.deps(),
+        emit: emitUsageEvent,
+        startPause: async (e, r) => {
+          order.push(`pause ${r.installId}`);
+          return (w.deps().startPause ?? (() => Promise.reject(new Error("no"))))(e, r);
+        },
+      };
+      const { self } = selfFor(deps);
+      self.deliverNotifications = async (input: unknown) => {
+        const { eventId } = input as { eventId: string };
+        const row = await env.DB.prepare("SELECT type FROM notification_events WHERE id = ?1")
+          .bind(eventId)
+          .first<{ type: string }>();
+        order.push(`deliver ${row?.type}`);
+        return { ok: true, value: { sent: 0, retrying: 0, failed: 0 } };
+      };
+      const report = await watchSpend({ ...watchEnv(), SELF: self }, {}, deps);
+      expect(report.pauses).toBe(1);
+      // The account is past 90% of its Durable Objects requests and rows written:
+      // both warnings are sent after the pause.
+      expect(order).toEqual([
+        "pause loopy",
+        "deliver usage_account_limit",
+        "deliver usage_account_limit",
+      ]);
     });
 
     it("keeps an app's last numbers when its part fails", async () => {

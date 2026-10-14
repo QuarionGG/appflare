@@ -435,6 +435,88 @@ describe("free daily limits", () => {
   it("does not warn on Paid", () => {
     expect(run(apps()).activities).toEqual([]);
   });
+
+  describe("the account's own totals", () => {
+    // 100 D1 rows written an hour: 1,250 by 12:30 UTC, 2,400 by the day's end.
+    const quiet = () => app("a", { usage: { d1_rows_written: hourly(TEN_DAYS, 100) } });
+
+    it("warns when other usage in the account pushes a limit near, with the app's small share", () => {
+      expect(run([quiet()], { plan: "free" }).activities).toEqual([]);
+      // 99,000 rows written today in the account; only 1,250 of them the app's.
+      const d = run([quiet()], { plan: "free", accountToday: { d1_rows_written: 99_000 } });
+      expect(d.activities).toEqual([
+        {
+          installId: "a",
+          kind: "limit_near",
+          facts: {
+            product: "d1_rows_written",
+            share: 0.99,
+            // The rest of the day at the app's own pace: 1,000 rows at 100 an hour.
+            runsOutAt: NOW + 10 * HOUR_MS,
+            appShare: 1_250 / 99_000,
+            otherShare: 97_750 / 99_000,
+          },
+        },
+      ]);
+      expect(d.events).toEqual([
+        expect.objectContaining({
+          type: "usage_limit_near",
+          installId: "a",
+          used: 99_000,
+          appShare: 1_250 / 99_000,
+          otherShare: 97_750 / 99_000,
+        }),
+      ]);
+    });
+
+    it("tells a limit other usage used up as used up", () => {
+      const d = run([quiet()], { plan: "free", accountToday: { d1_rows_written: 100_000 } });
+      expect(d.activities[0]?.facts).toMatchObject({ share: 1, runsOutAt: null });
+    });
+
+    it("takes Appflare's own use when the reading is behind it", () => {
+      const d = run([quiet()], { plan: "free", accountToday: { d1_rows_written: 10 } });
+      expect(d.activities).toEqual([]);
+    });
+
+    it("tells no app about a limit none of Appflare's apps uses", () => {
+      const d = run(apps(), {
+        plan: "free",
+        accountToday: { kv_writes: 1_000, workers_requests: 0 },
+      });
+      expect(d.activities.map((a) => a.facts)).toEqual([
+        expect.objectContaining({ product: "workers_requests" }),
+      ]);
+    });
+
+    it("warns the app about a limit the account was warned about, past the account's channels", () => {
+      const d = run([quiet()], {
+        plan: "free",
+        accountToday: { d1_rows_written: 99_000 },
+        limitsCovered: new Set(["d1_rows_written"]),
+      });
+      expect(d.activities.map((a) => a.kind)).toEqual(["limit_near"]);
+      expect(d.events).toEqual([
+        expect.objectContaining({
+          type: "usage_limit_near",
+          exceptChannelsWith: "usage_account_limit",
+        }),
+      ]);
+      // Another product's warning reaches every channel.
+      const other = run([quiet()], {
+        plan: "free",
+        accountToday: { d1_rows_written: 99_000 },
+        limitsCovered: new Set(["kv_writes"]),
+      });
+      expect(other.events[0]).not.toHaveProperty("exceptChannelsWith");
+    });
+
+    it("leaves Paid as it was", () => {
+      const d = run([quiet()], { accountToday: { d1_rows_written: 100_000 } });
+      expect(d.activities).toEqual([]);
+      expect(d.events).toEqual([]);
+    });
+  });
 });
 
 describe("after a resume", () => {

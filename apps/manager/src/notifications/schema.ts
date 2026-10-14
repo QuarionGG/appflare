@@ -33,6 +33,7 @@ export const NOTIFICATION_EVENTS = [
   "usage_unusual",
   "usage_alert",
   "usage_limit_near",
+  "usage_account_limit",
   "app_paused",
   "app_resumed",
   "app_pause_failed",

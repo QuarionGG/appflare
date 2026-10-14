@@ -1,5 +1,9 @@
 import { RECONNECT_COPY } from "../cloudflare/connection-view";
-import { type ClockFormat, usageAttentionCopy } from "../usage/attention";
+import {
+  accountLimitAttentionCopy,
+  type ClockFormat,
+  usageAttentionCopy,
+} from "../usage/attention";
 import type { AttentionItem, FailedJob } from "./attention";
 
 /**
@@ -71,6 +75,10 @@ export function attentionCopy(
   switch (item.kind) {
     case "usage": {
       const { title, description } = usageAttentionCopy(item.usage, item.label, clock);
+      return { title, description };
+    }
+    case "account-usage": {
+      const { title, description } = accountLimitAttentionCopy(item.limit, item.topLabel);
       return { title, description };
     }
     case "connection":

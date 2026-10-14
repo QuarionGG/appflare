@@ -158,7 +158,7 @@ describe("SpendProtectionSection", () => {
     expect(switchNamed("Monthly budget")?.getAttribute("aria-checked")).toBe("true");
     expect(input("budget").value).toBe("50");
     const page = text();
-    expect(page).toContain("Keep this month's bill under");
+    expect(page).toContain("Keep this month's Appflare usage under");
     expect(page).toContain("including the $5 plan");
     expect(page).toContain(
       "$18.40 so far this month, on pace for $66.45. Over the budget, so Appflare would pause Service status first.",
@@ -193,7 +193,7 @@ describe("SpendProtectionSection", () => {
     const page = text();
     expect(page).toContain("Off: Appflare alerts you and apps keep running.");
     expect(page).toContain("Nothing is a trigger, so auto-pause never pauses anything.");
-    expect(page).not.toContain("Keep this month's bill under");
+    expect(page).not.toContain("Keep this month's Appflare usage under");
     expect(container.querySelector('input[name="budget"]')).toBeNull();
     expect(page).not.toContain("Set their own");
   });

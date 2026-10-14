@@ -43,10 +43,11 @@ A new channel receives every event. Untick the ones you do not want.
 | **Unusual usage** | Once each time an app's usage in an hour climbs far above its normal, with what it costs at Cloudflare's prices. | `usage_unusual` |
 | **Usage alert** | When an app passes one of its usage alerts, once per alert and day, week or month. | `usage_alert` |
 | **Free daily limit running out** | On the Free plan, once a day per app, when an app is on pace to use up one of the account's free daily limits before 00:00 UTC. | `usage_limit_near` |
+| **Account near a free daily limit** | On the Free plan, once a day per limit, when the whole account has used 90% of one of its free daily limits, whatever used it. A channel that also gets **Free daily limit running out** hears about a limit once a day, from whichever comes first. | `usage_account_limit` |
 | **App paused** | When an app is paused, by someone or by Appflare, and why. | `app_paused` |
 | **App resumed** | When an app is resumed by Appflare, or by someone other than the person who paused it. | `app_resumed` |
 | **Pausing an app failed** | When pausing an app does not finish, by someone or by Appflare: the app may still be running and using Cloudflare. | `app_pause_failed` |
-| **Monthly budget reached** | Once a month, when the account's bill is on pace to pass its monthly budget and Appflare starts pausing apps. | `budget_reached` |
+| **Monthly budget reached** | Once a month, when this month's Appflare usage, including the $5 plan, is on pace to pass the monthly budget and Appflare starts pausing apps. | `budget_reached` |
 | **Appflare update available** | Once per release, when a newer Appflare release is published. | `manager_update_available` |
 | **Domain active** | When an external domain starts serving its app. | `domain_active` |
 | **Domain failed** | When an external domain stops serving or cannot be validated, for example its custom hostname was deleted or its certificate expired. | `domain_failed` |
@@ -201,15 +202,19 @@ estimates at list price:
   `burnPerHour`, `spentToday`, and on Workers Free `freeShare`.
 - `usage_alert`: `plan`, `ruleId`, `sentence`, `kind` (`spent` or `pace`), `unit`
   (`usd` or `pct`), `amount`, `value`, `period` and `periodStart`.
-- `usage_limit_near`: `product`, `limit`, `used`, `runsOutAt` (`null` once it ran
-  out), `appShare` and `day`.
+- `usage_limit_near`: `product`, `limit`, `used` (by the whole account), `runsOutAt`
+  (`null` once it ran out), `appShare`, `day`, and `otherShare` when part of the
+  account's use is not from Appflare's apps.
+- `usage_account_limit`: `product`, `limit`, `used` (by the whole account), `otherShare`
+  (the share not from Appflare's apps), `top` (the Appflare app that used most of it, as
+  `app` and `share`, or `null`) and `day`. It is about the account, so it has no `app`.
 - `app_paused`: `pauseId`, `by` and `cause`, whose `reason` is `manual`, `loop`,
   `cap` or `budget`.
 - `app_resumed`: `pauseId`, `by` and `capSetAsideUntil`.
 - `app_pause_failed`: `jobId`, `by`, `cause` and `left`, what the job could not put
   back (empty when the app runs as before).
-- `budget_reached`: `budget`, `projected` and `monthStart`. It is about the account,
-  so it has no `app`.
+- `budget_reached`: `budget`, `projected` (this month's Appflare usage with the $5
+  plan) and `monthStart`. It is about every app, so it has no `app`.
 
 `by` is a person's name, `Someone` for a user that was removed, or `null` when
 Appflare acted on its own. `since`, `runsOutAt` and `capSetAsideUntil` are

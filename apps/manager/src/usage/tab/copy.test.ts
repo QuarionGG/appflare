@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { PauseView, UsageEvent, UsageStatus } from "../tab";
+import type { PauseView, ProductUsage, UsageEvent, UsageStatus } from "../tab";
 import { clock } from "../ui/format";
-import { amount, eventCopy, plural, stateBanner, statusLine, updatedText, usedText } from "./copy";
+import {
+  amount,
+  eventCopy,
+  otherUsageNote,
+  plural,
+  stateBanner,
+  statusLine,
+  updatedText,
+  usedText,
+} from "./copy";
 
 /**
  * The Usage tab's words for each state, and each event as Recent activity
@@ -28,7 +37,7 @@ describe("statusLine", () => {
       [
         { kind: "normal", requestsShare: 0.38 },
         "good",
-        "Normal for this app. 38% of today's Worker requests in this account; limits and included usage are shared by every app.",
+        "Normal for this app. 38% of today's Worker requests in this account; limits and included usage count the whole account.",
       ],
       [
         { kind: "busy", product: "workers_requests", perHour: 22_000, ratio: 25 },
@@ -134,7 +143,7 @@ describe("stateBanner", () => {
       },
       true,
     );
-    expect(budget?.description).toContain("past its $50.00 monthly budget");
+    expect(budget?.description).toContain("past the $50.00 monthly budget");
     expect(budget?.description).toContain("exempt it from the budget below");
   });
 
@@ -184,11 +193,63 @@ describe("stateBanner", () => {
     expect(limit?.description).toBe(
       "This account used its 100,000 free Durable Objects requests for today, 97% of them by this app. Cloudflare refuses more until 00:00 UTC. Nothing is billed on the Free plan.",
     );
+    const byOthers = stateBanner(
+      {
+        kind: "limit",
+        product: "d1_rows_written",
+        limit: 100_000,
+        loopSince: null,
+        appShare: 0.02,
+        otherShare: 0.97,
+      },
+      false,
+    );
+    expect(byOthers?.description).toBe(
+      "This account used its 100,000 free D1 rows written for today, 2% of them by this app and 97% by other usage in this account (not Appflare apps). Cloudflare refuses more until 00:00 UTC. Nothing is billed on the Free plan.",
+    );
     expect(stateBanner({ kind: "normal", requestsShare: null }, true)).toBeNull();
     expect(
       stateBanner({ kind: "busy", product: "workers_requests", perHour: 1, ratio: 4 }, true)
         ?.action,
     ).toBeNull();
+  });
+});
+
+describe("otherUsageNote", () => {
+  const product = (
+    key: ProductUsage["key"],
+    allowance: ProductUsage["allowance"],
+  ): ProductUsage => ({
+    key,
+    level: false,
+    hours: [],
+    days: [],
+    lastHour: 0,
+    normal: null,
+    ratio: null,
+    hot: false,
+    today: 0,
+    month: 0,
+    projectedMonth: 0,
+    allowance,
+    overageUsd: null,
+  });
+
+  it("names each daily limit with other usage in the account, as a share of the limit", () => {
+    expect(
+      otherUsageNote([
+        product("workers_requests", { share: 0.2, daily: true, other: 0.05 }),
+        product("d1_rows_written", { share: 0.9, daily: true, other: 0.89 }),
+        product("kv_reads", { share: 0.1, daily: true }),
+        product("d1_rows_read", { share: 0.1, daily: true, other: 0.001 }),
+      ]),
+    ).toBe(
+      "Free daily limits count the whole account, so \"Of free limit\" includes other usage in this account (not Appflare apps): 5% of today's Worker requests and 89% of today's D1 rows written.",
+    );
+  });
+
+  it("says nothing without other usage", () => {
+    expect(otherUsageNote([product("kv_reads", { share: 0.1, daily: true })])).toBeNull();
   });
 });
 

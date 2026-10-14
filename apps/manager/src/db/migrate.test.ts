@@ -351,10 +351,54 @@ describe("0011_notification_pause_failed_event", () => {
         .bind(id, events)
         .run();
     }
-    await createMigrator(migrations).ensure(env.DB);
+    await createMigrator(migrations.slice(0, before + 1)).ensure(env.DB);
     expect(await eventsOf("updates")).toEqual(["update_available", "app_pause_failed"]);
     expect(await eventsOf("none")).toEqual(["app_pause_failed"]);
     expect(await eventsOf("has")).toEqual(["app_pause_failed", "app_paused"]);
+    expect(await eventsOf("broken")).toBe("not json");
+  });
+});
+
+describe("0012_notification_account_limit_event", () => {
+  async function eventsOf(id: string): Promise<unknown> {
+    const row = await env.DB.prepare("SELECT events_json FROM notification_channels WHERE id = ?1")
+      .bind(id)
+      .first<{ events_json: string }>();
+    try {
+      return JSON.parse(row?.events_json ?? "null");
+    } catch {
+      return row?.events_json;
+    }
+  }
+
+  it("gives the account's free limit event, once, to the channels that hear about an app's", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0012_notification_account_limit_event");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    for (const [id, events] of [
+      ["updates", '["update_available"]'],
+      ["none", "[]"],
+      ["limits", '["usage_limit_near","app_paused"]'],
+      ["has", '["usage_account_limit","usage_limit_near"]'],
+      ["broken", "not json"],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
+         VALUES (?1, 'slack', ?1, 'Slack', 'v1.x.y', ?2, 1, 1)`,
+      )
+        .bind(id, events)
+        .run();
+    }
+    await createMigrator(migrations).ensure(env.DB);
+    // Channels that left free limits out stay as they are.
+    expect(await eventsOf("updates")).toEqual(["update_available"]);
+    expect(await eventsOf("none")).toEqual([]);
+    expect(await eventsOf("limits")).toEqual([
+      "usage_limit_near",
+      "app_paused",
+      "usage_account_limit",
+    ]);
+    expect(await eventsOf("has")).toEqual(["usage_account_limit", "usage_limit_near"]);
     expect(await eventsOf("broken")).toBe("not json");
   });
 });

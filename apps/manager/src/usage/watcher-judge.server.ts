@@ -113,6 +113,13 @@ export interface Judged {
   incomplete: ReadonlySet<string>;
   /** The account's free daily limit warnings, when worked out for the whole account already. */
   limitWarnings?: ReadonlyMap<string, LimitWarning>;
+  /**
+   * Workers Free: the whole account's use today of what the plan limits per
+   * day (account-day.ts), for the warnings when they are worked out here.
+   */
+  accountToday?: Readonly<Record<string, number>>;
+  /** Products the account was warned about today: an app's warning skips the account's channels. */
+  limitsCovered?: ReadonlySet<string>;
   /** Every install not removed, when `usage` holds removed ones too (the budget's projection). */
   installed?: ReadonlySet<string>;
   /**
@@ -340,6 +347,8 @@ export async function judge(
     budgetToldThisMonth: budgetTold > 0,
     limitSharesToday,
     ...(input.limitWarnings === undefined ? {} : { limitWarnings: input.limitWarnings }),
+    ...(input.accountToday === undefined ? {} : { accountToday: input.accountToday }),
+    ...(input.limitsCovered === undefined ? {} : { limitsCovered: input.limitsCovered }),
     ...(input.installed === undefined ? {} : { installed: input.installed }),
   });
 

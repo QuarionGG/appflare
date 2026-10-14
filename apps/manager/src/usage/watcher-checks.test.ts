@@ -9,7 +9,12 @@ import {
 } from "./overview.server";
 import { checkInputSchema, parseCheckInput } from "./watcher-check.server";
 import { parseShardInput, shardInputSchema } from "./watcher-shard.server";
-import { type SpendWatchStatus, spendWatchStatusSchema, statusText } from "./watcher-status";
+import {
+  type SpendWatchStatus,
+  spendWatchStatusSchema,
+  statusText,
+  storedAccountDay,
+} from "./watcher-status";
 
 /**
  * The scheduled check validates what it builds itself without Zod (whose
@@ -95,7 +100,14 @@ describe("parseShardInput", () => {
     alarms: { a: [{ object: "ns", alarms: 4000 }] },
     limitWarnings: {
       a: { product: "kv_writes", used: 900, share: 0.9, runsOutAt: null, appShare: 1 },
-      b: { product: "d1_rows_read", used: 9, share: 0.1, runsOutAt: NOW + 1, appShare: 0.5 },
+      b: {
+        product: "d1_rows_read",
+        used: 9,
+        share: 0.1,
+        runsOutAt: NOW + 1,
+        appShare: 0.5,
+        otherShare: 0.4,
+      },
     },
     resumes: { a: { at: NOW - 60_000, base: { workers_requests: 12 } } },
     unknown: true,
@@ -124,6 +136,19 @@ describe("parseShardInput", () => {
       { ...input, judge: [1] },
       { ...input, alarms: { a: [{ object: "ns", alarms: "many" }] } },
       { ...input, limitWarnings: { a: { product: "kv_writes", used: 1, share: 1, appShare: 1 } } },
+      {
+        ...input,
+        limitWarnings: {
+          a: {
+            product: "kv_writes",
+            used: 1,
+            share: 1,
+            runsOutAt: null,
+            appShare: 1,
+            otherShare: "most",
+          },
+        },
+      },
       { ...input, resumes: { a: { at: 1, base: { workers_requests: "1" } } } },
     ];
     for (const b of bad) {
@@ -140,9 +165,28 @@ describe("statusText", () => {
       { state: "needs_access", at: NOW, via: "oauth", missing: ["account-analytics.read"] },
       { state: "needs_access", at: NOW, via: "token", missing: [] },
       { state: "failed", at: NOW, error: "D1 is down" },
+      // Workers Free: the account's totals today, read with the check.
+      { state: "watching", at: NOW, account: { at: NOW, used: { d1_rows_written: 90_152 } } },
+      {
+        state: "needs_access",
+        at: NOW,
+        via: "token",
+        missing: [],
+        account: { at: NOW - 300_000, used: {} },
+      },
+      {
+        state: "failed",
+        at: NOW,
+        error: "x",
+        account: { at: NOW, used: { workers_requests: 5_731, kv_writes: 0 } },
+      },
     ];
     for (const s of statuses) {
       expect(statusText(s)).toBe(JSON.stringify(spendWatchStatusSchema.parse(s)));
+      // What the watcher reads back of it, by hand, is what the pages read.
+      expect(storedAccountDay(statusText(s))).toEqual(
+        spendWatchStatusSchema.parse(s).account ?? null,
+      );
     }
   });
 
@@ -152,6 +196,10 @@ describe("statusText", () => {
       { state: "needs_access", at: NOW, via: "email", missing: [] },
       { state: "failed", at: NOW },
       { state: "sleeping", at: NOW },
+      { state: "watching", at: NOW, account: { at: 1.5, used: {} } },
+      { state: "watching", at: NOW, account: { at: NOW, used: { kv_writes: -1 } } },
+      { state: "watching", at: NOW, account: { at: NOW, used: { kv_writes: "1" } } },
+      { state: "watching", at: NOW, account: { at: NOW } },
     ] as unknown as SpendWatchStatus[];
     for (const s of bad) {
       expect(spendWatchStatusSchema.safeParse(s).success).toBe(false);
@@ -179,6 +227,8 @@ describe("parseCheckInput", () => {
 
   it("reads what the schema reads", () => {
     expect(parseCheckInput(input)).toEqual(checkInputSchema.parse(input));
+    const free = { ...input, plan: "free", accountToday: { d1_rows_written: 90_152 } };
+    expect(parseCheckInput(free)).toEqual(checkInputSchema.parse(free));
   });
 
   it("refuses what the schema refuses", () => {
@@ -192,6 +242,8 @@ describe("parseCheckInput", () => {
       { ...input, budget: "41" },
       { ...input, alarms: { a: {} } },
       { ...input, resumes: undefined },
+      { ...input, accountToday: { d1_rows_written: "many" } },
+      { ...input, accountToday: [] },
     ];
     for (const b of bad) {
       expect(checkInputSchema.safeParse(b).success).toBe(false);

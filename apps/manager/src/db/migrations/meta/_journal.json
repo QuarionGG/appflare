@@ -85,6 +85,13 @@
       "when": 1791819210696,
       "tag": "0011_notification_pause_failed_event",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791917377673,
+      "tag": "0012_notification_account_limit_event",
+      "breakpoints": true
     }
   ]
 }
