@@ -26,6 +26,7 @@ import cutManifest from "./cut-manifest.json";
 import emdashManifest from "./emdash-manifest.json";
 import formAppsJson from "./form-apps.json";
 import { homeUsageFixture } from "./home-usage";
+import { importedAppFixtures, importedFunctionFixtures } from "./imports";
 
 // Parsed as the manager reads them, so a fixture in an outdated shape fails
 // here instead of rendering a page the manager would never show.
@@ -815,6 +816,7 @@ function usageTabData(): UsageTabData {
 }
 
 export function fixture(name: string, args: unknown[]): unknown {
+  if (importedFunctionFixtures[name] !== undefined) return importedFunctionFixtures[name](args);
   const result: Record<string, () => unknown> = {
     // Setup at the owner step: the token is saved, and nobody exists yet.
     enterSetup: () => setupEntry(),
@@ -842,6 +844,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       manager: { current: "0.1.0", latest: null, updateAvailable: false, activeJobId: null },
       removedApps: 0,
       apps,
+      importedApps: [...importedAppFixtures],
       failedJobs: [],
       accountRows: accountRowsFixture(),
       deployCopy: null,

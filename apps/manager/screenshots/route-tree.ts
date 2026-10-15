@@ -4,6 +4,8 @@ import { Route as appRoute } from "../src/routes/_app";
 import { Route as installedApp } from "../src/routes/_app/apps/$installId";
 import { Route as catalogApp } from "../src/routes/_app/catalog/$slug";
 import { Route as catalog } from "../src/routes/_app/catalog/index";
+import { Route as importedApp } from "../src/routes/_app/imports/$appId";
+import { Route as imports } from "../src/routes/_app/imports/index";
 import { Route as home } from "../src/routes/_app/index";
 import { Route as job } from "../src/routes/_app/jobs/$jobId";
 import { Route as account } from "../src/routes/_app/settings/account";
@@ -31,6 +33,12 @@ export const routeTree = rootRoute.addChildren([
   login,
   app.addChildren([
     home.update({ id: "/", path: "/", getParentRoute: () => app } as any),
+    imports.update({ id: "/imports/", path: "/imports/", getParentRoute: () => app } as any),
+    importedApp.update({
+      id: "/imports/$appId",
+      path: "/imports/$appId",
+      getParentRoute: () => app,
+    } as any),
     catalog.update({ id: "/catalog/", path: "/catalog/", getParentRoute: () => app } as any),
     catalogApp.update({
       id: "/catalog/$slug",

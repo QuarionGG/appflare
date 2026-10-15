@@ -20,6 +20,8 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as AppAppsInstallIdRouteImport } from './routes/_app/apps/$installId'
 import { Route as AppCatalogIndexRouteImport } from './routes/_app/catalog/index'
 import { Route as AppCatalogSlugRouteImport } from './routes/_app/catalog/$slug'
+import { Route as AppImportsIndexRouteImport } from './routes/_app/imports/index'
+import { Route as AppImportsAppIdRouteImport } from './routes/_app/imports/$appId'
 import { Route as AppInstallSlugRouteImport } from './routes/_app/install/$slug'
 import { Route as AppJobsIndexRouteImport } from './routes/_app/jobs/index'
 import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
@@ -96,6 +98,16 @@ const AppCatalogIndexRoute = AppCatalogIndexRouteImport.update({
 const AppCatalogSlugRoute = AppCatalogSlugRouteImport.update({
   id: '/catalog/$slug',
   path: '/catalog/$slug',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppImportsIndexRoute = AppImportsIndexRouteImport.update({
+  id: '/imports/',
+  path: '/imports/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppImportsAppIdRoute = AppImportsAppIdRouteImport.update({
+  id: '/imports/$appId',
+  path: '/imports/$appId',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInstallSlugRoute = AppInstallSlugRouteImport.update({
@@ -230,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/api/health': typeof ApiHealthRoute
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
+  '/imports/$appId': typeof AppImportsAppIdRoute
   '/install/$slug': typeof AppInstallSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
@@ -248,6 +261,7 @@ export interface FileRoutesByFullPath {
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog/': typeof AppCatalogIndexRoute
+  '/imports/': typeof AppImportsIndexRoute
   '/jobs/': typeof AppJobsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
   '/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
@@ -265,6 +279,7 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
+  '/imports/$appId': typeof AppImportsAppIdRoute
   '/install/$slug': typeof AppInstallSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
@@ -283,6 +298,7 @@ export interface FileRoutesByTo {
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog': typeof AppCatalogIndexRoute
+  '/imports': typeof AppImportsIndexRoute
   '/jobs': typeof AppJobsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
   '/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
@@ -302,6 +318,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/apps/$installId': typeof AppAppsInstallIdRoute
   '/_app/catalog/$slug': typeof AppCatalogSlugRoute
+  '/_app/imports/$appId': typeof AppImportsAppIdRoute
   '/_app/install/$slug': typeof AppInstallSlugRoute
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
   '/_app/settings/account': typeof AppSettingsAccountRoute
@@ -320,6 +337,7 @@ export interface FileRoutesById {
   '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
   '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/_app/catalog/': typeof AppCatalogIndexRoute
+  '/_app/imports/': typeof AppImportsIndexRoute
   '/_app/jobs/': typeof AppJobsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
   '/_app/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
@@ -339,6 +357,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/apps/$installId'
     | '/catalog/$slug'
+    | '/imports/$appId'
     | '/install/$slug'
     | '/jobs/$jobId'
     | '/settings/account'
@@ -357,6 +376,7 @@ export interface FileRouteTypes {
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/catalog/'
+    | '/imports/'
     | '/jobs/'
     | '/settings/'
     | '/catalog/source/$buildId'
@@ -374,6 +394,7 @@ export interface FileRouteTypes {
     | '/'
     | '/apps/$installId'
     | '/catalog/$slug'
+    | '/imports/$appId'
     | '/install/$slug'
     | '/jobs/$jobId'
     | '/settings/account'
@@ -392,6 +413,7 @@ export interface FileRouteTypes {
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/catalog'
+    | '/imports'
     | '/jobs'
     | '/settings'
     | '/catalog/source/$buildId'
@@ -410,6 +432,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/apps/$installId'
     | '/_app/catalog/$slug'
+    | '/_app/imports/$appId'
     | '/_app/install/$slug'
     | '/_app/jobs/$jobId'
     | '/_app/settings/account'
@@ -428,6 +451,7 @@ export interface FileRouteTypes {
     | '/api/danger/remove-appflare'
     | '/api/danger/rotate-auth-secret'
     | '/_app/catalog/'
+    | '/_app/imports/'
     | '/_app/jobs/'
     | '/_app/settings/'
     | '/_app/catalog/source/$buildId'
@@ -529,6 +553,20 @@ declare module '@tanstack/react-router' {
       path: '/catalog/$slug'
       fullPath: '/catalog/$slug'
       preLoaderRoute: typeof AppCatalogSlugRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/imports/': {
+      id: '/_app/imports/'
+      path: '/imports'
+      fullPath: '/imports/'
+      preLoaderRoute: typeof AppImportsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/imports/$appId': {
+      id: '/_app/imports/$appId'
+      path: '/imports/$appId'
+      fullPath: '/imports/$appId'
+      preLoaderRoute: typeof AppImportsAppIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/install/$slug': {
@@ -699,6 +737,7 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppAppsInstallIdRoute: typeof AppAppsInstallIdRoute
   AppCatalogSlugRoute: typeof AppCatalogSlugRoute
+  AppImportsAppIdRoute: typeof AppImportsAppIdRoute
   AppInstallSlugRoute: typeof AppInstallSlugRoute
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
   AppSettingsAccountRoute: typeof AppSettingsAccountRoute
@@ -713,6 +752,7 @@ interface AppRouteChildren {
   AppSettingsUsageDataRoute: typeof AppSettingsUsageDataRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppCatalogIndexRoute: typeof AppCatalogIndexRoute
+  AppImportsIndexRoute: typeof AppImportsIndexRoute
   AppJobsIndexRoute: typeof AppJobsIndexRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
   AppCatalogSourceBuildIdRoute: typeof AppCatalogSourceBuildIdRoute
@@ -723,6 +763,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppAppsInstallIdRoute: AppAppsInstallIdRoute,
   AppCatalogSlugRoute: AppCatalogSlugRoute,
+  AppImportsAppIdRoute: AppImportsAppIdRoute,
   AppInstallSlugRoute: AppInstallSlugRoute,
   AppJobsJobIdRoute: AppJobsJobIdRoute,
   AppSettingsAccountRoute: AppSettingsAccountRoute,
@@ -737,6 +778,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsUsageDataRoute: AppSettingsUsageDataRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppCatalogIndexRoute: AppCatalogIndexRoute,
+  AppImportsIndexRoute: AppImportsIndexRoute,
   AppJobsIndexRoute: AppJobsIndexRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
   AppCatalogSourceBuildIdRoute: AppCatalogSourceBuildIdRoute,

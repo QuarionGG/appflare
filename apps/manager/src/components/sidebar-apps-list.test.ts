@@ -10,6 +10,17 @@ const install = (id: string, name: string, displayName: string | null = null) =>
 });
 
 describe("sidebarApps", () => {
+  it("keeps imported apps linked to inventory alongside managed installs", () => {
+    const apps = sidebarApps(
+      [
+        install("managed", "Catalog app"),
+        { ...install("imported", "Existing website"), href: "/imports/imported" },
+      ],
+      new Map(),
+    );
+    expect(apps.find((app) => app.id === "imported")?.href).toBe("/imports/imported");
+    expect(apps.find((app) => app.id === "managed")?.href).toBeUndefined();
+  });
   it("lists every install by the name Home uses, sorted, with its dot", () => {
     const apps = sidebarApps(
       [
@@ -61,6 +72,8 @@ describe("currentAppId", () => {
   it("reads the install from its page and the pages under it", () => {
     expect(currentAppId("/apps/01J8")).toBe("01J8");
     expect(currentAppId("/apps/01J8/anything")).toBe("01J8");
+    expect(currentAppId("/imports/01K9")).toBe("01K9");
+    expect(currentAppId("/imports")).toBeNull();
     expect(currentAppId("/catalog")).toBeNull();
     expect(currentAppId("/apps")).toBeNull();
   });

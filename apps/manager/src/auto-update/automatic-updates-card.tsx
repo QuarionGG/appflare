@@ -5,6 +5,7 @@ import { DocsLink } from "../components/docs-link";
 import { ErrorMessageBanner } from "../components/message-text";
 import { Section, SectionBody } from "../components/section";
 import { settingsSection } from "../components/settings-links";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { AUTO_UPDATE_COPY, type AutoUpdateSettings } from "./auto-update";
 import { setAutoUpdateDefaults } from "./auto-update.functions";
 
@@ -91,18 +92,19 @@ export function AppflareAutomaticUpdates({
   isAdmin: boolean;
 }) {
   const { checked, pending, error, save } = useAutoUpdateSwitch(settings.manager, "manager");
+  const blocked = managerSelfUpdateBlock();
   return (
     <div className="grid gap-3">
       <div className="grid gap-1">
         <Switch
           label={AUTO_UPDATE_COPY.managerLabel}
-          checked={checked}
-          disabled={!isAdmin || pending}
+          checked={blocked === null && checked}
+          disabled={!isAdmin || pending || blocked !== null}
           onCheckedChange={(next: boolean) => void save(next)}
         />
         <Text variant="secondary" size="sm">
-          {AUTO_UPDATE_COPY.managerHelp}{" "}
-          <DocsLink topic="appflareAutomaticUpdates" variant="inline" />
+          {blocked ?? AUTO_UPDATE_COPY.managerHelp}{" "}
+          {blocked === null && <DocsLink topic="appflareAutomaticUpdates" variant="inline" />}
         </Text>
         {settings.devBuild && (
           <Text variant="secondary" size="sm">

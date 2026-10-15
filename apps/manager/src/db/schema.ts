@@ -269,6 +269,37 @@ export const installs = sqliteTable("installs", {
   catalog_id: text("catalog_id"),
 });
 
+/**
+ * Existing deployments inventoried without giving Appflare ownership of their
+ * lifecycle. Kept outside installs/resources so install jobs cannot change them.
+ * inventory_json contains only allowlisted metadata, never code or binding values.
+ */
+export const imported_apps = sqliteTable("imported_apps", {
+  id: text("id").primaryKey(),
+  account_id: text("account_id").notNull(),
+  display_name: text("display_name").notNull(),
+  primary_worker: text("primary_worker").notNull(),
+  inventory_json: text("inventory_json").notNull(),
+  imported_at: timestamp("imported_at").notNull(),
+  refreshed_at: timestamp("refreshed_at").notNull(),
+});
+
+/** A Worker can belong to only one imported app in its Cloudflare account. */
+export const imported_app_workers = sqliteTable(
+  "imported_app_workers",
+  {
+    account_id: text("account_id").notNull(),
+    worker_name: text("worker_name").notNull(),
+    app_id: text("app_id")
+      .notNull()
+      .references(() => imported_apps.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.account_id, t.worker_name] }),
+    index("imported_app_workers_app_id_idx").on(t.app_id),
+  ],
+);
+
 /** `official`: the catalog Appflare ships with; `custom`: one an admin added. */
 export const CATALOG_KINDS = ["official", "custom"] as const;
 export type CatalogKind = (typeof CATALOG_KINDS)[number];

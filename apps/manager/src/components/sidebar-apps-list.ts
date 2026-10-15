@@ -22,6 +22,8 @@ export interface SidebarApp {
   name: string;
   icon: string | null;
   signal: AppSignal | null;
+  /** Imported apps open their inventory instead of the install controls. */
+  href?: string;
 }
 
 /** The installs, sorted by what the sidebar calls them. */
@@ -32,6 +34,7 @@ export function sidebarApps(
     name: string;
     workerName: string;
     icon: string | null;
+    href?: string;
   }[],
   signals: ReadonlyMap<string, AppSignal>,
 ): SidebarApp[] {
@@ -43,6 +46,7 @@ export function sidebarApps(
       name: app.name,
       icon: app.icon,
       signal: signals.get(app.id) ?? null,
+      ...(app.href === undefined ? {} : { href: app.href }),
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
 }
@@ -58,7 +62,7 @@ export function filterApps(apps: readonly SidebarApp[], query: string): SidebarA
 
 /** The install whose page is open (`/apps/<id>` and below), if any. */
 export function currentAppId(pathname: string): string | null {
-  const match = /^\/apps\/([^/]+)/.exec(pathname);
+  const match = /^\/(?:apps|imports)\/([^/]+)/.exec(pathname);
   return match?.[1] === undefined ? null : decodeURIComponent(match[1]);
 }
 

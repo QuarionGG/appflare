@@ -9,6 +9,7 @@ import {
   type ManagerUpdateState,
   startSelfUpdate,
 } from "../catalog/manager-releases.functions";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
@@ -54,8 +55,13 @@ export function AppflareUpdatesCard({
   }
 
   const { latest } = state;
+  const blocked = managerSelfUpdateBlock();
   const update =
-    isAdmin && state.updateAvailable && latest !== null && state.activeJobId === null
+    blocked === null &&
+    isAdmin &&
+    state.updateAvailable &&
+    latest !== null &&
+    state.activeJobId === null
       ? latest
       : null;
   const checkNow = isAdmin ? (
@@ -72,7 +78,9 @@ export function AppflareUpdatesCard({
     <Section
       {...settingsSection("updates", "appflare")}
       badge={
-        state.activeJobId !== null ? (
+        blocked !== null ? (
+          <Badge variant="info">Custom fork</Badge>
+        ) : state.activeJobId !== null ? (
           <Badge variant="info">Updating</Badge>
         ) : state.updateAvailable ? (
           <Badge variant="warning">Update available</Badge>

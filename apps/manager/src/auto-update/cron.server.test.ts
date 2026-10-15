@@ -1,6 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CATALOG_INDEX_KEY } from "../catalog/index.server";
 import { MANAGER_LATEST_KEY } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
@@ -16,6 +16,9 @@ import {
 import { sandboxIndexApp } from "../test/fake-sandbox";
 import { cacheIndex, INSTALL_ID, type SeedResource, seedInstall } from "../test/seed-install";
 import { runScheduledUpdates, type ScheduledUpdatesEnv, scheduledUpdatesLog } from "./cron.server";
+
+// Keep the upstream scheduling regression tests; the fork policy has its own suite.
+vi.mock("../server/manager-update-policy", () => ({ managerSelfUpdateBlock: () => null }));
 
 /**
  * The cron's automatic updates against the local D1 and KV, with the

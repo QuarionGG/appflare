@@ -205,6 +205,7 @@ export const NEEDS_ADMIN_COPY: Record<NeedsAdminReason, string> = {
 
 export type SelfUpdateSkipReason =
   | "off"
+  | "custom-build"
   | "dev-build"
   | "no-release"
   | "up-to-date"

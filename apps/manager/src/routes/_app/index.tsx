@@ -21,7 +21,8 @@ export const Route = createFileRoute("/_app/")({
     const usage = getHomeUsage().catch(() => null);
     const layout = await parentMatchPromise;
     const installed = layout.loaderData?.apps.length;
-    if (installed !== undefined && homeLanding(installed, location.state) === "catalog") {
+    const imported = layout.loaderData?.importedApps?.length ?? 0;
+    if (installed !== undefined && homeLanding(installed, location.state, imported) === "catalog") {
       throw redirect({ to: "/catalog", replace: true });
     }
     return { usage: await usage };
@@ -37,6 +38,7 @@ function HomePage() {
   return (
     <HomeView
       apps={data.apps}
+      importedApps={data.importedApps}
       items={items}
       isAdmin={isAdmin}
       update={update}

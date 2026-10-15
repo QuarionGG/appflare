@@ -18,6 +18,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
 import { runningVersion } from "../server/build-version";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
   loadVerifiedManifest,
@@ -109,6 +110,10 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     await recordStep(step, env.DB, record, now);
     return;
   }
+
+  // Also refuse a job queued before this fork was deployed.
+  const blocked = managerSelfUpdateBlock();
+  if (blocked !== null) throw new NonRetryableError(blocked);
 
   const steps = createJobSteps(ctx, params.jobId);
   const { run } = steps;

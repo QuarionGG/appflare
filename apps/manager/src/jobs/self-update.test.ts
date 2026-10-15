@@ -1,7 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshManagerReleases } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -30,6 +30,10 @@ import { runSelfUpdate, type SelfUpdateJobParams } from "./self-update";
 import { selfUpdateBusyMessage } from "./self-update/guard";
 import { finalizeSelfUpdates } from "./self-update/record";
 import { SelfUpdateError, startSelfUpdateCore } from "./self-update/start.server";
+
+// Exercise the upstream update engine with an official-compatible build policy.
+// The fork's refusal is covered separately in manager-update-policy.test.ts.
+vi.mock("../server/manager-update-policy", () => ({ managerSelfUpdateBlock: () => null }));
 
 /**
  * End-to-end test of the self-update: the release feed read through a fake

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { installs } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { isDevBuild } from "../telemetry/state.server";
 import {
   type AutoUpdateSettings,
@@ -25,7 +26,12 @@ export async function readAutoUpdateSettings(
   db: Database,
   managerVersion: string,
 ): Promise<AutoUpdateSettings> {
-  return { ...(await readAutoUpdateDefaults(db)), devBuild: isDevBuild(managerVersion) };
+  const defaults = await readAutoUpdateDefaults(db);
+  return {
+    ...defaults,
+    manager: managerSelfUpdateBlock() === null && defaults.manager,
+    devBuild: isDevBuild(managerVersion),
+  };
 }
 
 /** Writes the settings that are given; the others stay as they are. */
@@ -34,6 +40,8 @@ export async function writeAutoUpdateDefaults(
   input: SetAutoUpdateDefaultsInput,
   now: Date = new Date(),
 ): Promise<void> {
+  const blocked = managerSelfUpdateBlock();
+  if (input.manager === true && blocked !== null) throw new AutoUpdateError(blocked);
   const on = (value: boolean | undefined) =>
     value === undefined ? undefined : value ? "on" : "off";
   await writeSettings(

@@ -17,6 +17,11 @@ describe("where / leads", () => {
     expect(homeLanding(4, HOME_CLICK_STATE)).toBe("home");
   });
 
+  it("keeps imported-only dashboards on Home", () => {
+    expect(homeLanding(0, undefined, 1)).toBe("home");
+    expect(homeLanding(0, undefined, 0)).toBe("catalog");
+  });
+
   it("recognises only the Home click's own mark", () => {
     expect(isHomeClick(HOME_CLICK_STATE)).toBe(true);
     expect(isHomeClick({ homeClick: "yes" })).toBe(false);

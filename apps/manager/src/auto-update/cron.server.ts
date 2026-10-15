@@ -22,6 +22,7 @@ import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.
 import type { UpdateJobParams } from "../jobs/update";
 import { readSandboxConnection } from "../sandbox/connection.server";
 import { runningVersion } from "../server/build-version";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { isDevBuild } from "../telemetry/state.server";
 import {
   type AppSkipReason,
@@ -308,7 +309,9 @@ export async function runScheduledUpdates(
     };
   }
   // 1. Appflare itself.
-  if (defaults.manager) {
+  if (defaults.manager && managerSelfUpdateBlock() !== null) {
+    outcome.selfUpdate = { status: "skipped", reason: "custom-build" };
+  } else if (defaults.manager) {
     const [latest, failed] = await Promise.all([readManagerLatest(env.KV), failedTargets(env.DB)]);
     const decision = planSelfUpdate({
       enabled: true,

@@ -65,10 +65,11 @@ function menuItems(): HTMLElement[] {
 }
 
 describe("the Catalog page's add menu", () => {
-  it("offers building from a repository and adding a catalog", async () => {
+  it("offers importing, building from a repository and adding a catalog", async () => {
     render(true);
     await openMenu();
     expect(menuItems().map((i) => i.textContent?.trim())).toEqual([
+      "Import existing app",
       "From a repository…",
       "Add a catalog",
     ]);
@@ -99,9 +100,14 @@ describe("the Catalog page's add menu", () => {
     expect(document.activeElement).toBe(addButton());
   });
 
-  it("offers only Add a catalog when the account cannot build from a repository", async () => {
+  it("allows importing without paid repository builds", async () => {
     render(false);
     await openMenu();
-    expect(menuItems().map((i) => i.textContent?.trim())).toEqual(["Add a catalog"]);
+    expect(menuItems().map((i) => i.textContent?.trim())).toEqual([
+      "Import existing app",
+      "Add a catalog",
+    ]);
+    const item = menuItems().find((entry) => entry.textContent?.includes("Import existing app"));
+    expect(item?.closest("a")?.getAttribute("href") ?? item?.getAttribute("href")).toBe("/imports");
   });
 });

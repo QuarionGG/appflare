@@ -36,6 +36,8 @@ import {
   UsersSettingsView,
 } from "./settings-pages";
 
+vi.mock("../server/manager-update-policy", () => ({ managerSelfUpdateBlock: () => null }));
+
 // The pages' actions call server functions, which only exist under the Start
 // Vite plugin. Rendering never calls them; they stand in as functions that fail.
 vi.mock("@tanstack/react-start", () => {
