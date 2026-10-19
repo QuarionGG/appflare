@@ -45,6 +45,25 @@ Workers already imported elsewhere are excluded, with final server-side checks.
 
 ## Maintaining this fork
 
+The fork includes upstream `manager@0.5.1`. Comparing that tag with
+`manager@0.5.0` confirms no changes to the manager's database schema, migration
+files or migrator. This upgrade retains the fork's existing 14 migrations,
+including `0013_imported_apps`; it requires no additional database migration.
+
+Label reviewed fork builds with semver build metadata:
+
+```sh
+APPFLARE_VERSION='0.5.1+quariongg.1' pnpm --filter @appflare/manager build
+```
+
+Vite bakes this value into both the code and the generated Worker variable.
+The `+quariongg.1` suffix identifies our build while keeping its release precedence
+equal to upstream `0.5.1`. A prerelease suffix such as `-quariongg.1` sorts below
+the same upstream release and causes a misleading update notice. With build
+metadata, `0.5.1` is current and a future `0.5.2` still appears as available.
+Keep `APPFLARE_TELEMETRY=off` on the production Worker: build metadata is not a
+prerelease, so the version label alone no longer suppresses telemetry.
+
 Official manager self-updates would replace this fork's code, hiding its import
 feature. This fork blocks official manager self-update jobs and explains the
 custom update channel in Updates settings. Catalog app updates continue normally.

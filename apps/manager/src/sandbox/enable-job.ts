@@ -33,6 +33,7 @@ import {
   containerChange,
   containerNamespaces,
   isSandboxWorker,
+  readNamespaceState,
   sandboxScriptMetadata,
   sandboxVersionOf,
   VERSION_NOT_READY_CODE,
@@ -65,7 +66,9 @@ import { clearSandboxWorkerDeleted } from "./worker-deleted";
  * 6. Turn its `workers.dev` URL and previews off.
  * 7. Read the Durable Object namespace of each container class.
  * 8. Each container application: create it, or patch it and roll it out to
- *    the release's image.
+ *    the release's image. One by that name backing a Durable Object
+ *    namespace that no longer exists (an earlier sandbox Worker's) is
+ *    deleted and created again; one backing another Worker's is refused.
  * 9. Wait until the applications are ready for builds (job units poll them).
  * 10. Connect the manager (its `SANDBOX` binding, in place of one to a
  *     deleted Worker if an earlier disable left it), unless it already is,
@@ -144,11 +147,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
   });
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const settings = await readSettings(orm, [SETTING.accountId, SETTING.workerName]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!settings.worker_name) throw new JobError("Appflare does not know its own Worker yet");
@@ -169,6 +168,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         releaseTokenSecret: await releaseTokenSecret(env),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     releaseSecret = started.releaseTokenSecret ?? null;
 
@@ -373,7 +373,28 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
             if (!isNotFound(error)) throw error;
           }
         }
-        const change = containerChange(container, version, namespaceId, logs, existing, active);
+        let change = containerChange(container, version, namespaceId, logs, existing, active);
+        if (change.kind === "conflict" && existing !== null) {
+          // Left behind by a sandbox Worker that was deleted: nobody's any more.
+          const read = await readNamespaceState(api, change.boundTo);
+          if (read.state === "exists") throw new JobError(change.message);
+          if (read.state === "unknown") {
+            // Neither found nor gone: nothing is deleted on a guess, and the
+            // step tries again, as a passing failure may answer next time.
+            throw new Error(
+              `Cloudflare did not confirm that the Durable Object namespace ${change.boundTo} of the container application ${container.name} is gone: ${read.answer}`,
+            );
+          }
+          try {
+            await api.containers.deleteApplication(existing.id);
+          } catch (error) {
+            if (!isNotFound(error)) throw error;
+          }
+          log.info(
+            `Deleted the container application ${container.name}: it backed a Durable Object namespace that no longer exists (${change.boundTo}), left behind by an earlier sandbox Worker.`,
+          );
+          change = containerChange(container, version, namespaceId, logs, null);
+        }
         const base = { name: container.name, maxInstances: container.max_instances };
         switch (change.kind) {
           case "conflict":

@@ -15,6 +15,12 @@ describe("isUpdateAvailable", () => {
     expect(isUpdateAvailable("1.0.0-beta.2", "1.0.0")).toBe(true);
   });
 
+  it("ignores fork build metadata when comparing release precedence", () => {
+    expect(compareVersions("0.5.1+quariongg.1", "0.5.1")).toBe(0);
+    expect(isUpdateAvailable("0.5.1+quariongg.1", "0.5.1")).toBe(false);
+    expect(isUpdateAvailable("0.5.1+quariongg.1", "0.5.2")).toBe(true);
+  });
+
   it("orders untagged pins (0.0.0-<date>.<sha7>) by date", () => {
     expect(isUpdateAvailable("0.0.0-20260826.6056400", "0.0.0-20260901.abcdef1")).toBe(true);
     expect(isUpdateAvailable("0.0.0-20260901.abcdef1", "0.0.0-20260826.6056400")).toBe(false);

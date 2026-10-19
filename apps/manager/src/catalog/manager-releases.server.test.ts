@@ -85,6 +85,11 @@ describe("isManagerUpdateAvailable", () => {
     expect(isManagerUpdateAvailable("0.1.0", null)).toBe(false);
   });
 
+  it("offers only newer upstream releases to a fork labelled with build metadata", () => {
+    expect(isManagerUpdateAvailable("0.5.1+quariongg.1", "0.5.1")).toBe(false);
+    expect(isManagerUpdateAvailable("0.5.1+quariongg.1", "0.5.2")).toBe(true);
+  });
+
   it("builds the settings view from the stored release", () => {
     expect(managerUpdateView("0.1.0", null)).toEqual({
       current: "0.1.0",

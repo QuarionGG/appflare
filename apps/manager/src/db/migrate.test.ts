@@ -22,6 +22,8 @@ const EXPECTED_TABLES = [
   "cloudflare_grant",
   "featured_dismissals",
   "github_tokens",
+  "imported_app_workers",
+  "imported_apps",
   "install_access",
   "installs",
   "job_logs",

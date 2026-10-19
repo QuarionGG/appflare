@@ -28,6 +28,7 @@ import {
   Wordmark,
   ZoomableShot,
 } from "./parts.tsx";
+import { Testimonials } from "./testimonials.tsx";
 
 const notAffiliated =
   "Appflare is an independent open-source project, not affiliated with, endorsed by, or sponsored by Cloudflare, Inc.";
@@ -66,6 +67,15 @@ export function LandingContent({ data }: { data: LandingData }) {
         </dl>
       </section>
 
+      <Testimonials
+        heading={
+          <SectionHeading
+            eyebrow="On X"
+            title="What people are saying"
+            lead="Including a few people who work at Cloudflare."
+          />
+        }
+      />
       <HowItWorks data={data} />
       <Apps data={data} />
       <Features />
@@ -149,7 +159,7 @@ function Hero({ data }: { data: LandingData }) {
           srcSet={landingHomeSrcSet}
           // The column's width: 1000px once the page is 72rem wide, else the viewport less its padding.
           sizes="(min-width: 1152px) 1000px, (min-width: 1024px) calc(100vw - 152px), (min-width: 768px) calc(100vw - 48px), calc(100vw - 32px)"
-          alt="Appflare's Home: the sidebar with the apps installed, two updates that need attention, and six installed apps"
+          alt="Appflare's Home: the sidebar with the apps installed, two updates that need attention, and the account's usage by app"
           width={2880}
           height={1800}
           eager

@@ -105,6 +105,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
 import type { ArtifactHost } from "./units/units";
+import { assetFilesOf } from "./units/upload-retry";
 import { CANARY_MAX_ATTEMPTS } from "./update";
 import { emailZoneOnRecord, readEmailRouteRows } from "./update/email-routing";
 import {
@@ -405,11 +406,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   let snapshotOthers: Record<string, string> = {};
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -518,6 +515,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           })),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const { workerName, workersDev } = started;
 
@@ -1003,6 +1001,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             modules: primaryManifest.worker.modules,
             metadata,
             target: "version",
+            ...assetFilesOf(primaryManifest.assets.files, assetsJwt),
           }),
           log,
         );
