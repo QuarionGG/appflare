@@ -26,6 +26,7 @@ import cutManifest from "./cut-manifest.json";
 import emdashManifest from "./emdash-manifest.json";
 import formAppsJson from "./form-apps.json";
 import { homeUsageFixture } from "./home-usage";
+import { importedAppFixtures, importedFunctionFixtures } from "./imports";
 
 // Parsed as the manager reads them, so a fixture in an outdated shape fails
 // here instead of rendering a page the manager would never show.
@@ -99,8 +100,7 @@ const apps = selected.map((slug, index) => {
     label: names[slug],
     workerName,
     status: "installed",
-    version:
-      slug === "emdash" ? "0.0.0-20260920.a0d31e2" : slug === "statusbeam" ? "0.1.0" : app.version,
+    version: slug === "emdash" ? "1.0.1" : slug === "statusbeam" ? "0.1.0" : app.version,
     latestVersion: app.version,
     updateAvailable: slug === "emdash" || slug === "statusbeam",
     reinstallNeeded: false,
@@ -218,10 +218,20 @@ const popularityBySlug: Record<string, { stars: number; installs: number }> = {
 const moduleBytesBySlug: Record<string, number> = {
   cloudmark: 79_000,
   cut: 91_000,
-  emdash: 186_000,
+  // The modules of the emdash@1.3.0 release.
+  emdash: 19_497_841,
   formzero: 102_000,
   "r2-explorer": 132_000,
   statusbeam: 144_000,
+};
+/** The resource kind an install creates for each service, by catalog service id. */
+const createdKinds: Record<string, string> = {
+  kv: "kv",
+  d1: "d1",
+  r2: "r2",
+  queues: "queue",
+  workflows: "workflow",
+  cron: "cron",
 };
 const catalogApps = catalogIndex.apps.map((app) => ({
   ...app,
@@ -316,7 +326,11 @@ function detail(slug: string) {
     source,
     images: media(app),
     popularity: popularityBySlug[app.slug],
-    creates: app.services.map((kind) => ({ kind, binding: kind.toUpperCase() })),
+    // Only the services an install creates a resource for; a binding such as
+    // Images or Workers AI adds nothing to the account.
+    creates: app.services
+      .flatMap((service) => createdKinds[service] ?? [])
+      .map((kind) => ({ kind, binding: kind.toUpperCase() })),
     durableObjects: [],
     error: null,
     installs: catalogApps.find((entry) => entry.slug === app.slug)?.installs ?? [],
@@ -815,6 +829,7 @@ function usageTabData(): UsageTabData {
 }
 
 export function fixture(name: string, args: unknown[]): unknown {
+  if (importedFunctionFixtures[name] !== undefined) return importedFunctionFixtures[name](args);
   const result: Record<string, () => unknown> = {
     // Setup at the owner step: the token is saved, and nobody exists yet.
     enterSetup: () => setupEntry(),
@@ -842,6 +857,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       manager: { current: "0.1.0", latest: null, updateAvailable: false, activeJobId: null },
       removedApps: 0,
       apps,
+      importedApps: [...importedAppFixtures],
       failedJobs: [],
       accountRows: accountRowsFixture(),
       deployCopy: null,

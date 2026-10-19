@@ -18,6 +18,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
 import { runningVersion } from "../server/build-version";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
   loadVerifiedManifest,
@@ -36,6 +37,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
 import type { ArtifactHost } from "./units/units";
+import { assetFilesOf } from "./units/upload-retry";
 import { activeVersionId, bookmarksJson, previewUrl } from "./update/plan";
 
 /**
@@ -110,6 +112,10 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     return;
   }
 
+  // Also refuse a job queued before this fork was deployed.
+  const blocked = managerSelfUpdateBlock();
+  if (blocked !== null) throw new NonRetryableError(blocked);
+
   const steps = createJobSteps(ctx, params.jobId);
   const { run } = steps;
   const userAgent = `Appflare/${params.fromVersion}`;
@@ -127,11 +133,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
   let uploadedVersionId: string | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       if (runningVersion(env) !== params.fromVersion) {
         throw new JobError(
           `Appflare ${runningVersion(env) ?? "(unknown version)"} is running, not ${params.fromVersion} as when this update was started`,
@@ -151,6 +153,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         releaseTokenSecret: await releaseTokenSecret(env),
       };
     });
+    if (started === null) return;
     steps.setAccountId(started.accountId);
     const { workerName } = started;
     releaseSecret = started.releaseTokenSecret ?? null;
@@ -317,6 +320,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
           modules: manifest.worker.modules,
           metadata,
           target: "version",
+          ...assetFilesOf(manifest.assets.files, assetsJwt),
         }),
         log,
       );

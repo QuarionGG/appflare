@@ -207,6 +207,7 @@ async function settingsContext(
   install: InstallRow,
   sandboxConnected: boolean,
 ): Promise<SettingsContext | null> {
+  if (install.build_kind === "adopted") return null;
   const signed =
     install.build_kind === "self-deploying" ? null : parseManifest(install.manifest_json);
   const [rows, effective, emailRows] = await Promise.all([
@@ -407,6 +408,14 @@ export interface StartReconfigureDeps extends StartJobDeps<ReconfigureJobParams>
   sandboxConnected?: boolean;
 }
 
+function refuseAdoptedSettings(install: InstallRow): void {
+  if (install.build_kind === "adopted") {
+    throw new VersionActionError(
+      "Build, review and apply this app's source before changing its settings in Appflare.",
+    );
+  }
+}
+
 /**
  * Starts the `reconfigure` job: checks the new settings against the
  * installed version (required settings, JSON settings, which secrets may be
@@ -419,6 +428,7 @@ export async function startReconfigureCore(
   request: StartReconfigureInput,
 ): Promise<{ jobId: string }> {
   const install = await readInstall(deps.db, request.installId);
+  refuseAdoptedSettings(install);
   const refusal = statusRefusal(install.status);
   if (refusal !== null) throw new VersionActionError(refusal);
   const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
@@ -582,6 +592,7 @@ export async function startEmailAgainCore(
   request: StartEmailAgainInput,
 ): Promise<{ jobId: string }> {
   const install = await readInstall(deps.db, request.installId);
+  refuseAdoptedSettings(install);
   const refusal = statusRefusal(install.status);
   if (refusal !== null) throw new VersionActionError(refusal);
   const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
@@ -644,7 +655,7 @@ export async function startVarsRefreshCore(
   changed: readonly VarsRefreshReason[],
 ): Promise<{ jobId: string } | null> {
   const install = await readInstall(deps.db, installId);
-  if (install.build_kind === "self-deploying") return null;
+  if (install.build_kind === "self-deploying" || install.build_kind === "adopted") return null;
   const refusal = statusRefusal(install.status);
   if (refusal !== null) throw new VersionActionError(refusal);
   const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
@@ -710,6 +721,7 @@ export async function startAccessChangeCore(
   request: StartAccessChangeInput,
 ): Promise<{ jobId: string }> {
   const install = await readInstall(deps.db, request.installId);
+  refuseAdoptedSettings(install);
   const name = recordedName(install);
   if (install.build_kind === "self-deploying") {
     throw new VersionActionError(PROTECT_MESSAGES.selfDeploying(name));

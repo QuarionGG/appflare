@@ -6,7 +6,7 @@ import { Tooltip } from "./tooltip";
 
 const TOOLTIPS: Record<Exclude<InstallOrigin, "catalog">, string> = {
   repository:
-    "Built in your account from a repository you named. The catalog never reviewed it, and Appflare never updates it on its own: check for changes on its page.",
+    "Future builds follow a repository you named. The catalog never reviewed this app, and Appflare never updates it on its own: check for changes on its page.",
   source:
     "A catalog app built in your account from a commit you chose. The catalog did not check that commit; updating from the catalog puts its release back.",
 };

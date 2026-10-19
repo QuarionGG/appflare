@@ -13,6 +13,7 @@ import { startSelfUpdate } from "../catalog/manager-releases.functions";
 import { MANAGER_UPDATES_HREF, type ManagerStatus } from "../installs/pending-updates";
 import type { JobView } from "../jobs/jobs.functions";
 import { POLL_MS, useLiveJob, useVersionSwitch } from "../jobs/live-job";
+import { managerSelfUpdateBlock } from "../server/manager-update-policy";
 import {
   type AppflareCardState,
   type AppflareRailItem,
@@ -233,6 +234,7 @@ function CardBody({
   const opener = useRef<HTMLElement | null>(null);
   /** Set once the confirmed update started: the card then takes the focus. */
   const started = useRef(false);
+  const blocked = managerSelfUpdateBlock();
   function confirm(version: string, from: HTMLElement) {
     opener.current = from;
     started.current = false;
@@ -258,7 +260,7 @@ function CardBody({
       tabIndex={-1}
       className="shrink-0 rounded-md px-3 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
     >
-      {dialogVersion !== null && (
+      {blocked === null && dialogVersion !== null && (
         <SelfUpdateDialog
           from={current}
           version={dialogVersion}
@@ -302,7 +304,12 @@ function CardBody({
             <>
               {/* No "running" line: the footer right below shows the current version. */}
               <Text bold>Appflare {state.latest} is available</Text>
-              {state.canUpdate && (
+              {blocked !== null && (
+                <Text size="sm" variant="secondary">
+                  {blocked}
+                </Text>
+              )}
+              {blocked === null && state.canUpdate && (
                 <Button
                   className="justify-self-start"
                   size="sm"
@@ -370,7 +377,7 @@ function CardBody({
                 </Text>
               </div>
               {logLink}
-              {state.retry !== null && (
+              {blocked === null && state.retry !== null && (
                 <Button
                   className="justify-self-start"
                   size="sm"

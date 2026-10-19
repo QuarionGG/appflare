@@ -55,6 +55,41 @@ beforeEach(async () => {
 });
 
 describe("startUpdateCore", () => {
+  it.each(["adopted", "sandbox"])(
+    "refuses catalog updates of a %s repository install before reading the catalog",
+    async (kind) => {
+      await seedInstall();
+      await env.DB.prepare(
+        "UPDATE installs SET origin = 'repository', build_kind = ?1 WHERE id = ?2",
+      )
+        .bind(kind, INSTALL_ID)
+        .run();
+      const created: unknown[] = [];
+      await expect(
+        startUpdateCore(
+          {
+            db: env.DB,
+            loadApp: async () => {
+              throw new Error("must not read a catalog for a repository install");
+            },
+            loadManifest: async () => {
+              throw new Error("must not load a catalog artifact");
+            },
+            createJob: async (id, params) => {
+              created.push(params);
+              return { id };
+            },
+          },
+          { installId: INSTALL_ID },
+        ),
+      ).rejects.toThrow("Build and review its source before updating it.");
+      expect(created).toEqual([]);
+      expect(await env.DB.prepare("SELECT status FROM installs").first()).toEqual({
+        status: "installed",
+      });
+    },
+  );
+
   it("claims the install and starts an update to the catalog's newer version", async () => {
     const fixture = await buildArtifactFixture({ version: "1.1.0" });
     await seedInstall({ resources: [ADMIN_SECRET] });
@@ -191,6 +226,7 @@ describe("startUpdateCore: what an update needs first", () => {
       confirmNoPreview?: boolean;
       paidConfirmed?: boolean;
       rememberPaidPlan?: boolean;
+      offerChoices?: boolean;
     } = {},
   ) {
     const created: unknown[] = [];
@@ -358,6 +394,60 @@ describe("startUpdateCore: what an update needs first", () => {
     const free = await start(fixture, { paidConfirmed: false });
     expect(free.result).toEqual({ jobId: "job1" });
     expect(free.created).toEqual([expect.objectContaining({ paidConfirmed: false })]);
+  });
+
+  it("offers to confirm Workers Paid for the D1 databases a new version creates while the plan is not known", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      bindings: [{ type: "d1", name: "DB" }],
+    });
+    // Only to an admin who pressed Update; an unattended start goes on, and the job counts.
+    const offered = await start(fixture, { offerChoices: true });
+    expect(offered.result).toEqual({
+      version: "1.1.0",
+      needsSecrets: [],
+      skipsPreview: null,
+      build: null,
+      cronTriggers: null,
+      limitedCreates: { d1: 1 },
+    });
+    const ticked = await start(fixture, { paidConfirmed: true });
+    expect(ticked.created).toEqual([expect.objectContaining({ paidConfirmed: true })]);
+  });
+
+  it("does not offer it for a database the install already has", async () => {
+    await seedInstall({
+      resources: [ADMIN_SECRET, { kind: "d1", binding: "DB", name: "cut-db", cfId: "d1-1" }],
+    });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      bindings: [{ type: "d1", name: "DB" }],
+    });
+    expect((await start(fixture, { offerChoices: true })).result).toEqual({ jobId: "job1" });
+  });
+
+  it("offers it for a database whose create never recorded an id, which the update creates", async () => {
+    await seedInstall({
+      resources: [ADMIN_SECRET, { kind: "d1", binding: "DB", name: "cut-db", cfId: null }],
+    });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      bindings: [{ type: "d1", name: "DB" }],
+    });
+    expect((await start(fixture, { offerChoices: true })).result).toMatchObject({
+      limitedCreates: { d1: 1 },
+    });
+  });
+
+  it("does not offer it on a plan set as free: the job counts whatever is ticked", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    await writeAccountPlan(createDb(env.DB), "free");
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      bindings: [{ type: "d1", name: "DB" }],
+    });
+    expect((await start(fixture, { offerChoices: true })).result).toEqual({ jobId: "job1" });
   });
 
   it("does not ask about cron triggers when Settings records Workers Paid", async () => {

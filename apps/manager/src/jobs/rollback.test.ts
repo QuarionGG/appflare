@@ -132,6 +132,72 @@ beforeEach(async () => {
 });
 
 describe("rollback job", () => {
+  async function adoptedBaseline(inventory = true): Promise<void> {
+    await env.DB.prepare(
+      `UPDATE snapshots SET catalog_version = 'Existing deployment', manifest_json = NULL,
+       artifact_url = '', artifact_digest = NULL, pin_sha = NULL, build_kind = 'adopted',
+       origin = 'repository', source_url = 'https://github.com/example/custom-app',
+       source_ref = 'main', config_json = '{"TITLE":"Original"}' WHERE id = 'upd1'`,
+    ).run();
+    const current = await buildArtifactFixture({ crons: ["*/10 * * * *"] });
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+      .bind(JSON.stringify(current.manifest), INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at) VALUES
+       ('i1:cron:custom', ?1, 'cron', NULL, '*/10 * * * *', NULL, 1),
+       ('i1:secret:TOKEN', ?1, 'secret', 'TOKEN', 'TOKEN', NULL, 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    if (inventory) {
+      await env.DB.prepare(
+        `INSERT INTO install_adoptions
+         (install_id, imported_app_id, app_name, inventory_json, adopted_at)
+         VALUES (?1, 'import-1', 'Custom app', ?2, 1)`,
+      )
+        .bind(
+          INSTALL_ID,
+          JSON.stringify({ workers: [{ name: "cut", schedules: [{ cron: "0 * * * *" }] }] }),
+        )
+        .run();
+    }
+  }
+
+  it("restores the adopted deployment's provenance, secrets and original cron without an artifact manifest", async () => {
+    await adoptedBaseline();
+    const r = await rollback({ versionSecrets: { [OLD_VERSION]: ["TOKEN"] } });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.install).toMatchObject({
+      current_version_id: OLD_VERSION,
+      catalog_version: "Existing deployment",
+      build_kind: "adopted",
+      manifest_json: null,
+      artifact_url: "",
+      artifact_digest: null,
+      pin_sha: null,
+      origin: "repository",
+      source_url: "https://github.com/example/custom-app",
+      source_ref: "main",
+      config_json: '{"TITLE":"Original"}',
+    });
+    expect(r.fake.state.schedules).toEqual(["0 * * * *"]);
+    expect(
+      await env.DB.prepare("SELECT deleted_at FROM resources WHERE id = 'i1:secret:TOKEN'").first(),
+    ).toEqual({ deleted_at: null });
+    expect(r.fake.state.restores).toEqual([]);
+  });
+
+  it("refuses an adopted baseline with no schedule inventory before deploying it", async () => {
+    await adoptedBaseline(false);
+    const r = await rollback();
+    expect(String(r.error)).toContain("original cron schedules are not available");
+    expect(r.fake.state.calls).not.toContain("POST /workers/scripts/cut/deployments");
+    expect(r.fake.state.schedules).toBeNull();
+    expect(r.install?.current_version_id).toBe(NEW_VERSION);
+  });
+
   it("leaves alone a Workflow of another script that a row without an id names", async () => {
     const old = await buildArtifactFixture({
       bindings: [{ type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" }],

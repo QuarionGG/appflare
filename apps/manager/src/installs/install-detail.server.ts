@@ -28,6 +28,7 @@ import { isAccessChangeJob, isRestoreJob, reconcileJobs } from "../jobs/reconcil
 import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { emailZoneOnRecord, readEmailRouteRows } from "../jobs/update/email-routing";
 import { sandboxBinding } from "../sandbox/binding";
+import { type InstallAdoption, readInstallAdoption } from "./adoption.server";
 import { type AddressDomain, appAddress } from "./app-address";
 import { addressDomainOf } from "./app-address.server";
 import { installLabel } from "./display-name";
@@ -134,6 +135,8 @@ export interface CustomDomainView {
 }
 
 export interface InstallDetail extends InstallRow {
+  /** Existing deployment baseline; present after adoption, including later builds. */
+  adoption?: InstallAdoption | null;
   currentVersionId: string | null;
   pinSha: string | null;
   /**
@@ -261,24 +264,35 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     db.select().from(jobs).where(eq(jobs.install_id, installId)).orderBy(desc(jobs.id));
   const records = listCatalogRecords(db);
   // Everything that needs only the install's id, in one round.
-  const [firstRow, firstJobs, resourceRows, sub, autoUpdateDefaults, account, allNames, gateway] =
-    await Promise.all([
-      readRow(),
-      readJobs(),
-      // Everything not deleted: live resources, and those an uninstall kept.
-      db
-        .select()
-        .from(resources)
-        .where(and(eq(resources.install_id, installId), isNull(resources.deleted_at)))
-        // Insertion order (created_at can tie within a millisecond).
-        .orderBy(sql`rowid`),
-      subdomain(),
-      readAutoUpdateDefaults(db),
-      accountId(),
-      readInstallNames(env.DB),
-      readGateway(db),
-      records,
-    ]);
+  const [
+    firstRow,
+    firstJobs,
+    resourceRows,
+    sub,
+    autoUpdateDefaults,
+    account,
+    allNames,
+    gateway,
+    ,
+    adoption,
+  ] = await Promise.all([
+    readRow(),
+    readJobs(),
+    // Everything not deleted: live resources, and those an uninstall kept.
+    db
+      .select()
+      .from(resources)
+      .where(and(eq(resources.install_id, installId), isNull(resources.deleted_at)))
+      // Insertion order (created_at can tie within a millisecond).
+      .orderBy(sql`rowid`),
+    subdomain(),
+    readAutoUpdateDefaults(db),
+    accountId(),
+    readInstallNames(env.DB),
+    readGateway(db),
+    records,
+    readInstallAdoption(env.DB, installId),
+  ]);
   let row = firstRow;
   let jobRows = firstJobs;
   // A job whose Workflow died outside its own code is settled, so the page
@@ -321,7 +335,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   const addressDomains = resourceRows
     .filter((r) => r.retained_at === null && isAddressKind(r.kind))
     .map(addressDomainOf);
-  let name = listed?.name ?? row.app_slug;
+  let name = listed?.name ?? adoption?.appName ?? row.app_slug;
   let postInstall: string[] = [];
   let tokenPermissions: TokenPermission[] = [];
   let entryWorkers: EntryWorkerPlaceholders | undefined;
@@ -403,6 +417,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   // Told apart from the other installs the way the sidebar tells them apart.
   const labels = await readInstallLabels(env.DB, [{ id: row.id, name, ...names }], allNames);
   return {
+    adoption,
     id: row.id,
     slug: installAppKey(row),
     catalogSource: sourceOfRow(row, await catalogSources(await records)),
@@ -421,7 +436,12 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
     ...updateOffer(row, listed),
     address:
       row.status === "installed"
-        ? appOpenUrl(appAddress(addressInput(row, addressDomains, sub)), openPath)
+        ? appOpenUrl(
+            addressDomains.some((domain) => domain.live)
+              ? appAddress(addressInput(row, addressDomains, sub))
+              : (adoption?.address ?? appAddress(addressInput(row, addressDomains, sub))),
+            openPath,
+          )
         : null,
     workersDevEnabled: row.workers_dev_enabled,
     workersDevNote: workersDevNoteOf(row, addressDomains),

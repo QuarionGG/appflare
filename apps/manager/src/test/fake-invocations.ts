@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike } from "@appflare/cf-api";
 import { FREE_PLAN_SUBREQUESTS } from "@appflare/schema";
 import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
+import { refuseLongStepName } from "./fake-step";
 
 /**
  * Test-only Workflow engine that keeps Workers Free's subrequest limit per
@@ -23,8 +24,11 @@ import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
  */
 export interface FakeEngine {
   step: StepRunner;
-  /** Steps whose bodies ran, in order, with the invocation each ran in (0-based). */
-  ran: Array<{ name: string; invocation: number }>;
+  /**
+   * Steps whose bodies ran, in order, with the invocation each ran in
+   * (0-based) and the requests its body made (every try of it).
+   */
+  ran: Array<{ name: string; invocation: number; requests: number }>;
   /** Sleeps the job reached for the first time, in order. */
   sleeps: Array<{ name: string; duration: string | number }>;
   /** The requests each invocation made, in order. */
@@ -86,6 +90,7 @@ export function fakeEngine(
       configOrCallback: StepConfig | ((ctx?: StepContext) => Promise<T>),
       maybeCallback?: (ctx?: StepContext) => Promise<T>,
     ): Promise<T> {
+      refuseLongStepName(name);
       const k = key(name);
       const seen = recorded.get(k);
       if (seen !== undefined) {
@@ -95,22 +100,30 @@ export function fakeEngine(
       const callback = typeof configOrCallback === "function" ? configOrCallback : maybeCallback;
       const config = typeof configOrCallback === "function" ? undefined : configOrCallback;
       if (callback === undefined) throw new Error(`step ${name} has no callback`);
-      ran.push({ name, invocation: invocations.length - 1 });
+      const at = invocations.length - 1;
+      const entry = { name, invocation: at, requests: 0 };
+      ran.push(entry);
+      const before = invocations[at] ?? 0;
       const limit = config?.retries?.limit ?? 0;
-      for (let attempt = 1; ; attempt++) {
-        try {
-          const value = JSON.parse(JSON.stringify((await callback({ attempt })) ?? null)) as T;
-          recorded.set(k, { ok: true, value });
-          return value;
-        } catch (error) {
-          if (error instanceof NonRetryableError || attempt > limit) {
-            recorded.set(k, { ok: false, error });
-            throw error;
+      try {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            const value = JSON.parse(JSON.stringify((await callback({ attempt })) ?? null)) as T;
+            recorded.set(k, { ok: true, value });
+            return value;
+          } catch (error) {
+            if (error instanceof NonRetryableError || attempt > limit) {
+              recorded.set(k, { ok: false, error });
+              throw error;
+            }
           }
         }
+      } finally {
+        entry.requests = (invocations[at] ?? 0) - before;
       }
     },
     async sleep(name: string, duration: string | number): Promise<void> {
+      refuseLongStepName(name);
       const k = key(name);
       if (slept.has(k)) return;
       slept.add(k);

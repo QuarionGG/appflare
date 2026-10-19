@@ -229,20 +229,21 @@ async function lastBuildCommand(db: D1Database, installId: string): Promise<Buil
 async function versionsInUse(
   db: D1Database,
   installId: string,
-  current: string,
+  current: string | null,
   limit?: number,
 ): Promise<string[]> {
   const { results } = await db
     .prepare(
       `SELECT catalog_version AS version FROM snapshots
-       WHERE install_id = ?1 AND catalog_version IS NOT NULL AND catalog_version != ''
+       WHERE install_id = ?1 AND build_kind != 'adopted'
+         AND catalog_version IS NOT NULL AND catalog_version != ''
        GROUP BY catalog_version
        ORDER BY max(taken_at) DESC, catalog_version
        LIMIT ?2`,
     )
     .bind(installId, limit ?? -1)
     .all<{ version: string }>();
-  return [...new Set([current, ...results.map((r) => r.version)])];
+  return [...new Set([...(current === null ? [] : [current]), ...results.map((r) => r.version)])];
 }
 
 interface BuildPlan {
@@ -338,7 +339,12 @@ async function planBuild(
     buildCommand: await lastBuildCommand(deps.db, install.id),
     ...(baseline === undefined ? {} : { baseline }),
     // The build request takes at most 16: the newest snapshots'.
-    avoidVersions: await versionsInUse(deps.db, install.id, install.catalog_version, 15),
+    avoidVersions: await versionsInUse(
+      deps.db,
+      install.id,
+      install.build_kind === "adopted" ? null : install.catalog_version,
+      15,
+    ),
   };
 }
 
@@ -1336,7 +1342,11 @@ async function deleteDiscardedFiles(
   const keep =
     install === undefined || install.status === "uninstalled"
       ? []
-      : await versionsInUse(db, install.id, install.catalog_version);
+      : await versionsInUse(
+          db,
+          install.id,
+          install.build_kind === "adopted" ? null : install.catalog_version,
+        );
   // Other builds of the install waiting for review keep their objects too,
   // as does one taken just now by an install or update about to start.
   const others = await orm

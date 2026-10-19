@@ -663,6 +663,170 @@ describe("pause job: failures", () => {
   });
 });
 
+/**
+ * An app of 17 Workers, named as an install names them
+ * (`<install Worker>-<name>`): the Workers of Cloudflare OS.
+ */
+const MANY = [
+  "cloudflare-os",
+  ...[
+    "workshop",
+    "context",
+    "scheduler",
+    "cloudflare",
+    "confluence",
+    "github",
+    "google",
+    "homeassistant",
+    "linear",
+    "mcp",
+    "mcpportal",
+    "notion",
+    "slack",
+    "spotify",
+    "supabase",
+    "zoominfo",
+  ].map((name) => `cloudflare-os-${name}`),
+];
+
+/** Each of {@link MANY} serving `real-<name>`, with a service binding to the next. */
+function manyWorkers(): Fake {
+  return world({
+    scripts: new Map(
+      MANY.map((w) => [
+        w,
+        fakeScript(`real-${w}`, { bindings: [{ type: "service", name: "NEXT" }] }),
+      ]),
+    ),
+    namespaces: [],
+    queues: new Map(),
+    workflows: new Map(),
+  });
+}
+
+describe("pause job: an app of 17 Workers", () => {
+  it("pauses and resumes every Worker on Workers Paid, in steps whose names the engine takes", async () => {
+    await writeAccountPlan(createDb(env.DB), "paid");
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const step = fakeStep();
+    const { jobId, error } = await pause(fake, {}, { step });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    // Ten stand-ins a step on Workers Paid: the first step lists more Worker
+    // names than a step name may hold, and its name is cut.
+    const uploads = step.names.filter((n) => n.startsWith("upload"));
+    expect(uploads).toHaveLength(2);
+    expect(uploads[0]).toMatch(/^upload the stand-ins of Workers cloudflare-os, .* … [0-9a-f]{8}$/);
+    expect(uploads[0]).toHaveLength(256);
+    expect(uploads[1]).toBe(`upload the stand-ins of Workers ${MANY.slice(10).join(", ")}`);
+    expect(step.names.every((n) => n.length <= 256)).toBe(true);
+    expect(fake.world.deploys.map((d) => d.script)).toEqual(MANY);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+
+    const resumed = await resume(fake);
+    expect(resumed.error).toBeNull();
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+  });
+
+  it("pauses and resumes every Worker on Workers Free, spread over fresh allowances of requests", async () => {
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const engine = fakeEngine();
+    const { jobId, error } = await pause(fake, {}, { engine });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    expect(engine.invocations.length).toBeGreaterThan(1);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+    // Every Worker switches within one invocation, back to back.
+    const serves = engine.ran.filter((r) => r.name.startsWith("serve the stand-in"));
+    expect(serves).toHaveLength(17);
+    expect(new Set(serves.map((r) => r.invocation)).size).toBe(1);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+
+    const back = fakeEngine();
+    const resumed = await resume(fake, {}, { engine: back });
+    expect(resumed.error).toBeNull();
+    expect(Math.max(...back.invocations)).toBeLessThanOrEqual(50);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+  });
+
+  it("puts every switched Worker back when one cannot switch, and the next pause succeeds", async () => {
+    await writeAccountPlan(createDb(env.DB), "paid");
+    await seedApp({ workers: MANY, queues: false, workflow: false });
+    const fake = manyWorkers();
+    const ninth = MANY[8] as string;
+    fake.world.failAlways.set(`POST /workers/scripts/${ninth}/deployments`, 400);
+    const failed = await pause(fake);
+    expect(failed.error).toBeInstanceOf(NonRetryableError);
+    expect((await job(failed.jobId))?.error).toMatch(
+      new RegExp(`^serve the stand-in of Worker ${ninth}: Cloudflare API request failed: `),
+    );
+    // Eight Workers had switched: each serves the app's version again.
+    expect(fake.world.deploys.filter((d) => d.versionId.startsWith("standin-"))).toHaveLength(8);
+    for (const w of MANY) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+
+    fake.world.failAlways.clear();
+    const again = await pause(fake);
+    expect(again.error).toBeNull();
+    for (const w of MANY) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+  });
+});
+
+describe("resume job: an app of more Workers than a run of a job may make requests", () => {
+  it("reads each Worker once, in a step of its own, so no step's requests grow with the app", async () => {
+    const workers = Array.from({ length: 60 }, (_, i) => `cut-${i + 1}`);
+    await writeAccountPlan(createDb(env.DB), "paid");
+    await seedApp({ workers, queues: false, workflow: false });
+    const fake = world({
+      scripts: new Map(workers.map((w) => [w, fakeScript(`real-${w}`)])),
+      namespaces: [],
+      queues: new Map(),
+      workflows: new Map(),
+    });
+    expect((await pause(fake)).error).toBeNull();
+    for (const w of workers) expect(servingOf(fake.world, w)).toMatch(/^standin-/);
+
+    await writeAccountPlan(createDb(env.DB), "free");
+    const engine = fakeEngine();
+    const { jobId, error } = await resume(fake, {}, { engine });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    for (const w of workers) expect(servingOf(fake.world, w)).toBe(`real-${w}`);
+    expect(
+      engine.ran.filter((r) => r.name.startsWith("read what Worker")).map((r) => r.name),
+    ).toEqual(workers.map((w) => `read what Worker ${w} serves`));
+    // Decided from the reads before it.
+    expect(engine.ran.find((r) => r.name === "check the app's Workers")?.requests).toBe(0);
+    expect(Math.max(...engine.ran.map((r) => r.requests))).toBeLessThanOrEqual(2);
+    expect(Math.max(...engine.invocations)).toBeLessThanOrEqual(50);
+  });
+
+  it("refuses when every Worker is gone, from the reads, before anything changes", async () => {
+    const workers = ["cut", "cut-api"];
+    await seedApp({ workers, queues: false, workflow: false });
+    const fake = world({
+      scripts: new Map(workers.map((w) => [w, fakeScript(`real-${w}`)])),
+      namespaces: [],
+      queues: new Map(),
+      workflows: new Map(),
+    });
+    expect((await pause(fake)).error).toBeNull();
+    fake.world.scripts.clear();
+    const step = fakeStep();
+    const { jobId, error } = await resume(fake, {}, { step });
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((await job(jobId))?.error).toBe(
+      'check the app\'s Workers: every Worker of the app ("cut", "cut-api") is gone from the account (they were deleted outside Appflare), so the app cannot run again. Uninstall the app to remove what is left of it',
+    );
+    expect(step.names.filter((n) => n.startsWith("read what Worker"))).toHaveLength(2);
+    expect(step.names.some((n) => n.startsWith("serve the app's version"))).toBe(false);
+    expect(await findOpenPause(createDb(env.DB), "i1")).not.toBeNull();
+  });
+});
+
 describe("pause job: a pause carried on", () => {
   /**
    * A first pause switches the Worker to its stand-in, then fails, and can
@@ -799,6 +963,35 @@ describe("resume job", () => {
     expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
   });
 
+  it("serves the recorded versions when the engine replays reads an earlier version of the job recorded", async () => {
+    await seedApp({ workers: ["cut", "cut-api"], queues: false, workflow: false });
+    const fake = world({
+      scripts: new Map([
+        ["cut", cutWorker()],
+        ["cut-api", fakeScript(REAL_API)],
+      ]),
+    });
+    expect((await pause(fake)).error).toBeNull();
+    const api = fake.world.scripts.get("cut-api") as FakeScript;
+    api.versions.set("newer", { handlers: ["fetch"], named: [], bindings: [] });
+    api.deployments.unshift({
+      id: "dep-dash",
+      versions: [{ version_id: "newer", percentage: 100 }],
+    });
+    // What that job recorded: it had checked the Workers, then read each.
+    const recorded = new Map<string, unknown>([
+      ["check the app's Workers", {}],
+      ["read what Worker cut serves", { standIn: true }],
+      ["read what Worker cut-api serves", { standIn: false }],
+    ]);
+    const { jobId, error } = await resume(fake, {}, { step: replayingStep(recorded).step });
+    expect(error).toBeNull();
+    expect(await job(jobId)).toMatchObject({ status: "succeeded" });
+    expect(servingOf(fake.world, "cut")).toBe(REAL);
+    expect(servingOf(fake.world, "cut-api")).toBe("newer");
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+  });
+
   it("sets the cap aside until its period resets when asked", async () => {
     await seedApp({ queues: false, workflow: false });
     await writeAccountPlan(createDb(env.DB), "paid");
@@ -874,6 +1067,35 @@ describe("resume job", () => {
       "SELECT type FROM notification_events WHERE type = 'app_resumed'",
     ).all();
     expect(results).toHaveLength(1);
+  });
+});
+
+describe("pause and resume of an app whose Worker was deleted by hand", () => {
+  it("refuses to pause, in a sentence, before changing anything", async () => {
+    await seedApp();
+    const fake = world({ scripts: new Map() });
+    const { jobId, error } = await pause(fake);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((await job(jobId))?.error).toBe(
+      'read Worker cut: the app\'s Worker "cut" is gone from the account (it was deleted outside Appflare), so there is nothing of it to pause. Uninstall the app to remove what is left of it',
+    );
+    // Nothing changed: the queue still delivers, the Workflow still runs.
+    expect(fake.world.queues.get("q-1")?.paused).toBe(false);
+    expect(fake.world.workflows.get("cut-jobs")?.get("run-1")).toBe("running");
+    expect(await findOpenPause(createDb(env.DB), "i1")).toBeNull();
+  });
+
+  it("refuses to resume, in a sentence, and keeps the pause open", async () => {
+    await seedApp({ queues: false, workflow: false });
+    const fake = world();
+    expect((await pause(fake)).error).toBeNull();
+    fake.world.scripts.delete("cut");
+    const { jobId, error } = await resume(fake);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect((await job(jobId))?.error).toBe(
+      "check the app's Workers: the app's Worker \"cut\" is gone from the account (it was deleted outside Appflare), so the app cannot run again. Uninstall the app to remove what is left of it",
+    );
+    expect(await findOpenPause(createDb(env.DB), "i1")).not.toBeNull();
   });
 });
 

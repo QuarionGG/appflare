@@ -39,6 +39,21 @@ export function instancesPerStep(accountPaid: boolean): number {
   return accountPaid ? 50 : 6;
 }
 
+/**
+ * Why a pause or resume cannot go on: every Worker of the app is gone from
+ * the account (deleted outside Appflare), so nothing of it can be paused or
+ * run again, and what is left of it only goes with an uninstall.
+ */
+export function workersGoneMessage(workers: readonly string[], job: "pause" | "resume"): string {
+  const outcome =
+    job === "pause" ? "so there is nothing of it to pause" : "so the app cannot run again";
+  const which =
+    workers.length === 1
+      ? `the app's Worker "${workers[0]}" is gone from the account (it was deleted outside Appflare)`
+      : `every Worker of the app (${workers.map((w) => `"${w}"`).join(", ")}) is gone from the account (they were deleted outside Appflare)`;
+  return `${which}, ${outcome}. Uninstall the app to remove what is left of it`;
+}
+
 /** A container application allows its recorded most instances again. */
 export async function restoreContainerPhase(
   steps: JobSteps,
@@ -60,36 +75,74 @@ export async function restoreContainerPhase(
 }
 
 /**
- * A Worker serves its recorded version again, at 100% of its traffic, when
- * it serves a stand-in now. One that serves its recorded version already
- * stays as it is, and so does one that serves another version: someone
- * deployed it outside Appflare while the app was paused, and that newer
- * version is what they want to run.
+ * What a Worker serves now, against the version a pause recorded for it:
+ * `gone` when it is no longer in the account; `stand-in` when it serves a
+ * stand-in and gets its recorded version back; `kept` when it serves its
+ * recorded version already, or another version someone deployed outside
+ * Appflare while the app was paused, which is what they want to run.
  */
-export async function restoreWorkerPhase(
+export type RecordedWorkerState = "gone" | "stand-in" | "kept";
+
+/**
+ * Reads one Worker in a step of its own (up to two requests), so the switch
+ * that follows makes one request per Worker ({@link serveRecordedVersion})
+ * and no step's requests grow with the app's Workers.
+ */
+export async function readRecordedWorker(
+  steps: JobSteps,
+  script: string,
+  versionId: string,
+  prefix = "",
+): Promise<RecordedWorkerState> {
+  const read = await steps.run(
+    `${prefix}read what Worker ${script} serves`,
+    async ({ log, cf }): Promise<{ state: RecordedWorkerState } | { standIn: boolean }> => {
+      const api = cf();
+      const serving = await servingVersionOf(api, script);
+      if (serving === null) {
+        log.warn(`Worker "${script}" no longer exists, so there is nothing of it to resume.`);
+        return { state: "gone" };
+      }
+      if (serving.versionId === versionId) {
+        log.info(`Worker "${script}" serves version ${versionId} already.`);
+        return { state: "kept" };
+      }
+      if (!isStandIn(await api.versions.getVersion(script, serving.versionId))) {
+        log.warn(
+          `Worker "${script}" serves version ${serving.versionId}, deployed while the app was paused; it keeps serving it instead of version ${versionId}.`,
+        );
+        return { state: "kept" };
+      }
+      return { state: "stand-in" };
+    },
+  );
+  return recordedWorkerStateOf(read);
+}
+
+/**
+ * The state a read step recorded. A job that ran an earlier version of the
+ * step recorded `{ standIn }` instead, and the engine hands that back when
+ * it runs the job again: `standIn: true` is `stand-in`; `false` was both a
+ * Worker that serves its own version and one that is gone (that job had
+ * checked for gone Workers before it read them), and either way nothing of
+ * it was put back, as `kept` does.
+ */
+export function recordedWorkerStateOf(
+  read: { state: RecordedWorkerState } | { standIn: boolean },
+): RecordedWorkerState {
+  if ("state" in read) return read.state;
+  return read.standIn ? "stand-in" : "kept";
+}
+
+/** A Worker serves its recorded version again, at 100% of its traffic: one request. */
+export async function serveRecordedVersion(
   steps: JobSteps,
   script: string,
   versionId: string,
   prefix = "",
 ): Promise<void> {
   await steps.run(`${prefix}serve the app's version of Worker ${script}`, async ({ log, cf }) => {
-    const api = cf();
-    const serving = await servingVersionOf(api, script);
-    if (serving === null) {
-      log.warn(`Worker "${script}" no longer exists, so there is nothing of it to resume.`);
-      return {};
-    }
-    if (serving.versionId === versionId) {
-      log.info(`Worker "${script}" serves version ${versionId} already.`);
-      return {};
-    }
-    if (!isStandIn(await api.versions.getVersion(script, serving.versionId))) {
-      log.warn(
-        `Worker "${script}" serves version ${serving.versionId}, deployed while the app was paused; it keeps serving it instead of version ${versionId}.`,
-      );
-      return {};
-    }
-    await serveVersion(api, script, versionId, "Appflare: resumed");
+    await serveVersion(cf(), script, versionId, "Appflare: resumed");
     log.info(`Version ${versionId} of Worker "${script}" serves all traffic again.`);
     return {};
   });
@@ -154,7 +207,7 @@ export interface RecordedPause {
  * app's own code starts its container at once), then the Workers, then the
  * queues (only the app's own code may receive their messages), then the
  * Workflow instances. Every recorded Worker is checked: one that serves a
- * stand-in serves its recorded version again ({@link restoreWorkerPhase}).
+ * stand-in serves its recorded version again ({@link readRecordedWorker}).
  *
  * Throws at the first change that fails; with `left`, each change is tried
  * on its own and what could not be put back is named there instead (the
@@ -163,7 +216,13 @@ export interface RecordedPause {
 export async function restorePhases(
   steps: JobSteps,
   recorded: RecordedPause,
-  opts: { perStep: number; prefix?: string; left?: string[] },
+  opts: {
+    perStep: number;
+    prefix?: string;
+    left?: string[];
+    /** Each recorded Worker's {@link readRecordedWorker}, when read already. */
+    read?: Record<string, RecordedWorkerState>;
+  },
 ): Promise<void> {
   const prefix = opts.prefix ?? "";
   const attempt = async (what: string, change: () => Promise<void>) => {
@@ -179,17 +238,31 @@ export async function restorePhases(
       restoreContainerPhase(steps, container, prefix),
     );
   }
-  const scripts = Object.keys(recorded.workerVersions);
-  // Back to back, so the app's Workers switch together.
-  await steps.reserve(`${prefix}the app's Workers`, scripts.length, async () => {
-    for (const script of scripts) {
-      const versionId = recorded.workerVersions[script];
-      if (versionId === undefined) continue;
-      await attempt(`Worker "${script}"`, () =>
-        restoreWorkerPhase(steps, script, versionId, prefix),
-      );
+  // Each Worker read first, so the switch below makes one request per
+  // Worker: on Workers Free, the switch of an app of many Workers then fits
+  // one invocation's requests. Read once: Resume passes the reads it made
+  // before anything changed.
+  const read: Record<string, RecordedWorkerState> = { ...opts.read };
+  if (opts.read === undefined) {
+    for (const [script, versionId] of Object.entries(recorded.workerVersions)) {
+      await attempt(`Worker "${script}"`, async () => {
+        read[script] = await readRecordedWorker(steps, script, versionId, prefix);
+      });
     }
-  });
+  }
+  const toServe = Object.entries(recorded.workerVersions)
+    .filter(([script]) => read[script] === "stand-in")
+    .map(([script, versionId]) => ({ script, versionId }));
+  // Back to back, so the app's Workers switch together.
+  if (toServe.length > 0) {
+    await steps.reserve(`${prefix}the app's Workers`, toServe.length, async () => {
+      for (const { script, versionId } of toServe) {
+        await attempt(`Worker "${script}"`, () =>
+          serveRecordedVersion(steps, script, versionId, prefix),
+        );
+      }
+    });
+  }
   for (const queue of recorded.queues) {
     await attempt(`queue "${queue.name}"`, () => resumeQueuePhase(steps, queue, prefix));
   }

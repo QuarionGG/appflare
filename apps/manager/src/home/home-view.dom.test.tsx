@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StartUpdateHandle } from "../components/update-banner";
+import type { ImportedApp } from "../imports/types";
 import { installLabel } from "../installs/display-name";
 import { type AccountAttentionRow, type AttentionInput, attentionItems } from "./attention";
 import type { HomeApp } from "./layout-data";
@@ -141,6 +142,7 @@ function render(
     isAdmin?: boolean;
     input?: Partial<AttentionInput>;
     onDismiss?: (row: AccountAttentionRow) => void;
+    importedApps?: ImportedApp[];
   } = {},
 ) {
   const isAdmin = opts.isAdmin ?? true;
@@ -149,6 +151,7 @@ function render(
       <Toasty>
         <HomeView
           apps={apps}
+          importedApps={opts.importedApps}
           items={items(apps, { isAdmin, ...opts.input })}
           isAdmin={isAdmin}
           update={update}
@@ -167,6 +170,32 @@ const buttons = (scope: Element | null) =>
 const cards = () => [...container.querySelectorAll("[data-app-card]")];
 
 describe("Home", () => {
+  it("shows existing deployments without install or update actions on an imported-only dashboard", () => {
+    render([], {
+      importedApps: [
+        {
+          id: "imported-site",
+          displayName: "Our website",
+          primaryWorker: "existing-site",
+          workerNames: ["existing-site"],
+          importedAt: "2026-10-15T12:00:00.000Z",
+          refreshedAt: "2026-10-15T12:00:00.000Z",
+          address: "https://example.com",
+          workers: [],
+          warnings: [],
+        },
+      ],
+    });
+    expect(container.textContent).toContain("Our website");
+    expect(container.textContent).not.toContain("No apps installed yet");
+    expect(container.querySelector('a[href="/imports/imported-site"]')).not.toBeNull();
+    expect(container.querySelector('a[href="https://example.com/"]')).not.toBeNull();
+    expect(
+      [...container.querySelectorAll("button")].some((button) =>
+        /update|uninstall|pause/i.test(button.textContent ?? ""),
+      ),
+    ).toBe(false);
+  });
   it("lists what needs attention, most urgent first, with one action each", () => {
     const dismissed: string[] = [];
     render(FULL, { input: FULL_INPUT, onDismiss: (row) => dismissed.push(row.id) });

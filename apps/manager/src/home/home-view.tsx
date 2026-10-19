@@ -1,8 +1,10 @@
 import { Empty, LinkButton } from "@cloudflare/kumo";
-import { PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
+import { DownloadSimpleIcon, PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
 import { PageHeader } from "../components/page-header";
 import type { StartUpdateHandle } from "../components/update-banner";
+import { ImportedApps } from "../imports/imported-apps";
+import type { ImportedApp } from "../imports/types";
 import { installLabel } from "../installs/display-name";
 import type { UpdateAllOutcome } from "../installs/update-all";
 import type { UsageAttention } from "../usage/attention";
@@ -30,6 +32,7 @@ export function HomeView({
   onUpdateAllOutcome,
   now,
   usage,
+  importedApps = [],
 }: {
   apps: readonly HomeApp[];
   items: readonly AttentionItem[];
@@ -40,6 +43,7 @@ export function HomeView({
   now: Date;
   /** Home's usage; null when it could not be read; left out, Home shows no usage. */
   usage?: HomeUsageData | null;
+  importedApps?: readonly ImportedApp[];
 }) {
   const usageRows = useMemo(
     () => items.flatMap((item): UsageAttention[] => (item.kind === "usage" ? [item.usage] : [])),
@@ -65,11 +69,18 @@ export function HomeView({
         title="Home"
         description="What needs your attention, and the apps in this Cloudflare account."
         actions={
-          apps.length > 0 ? (
-            <LinkButton href="/catalog" variant="secondary" icon={<StorefrontIcon />}>
-              Catalog
-            </LinkButton>
-          ) : undefined
+          <>
+            {isAdmin && (
+              <LinkButton href="/imports" variant="secondary" icon={<DownloadSimpleIcon />}>
+                Import existing app
+              </LinkButton>
+            )}
+            {(apps.length > 0 || importedApps.length > 0) && (
+              <LinkButton href="/catalog" variant="secondary" icon={<StorefrontIcon />}>
+                Catalog
+              </LinkButton>
+            )}
+          </>
         }
       />
       <NeedsAttention
@@ -111,7 +122,7 @@ export function HomeView({
             );
           }}
         />
-      ) : (
+      ) : importedApps.length === 0 ? (
         <Empty
           icon={<PackageIcon size={48} className="text-kumo-inactive" />}
           title="No apps installed yet"
@@ -122,7 +133,8 @@ export function HomeView({
             </LinkButton>
           }
         />
-      )}
+      ) : null}
+      <ImportedApps apps={importedApps} />
     </>
   );
 }

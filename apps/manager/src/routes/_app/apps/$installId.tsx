@@ -173,6 +173,14 @@ function InstallPage() {
           ) : undefined
         }
       />
+      {install.build.kind === "adopted" && (
+        <Banner
+          variant="secondary"
+          icon={BANNER_ICON.secondary}
+          title="Existing deployment managed by Appflare"
+          description="The current Worker, data and settings were adopted in place. Usage, pause and resume, resources and the recovery baseline are available here. To change code or redeploy settings, rebuild your own repository under Source and review the build first."
+        />
+      )}
       <UpdateBanner install={install} isAdmin={isAdmin} />
       <FailedInstallState install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
@@ -342,6 +350,23 @@ function DomainsTab({
     settings?.email != null && settings.email.leftover.length === 0 ? settings.email.again : null;
   return (
     <>
+      {(install.adoption?.routes.length ?? 0) > 0 && (
+        <Section title="Existing Workers routes">
+          <SectionBody>
+            <Text variant="secondary">
+              These routes and their DNS records were kept during adoption. Manage this existing
+              routing in Cloudflare; Appflare leaves it in place when changing the app's code.
+            </Text>
+            <ul className="grid gap-1">
+              {install.adoption?.routes.map((route) => (
+                <li key={`${route.workerName}:${route.pattern}`} className={mono}>
+                  {route.pattern}
+                </li>
+              ))}
+            </ul>
+          </SectionBody>
+        </Section>
+      )}
       {isAdmin && install.build.kind !== "self-deploying" && (
         <Section id="workers-dev" title="workers.dev URL" className={FLUSH_RING_CLASS}>
           <WorkersDevSwitch install={install} />
@@ -832,6 +857,12 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
                 {install.domains.map((d) => (
                   <DomainName key={d.id} domain={d} showUrl />
                 ))}
+                {install.adoption?.address != null && install.adoption.routes.length > 0 && (
+                  <Link href={install.adoption.address} target="_blank" rel="noopener noreferrer">
+                    {install.adoption.address}
+                    <Link.ExternalIcon />
+                  </Link>
+                )}
                 {!install.workersDevEnabled && (
                   <Text as="span" variant="secondary" size="sm">
                     Not served on workers.dev
@@ -896,6 +927,16 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
                   </Text>
                 )}
               </span>
+            </DescriptionItem>
+          ) : install.build.kind === "adopted" ? (
+            <DescriptionItem label="Deployment">
+              Adopted without redeploying
+              {install.adoption != null && (
+                <>
+                  {" "}
+                  · <Timestamp iso={install.adoption.adoptedAt} />
+                </>
+              )}
             </DescriptionItem>
           ) : install.build.kind === "sandbox" ? (
             <DescriptionItem label="Built">

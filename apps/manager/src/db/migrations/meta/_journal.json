@@ -92,6 +92,20 @@
       "when": 1791917377673,
       "tag": "0012_notification_account_limit_event",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1792038715138,
+      "tag": "0013_imported_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792378702165,
+      "tag": "0014_install_adoptions",
+      "breakpoints": true
     }
   ]
 }

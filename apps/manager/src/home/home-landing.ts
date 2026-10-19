@@ -23,6 +23,6 @@ export function isHomeClick(state: unknown): boolean {
 export type HomeLanding = "home" | "catalog";
 
 /** Where `/` leads: Home, or on to the catalog while nothing is installed. */
-export function homeLanding(installCount: number, state: unknown): HomeLanding {
-  return installCount === 0 && !isHomeClick(state) ? "catalog" : "home";
+export function homeLanding(installCount: number, state: unknown, importedCount = 0): HomeLanding {
+  return installCount + importedCount === 0 && !isHomeClick(state) ? "catalog" : "home";
 }

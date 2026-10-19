@@ -18,6 +18,7 @@ import { createDb } from "../db/client";
 import { ensureMigrated, schemaDowngrade } from "../db/migrate";
 import { deployButtonInstalled } from "../deploy-button/deploy-copy";
 import { readDeployCopyCleanup } from "../deploy-button/deploy-copy.server";
+import { listImportedAppsCore } from "../imports/imports.server";
 import {
   type InstallRecord,
   installRowsOf,
@@ -79,6 +80,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
     migrated,
     reconnectNeeded,
     spend,
+    importedApps,
   ] = await Promise.all([
     recordsRead,
     rowsRead,
@@ -113,6 +115,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
       isAdmin,
       now: Date.now(),
     }),
+    listImportedAppsCore(env.DB),
   ]);
   // A catalog not cached yet (a new manager before its first cron run) is
   // fetched after the answer, so the next page shows its icons and updates.
@@ -136,6 +139,7 @@ export async function readLayoutData(session: AuthSession): Promise<LayoutData> 
       activeJobId,
     },
     removedApps,
+    importedApps,
     apps: installs.map((row) => ({
       ...row,
       updateNeeds: needs.get(row.id) ?? null,

@@ -17,6 +17,7 @@ import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
 import { storedBypassPaths } from "../access/stored-access.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
+import { limitedCreates } from "../catalog/account-limits";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedListing } from "../catalog/merged.server";
@@ -44,6 +45,7 @@ import {
   workerLabel,
 } from "./entry-workers";
 import { publicPathsBackPhase, syncAccessPhase } from "./install/access";
+import { checkAccountLimitsPhase, freeLimitsApply } from "./install/account-limits";
 import {
   type ArtifactOrigin,
   artifactOriginOf,
@@ -131,6 +133,7 @@ import { runSelfDeployingUpdate } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
+import { assetFilesOf } from "./units/upload-retry";
 import {
   type AppAddress,
   changedAddress,
@@ -392,11 +395,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   } | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const begun = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -415,6 +414,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         }
         origin = { kind: "prebuilt", build: params.prebuilt };
       } else {
+        if (install.origin === "repository") {
+          throw new JobError(
+            "this app follows its own repository; build and review its source before updating it",
+          );
+        }
         if (env.KV === undefined) throw new JobError("the catalog cache is not available");
         // Its own catalog only: another catalog listing the same slug never updates it.
         const app =
@@ -466,18 +470,22 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         name: r.name,
         cfId: r.cf_id,
       }));
+      // The detected plan first, then the one an admin set.
+      const plan = resolveAccountPlan(
+        settings.account_plan,
+        parseStoredCapabilities(settings.account_capabilities),
+      );
       return {
         accountId: settings.account_id,
-        // The detected plan first, then the one an admin set.
-        accountPaid:
-          resolveAccountPlan(
-            settings.account_plan,
-            parseStoredCapabilities(settings.account_capabilities),
-          ).plan === "paid",
+        accountPaid: plan.plan === "paid",
+        // Free as detected or set, not by default: an admin's "this account
+        // is on Workers Paid" does not lift Workers Free's limits then.
+        accountFree: plan.plan === "free" && plan.source !== "default",
         slug: install.app_slug,
         catalogId: install.catalog_id,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
+        fromBuildKind: install.build_kind,
         recordedVersionId: install.current_version_id,
         // Installs made before the tag was recorded applied every migration
         // of the manifest they were installed from.
@@ -558,6 +566,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         ) as WorkflowTarget[] | undefined,
       };
     });
+    if (begun === null) return;
+    // Named again, for the functions declared below that read it.
+    const started = begun;
     steps.setAccountId(started.accountId);
     const { workerName, workersDev } = started;
 
@@ -914,8 +925,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     // The account's cron trigger limit, when this version sets more cron
     // triggers than the Worker has, before anything changes. Skipped on
-    // Workers Paid: a paid app was confirmed on it when it was installed, the
-    // admin confirmed it for this update, or Settings records it.
+    // Workers Paid: a paid app was confirmed on it when it was installed,
+    // Settings records it, or the admin confirmed it for this update while
+    // Appflare does not know the plan.
     // The other Workers' cron triggers are theirs, not recorded rows.
     const recordedCrons =
       started.resources.filter((r) => r.kind === "cron").length +
@@ -929,10 +941,33 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         workerName,
         wanted: wantedCrons,
         paid:
-          manifest.catalog.plan === "paid" || params.paidConfirmed === true || started.accountPaid,
+          manifest.catalog.plan === "paid" ||
+          !freeLimitsApply({
+            paid: started.accountPaid,
+            knownFree: started.accountFree,
+            paidConfirmed: params.paidConfirmed === true,
+          }),
         subject: "this version",
       });
     }
+
+    // The account's limits for the D1 databases, Hyperdrive configurations
+    // and Vectorize indexes this version creates, as at install. A replaced
+    // database's new configuration counts too: the old one is kept until the
+    // version serves.
+    await checkAccountLimitsPhase(steps, {
+      wanted: limitedCreates([
+        ...toCreate,
+        ...replacingDatabases.map(() => ({ kind: "hyperdrive" })),
+      ]),
+      freeLimits:
+        manifest.catalog.plan !== "paid" &&
+        freeLimitsApply({
+          paid: started.accountPaid,
+          knownFree: started.accountFree,
+          paidConfirmed: params.paidConfirmed === true,
+        }),
+    });
 
     // Pipelines, when this version makes a stream: a token without its
     // permission, or an account without it, is refused before anything changes.
@@ -1104,6 +1139,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           modules: primaryManifest.worker.modules,
           metadata,
           target,
+          ...assetFilesOf(primaryManifest.assets.files, assetsJwt),
         }),
         log,
       );
@@ -1581,7 +1617,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     if (source.provenance.build_kind === "sandbox") {
       await cleanupSandboxBuildsPhase(steps, env, params.installId, [
         params.version,
-        started.fromVersion,
+        ...(started.fromBuildKind === "adopted" ? [] : [started.fromVersion]),
       ]);
     }
 

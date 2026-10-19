@@ -137,7 +137,7 @@ export function SidebarAppsGroup({
                 <Sidebar.MenuButton
                   key={app.id}
                   itemId={appItemId(app.id)}
-                  href={`/apps/${app.id}`}
+                  href={app.href ?? `/apps/${app.id}`}
                   active={app.id === current}
                   aria-current={app.id === current ? "page" : undefined}
                   // Shown only while folded, when the name is hidden.

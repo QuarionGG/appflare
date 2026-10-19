@@ -12,6 +12,7 @@ import {
 import { createDb } from "../../db/client";
 import { type JobStarter, jobs } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
+import { managerSelfUpdateBlock } from "../../server/manager-update-policy";
 import { reconcileJobs, type WorkflowLookup } from "../reconcile.server";
 import type { SelfUpdateJobParams } from "../self-update";
 
@@ -58,6 +59,8 @@ export async function startSelfUpdateCore(
   if ((await removalInProgress(deps.db)) !== null) {
     throw new SelfUpdateError(REMOVAL_IN_PROGRESS_MESSAGE);
   }
+  const blocked = managerSelfUpdateBlock();
+  if (blocked !== null) throw new SelfUpdateError(blocked);
   if (latest === null) {
     throw new SelfUpdateError("No Appflare release is known yet. Check for updates first.");
   }

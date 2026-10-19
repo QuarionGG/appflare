@@ -47,7 +47,24 @@ export const Route = createFileRoute("/_app")({
 function AppLayout() {
   const { viewer } = Route.useRouteContext();
   const { data, items } = useAttention();
-  const apps = useMemo(() => sidebarApps(data.apps, appSignals(items)), [data.apps, items]);
+  const apps = useMemo(
+    () =>
+      sidebarApps(
+        [
+          ...data.apps,
+          ...(data.importedApps ?? []).map((app) => ({
+            id: app.id,
+            displayName: app.displayName,
+            name: app.primaryWorker,
+            workerName: app.primaryWorker,
+            icon: null,
+            href: `/imports/${app.id}`,
+          })),
+        ],
+        appSignals(items),
+      ),
+    [data.apps, data.importedApps, items],
+  );
   return (
     <AppShell
       viewer={viewer}

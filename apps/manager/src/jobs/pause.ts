@@ -34,6 +34,7 @@ import {
   type RecordedPause,
   restorePhases,
   standInsPerStep,
+  workersGoneMessage,
 } from "./pause/phases";
 import {
   containersJson,
@@ -171,11 +172,7 @@ export async function runPause(ctx: JobContext): Promise<void> {
   let finished: { pauseId: string; pausedBy: string; cause: PauseCause } | null = null;
 
   try {
-    const started = await run("start", async ({ log, orm }) => {
-      await orm
-        .update(jobs)
-        .set({ status: "running", started_at: new Date(now()) })
-        .where(eq(jobs.id, params.jobId));
+    const started = await steps.start(async ({ log, orm }) => {
       const [install] = await orm
         .select({
           status: installs.status,
@@ -251,6 +248,7 @@ export async function runPause(ctx: JobContext): Promise<void> {
         recorded: recordedOf(pause),
       };
     });
+    if (started === null) return;
     if (started.refused !== null) {
       alreadyPaused = true;
       throw new JobError(started.refused);
@@ -315,6 +313,9 @@ export async function runPause(ctx: JobContext): Promise<void> {
       recorded.workerVersions = { ...recorded.workerVersions, [script]: read.versionId };
       reads.push({ script, facts: read.facts });
     }
+    // Every Worker was deleted outside Appflare: nothing has changed yet,
+    // and nothing would stop the app from spending, so the pause stops here.
+    if (reads.length === 0) throw new JobError(workersGoneMessage(targets.workers, "pause"));
 
     // 3. The stand-ins, uploaded side by side (each takes seconds), a few per
     // step so a step stays within its planned requests; uploading one again

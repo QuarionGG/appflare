@@ -47,7 +47,7 @@ export function installJobAppNameSql(alias: string): string {
   return `(SELECT CASE WHEN json_valid(install_job.input_json)
                  THEN json_extract(install_job.input_json, '$.appName') END
      FROM jobs install_job
-     WHERE install_job.install_id = ${alias}.id AND install_job.kind = 'install' LIMIT 1)`;
+     WHERE install_job.install_id = ${alias}.id AND install_job.kind IN ('install', 'adopt') LIMIT 1)`;
 }
 
 /**

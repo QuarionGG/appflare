@@ -1,4 +1,5 @@
 import type { DeployCopyCleanup } from "../deploy-button/deploy-copy";
+import type { ImportedApp } from "../imports/types";
 import type { InstallRow } from "../installs/installs.functions";
 import type { ManagerStatus } from "../installs/pending-updates";
 import type { AccountLimitAttention, UsageAttention } from "../usage/attention";
@@ -25,6 +26,8 @@ export interface LayoutData {
   removedApps: number;
   /** Every install that is not uninstalled, newest first. */
   apps: HomeApp[];
+  /** Existing deployments recorded without taking over their lifecycle. */
+  importedApps?: ImportedApp[];
   failedJobs: FailedJob[];
   /** For admins; empty for members, who cannot change the account. */
   accountRows: AccountAttentionRow[];

@@ -75,8 +75,11 @@ export const RESOURCE_KINDS = [
  * catalog manifest (there is no artifact manifest), `artifact_url` and
  * `artifact_digest` name the published catalog manifest, `worker_name` is
  * the Worker that serves the app, and every resource is `managed_by: "app"`.
+ * `adopted` records an existing deployment without rebuilding it. It has no
+ * artifact until its first reviewed repository build; `install_adoptions`
+ * keeps the original deployment's inventory for routing and recovery.
  */
-export const BUILD_KINDS = ["artifact", "sandbox", "self-deploying"] as const;
+export const BUILD_KINDS = ["artifact", "sandbox", "self-deploying", "adopted"] as const;
 export type BuildKind = (typeof BUILD_KINDS)[number];
 
 /**
@@ -118,6 +121,7 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
  */
 export const JOB_KINDS = [
   "install",
+  "adopt",
   "update",
   "uninstall",
   "rollback",
@@ -267,6 +271,54 @@ export const installs = sqliteTable("installs", {
    * from a repository, which no catalog lists.
    */
   catalog_id: text("catalog_id"),
+});
+
+/**
+ * Existing deployments inventoried without giving Appflare ownership of their
+ * lifecycle. Kept outside installs/resources so install jobs cannot change them.
+ * inventory_json contains only allowlisted metadata, never code or binding values.
+ */
+export const imported_apps = sqliteTable("imported_apps", {
+  id: text("id").primaryKey(),
+  account_id: text("account_id").notNull(),
+  display_name: text("display_name").notNull(),
+  primary_worker: text("primary_worker").notNull(),
+  inventory_json: text("inventory_json").notNull(),
+  imported_at: timestamp("imported_at").notNull(),
+  refreshed_at: timestamp("refreshed_at").notNull(),
+});
+
+/** A Worker can belong to only one imported app in its Cloudflare account. */
+export const imported_app_workers = sqliteTable(
+  "imported_app_workers",
+  {
+    account_id: text("account_id").notNull(),
+    worker_name: text("worker_name").notNull(),
+    app_id: text("app_id")
+      .notNull()
+      .references(() => imported_apps.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.account_id, t.worker_name] }),
+    index("imported_app_workers_app_id_idx").on(t.app_id),
+  ],
+);
+
+/**
+ * The baseline of a deployment taken into management without redeploying it.
+ * The inventory contains references only; vars live in installs.config_json
+ * and secret values stay in Cloudflare. Kept after the first reviewed build
+ * so a rollback can restore the original deployment and its cron triggers.
+ */
+export const install_adoptions = sqliteTable("install_adoptions", {
+  install_id: text("install_id")
+    .primaryKey()
+    .references(() => installs.id),
+  imported_app_id: text("imported_app_id").notNull().unique(),
+  app_name: text("app_name").notNull(),
+  primary_url: text("primary_url"),
+  inventory_json: text("inventory_json").notNull(),
+  adopted_at: timestamp("adopted_at").notNull(),
 });
 
 /** `official`: the catalog Appflare ships with; `custom`: one an admin added. */

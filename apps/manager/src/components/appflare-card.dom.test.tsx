@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagerStatus } from "../installs/pending-updates";
 import type { JobView } from "../jobs/jobs.functions";
 
+vi.mock("../server/manager-update-policy", () => ({
+  managerSelfUpdateBlock: () => calls.managerBlock,
+}));
+
 /**
  * The sidebar's Appflare card, with the self-update and the job it follows
  * standing in: nothing here updates anything.
@@ -14,6 +18,7 @@ const calls = vi.hoisted(() => ({
   /** What the followed job looks like; null when there is none. */
   job: null as Partial<JobView> | null,
   stalled: false,
+  managerBlock: null as string | null,
 }));
 vi.mock("../catalog/manager-releases.functions", () => ({
   startSelfUpdate: calls.startSelfUpdate,
@@ -64,6 +69,7 @@ beforeEach(() => {
   calls.startSelfUpdate.mockClear();
   calls.job = null;
   calls.stalled = false;
+  calls.managerBlock = null;
 });
 
 afterEach(() => {
@@ -109,6 +115,16 @@ async function click(target: HTMLElement) {
 }
 
 describe("AppflareCard", () => {
+  it("explains the custom fork and offers no upstream self-update", () => {
+    calls.managerBlock = "Deploy a reviewed build of this fork to update Appflare.";
+    show(AVAILABLE);
+    expect(container.textContent).toContain(calls.managerBlock);
+    expect(
+      [...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Update"),
+    ).toBe(false);
+    expect(calls.startSelfUpdate).not.toHaveBeenCalled();
+  });
+
   it("asks before updating, in the same confirmation as Settings, Updates", async () => {
     show(AVAILABLE);
     await click(button(container, "Update"));

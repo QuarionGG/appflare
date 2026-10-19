@@ -200,6 +200,40 @@ beforeEach(async () => {
 });
 
 describe("update job", () => {
+  it("rejects a queued catalog update of a repository install before any Cloudflare request", async () => {
+    await seedInstall({ status: "updating" });
+    await env.DB.prepare("UPDATE installs SET origin = 'repository' WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('stale-update', ?1, 'update', 'queued')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const fake = fakeAccount(null);
+    await expect(
+      runUpdate({
+        params: {
+          kind: "update",
+          jobId: "stale-update",
+          installId: INSTALL_ID,
+          version: "1.1.0",
+          secrets: {},
+        },
+        step: fakeStep(),
+        env: jobEnv(),
+        deps: { fetch: fake.fetch },
+      }),
+    ).rejects.toThrow("build and review its source before updating it");
+    expect(fake.state.calls).toEqual([]);
+    expect(await env.DB.prepare("SELECT current_version_id, status FROM installs").first()).toEqual(
+      {
+        current_version_id: OLD_VERSION,
+        status: "installed",
+      },
+    );
+  });
+
   it("updates an app end to end: snapshot, new binding, canary, D1, promote, health", async () => {
     const r = await update();
     expect(r.error).toBeNull();
@@ -1267,6 +1301,29 @@ describe("update job", () => {
       expect(r.fake.state.applied[created.uuid]).toEqual(["0001_add_level.sql"]);
       expect(r.fake.state.queries.filter((q) => q.startsWith(LOGS_BASELINE))).toHaveLength(1);
       expect(r.fake.state.queries.some((q) => q.includes("ADD COLUMN level"))).toBe(false);
+    });
+
+    it("stops before anything changes when the account has no room for the new database", async () => {
+      const full = [
+        { uuid: "d1-1", name: "cut-db" },
+        ...Array.from({ length: 9 }, (_, i) => ({ uuid: `d1-other-${i}`, name: `other-${i}` })),
+      ];
+      const r = await update(WITH_BASELINE, { d1: full });
+      expect(r.job?.error).toMatch(
+        /^check D1 database limit: this app needs a new D1 database and the account already has 10; Workers Free allows 10 per account/,
+      );
+      expect(r.step.names).not.toContain("snapshot");
+      expect(r.fake.state.d1).toHaveLength(10);
+    });
+
+    it("does not count when the admin confirmed Workers Paid while the plan is not known", async () => {
+      const full = [
+        { uuid: "d1-1", name: "cut-db" },
+        ...Array.from({ length: 9 }, (_, i) => ({ uuid: `d1-other-${i}`, name: `other-${i}` })),
+      ];
+      const r = await update(WITH_BASELINE, { d1: full }, {}, { paidConfirmed: true });
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check D1 database limit");
     });
 
     it("runs the baseline on a database an earlier failed attempt created and left empty", async () => {

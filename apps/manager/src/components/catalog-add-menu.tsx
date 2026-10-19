@@ -1,5 +1,5 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
-import { BooksIcon, GitBranchIcon, PlusIcon } from "@phosphor-icons/react";
+import { BooksIcon, DownloadSimpleIcon, GitBranchIcon, PlusIcon } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import type { SandboxReadiness } from "../sandbox/readiness";
 import { RepositoryBuildDialog } from "./repository-build-dialog";
@@ -47,6 +47,14 @@ export function CatalogAddMenu({
           }
         />
         <DropdownMenu.Content align="end">
+          <DropdownMenu.LinkItem
+            href="/imports"
+            icon={DownloadSimpleIcon}
+            render={<RouterAnchor />}
+            closeOnClick
+          >
+            Import existing app
+          </DropdownMenu.LinkItem>
           {repositoryBuilds && (
             <DropdownMenu.Item icon={GitBranchIcon} onClick={() => setRepositoryOpen(true)}>
               From a repository…

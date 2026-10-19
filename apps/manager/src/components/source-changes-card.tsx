@@ -58,7 +58,7 @@ export function SourceChangesCard({
     >
       <SectionBody>
         <Text>
-          Built from{" "}
+          {install.build.kind === "adopted" ? "Updates follow " : "Built from "}
           <Link href={source.url} target="_blank" rel="noopener noreferrer">
             {repo}
             <Link.ExternalIcon />
@@ -71,6 +71,8 @@ export function SourceChangesCard({
             </>
           )}
           .{" "}
+          {install.build.kind === "adopted" &&
+            "The current deployment was adopted in place; its original commit is not recorded. "}
           {install.origin === "repository"
             ? "The catalog never reviewed it, and Appflare never updates it on its own."
             : "The catalog did not check this commit. Updating from the catalog puts its checked release back."}
@@ -80,18 +82,22 @@ export function SourceChangesCard({
             variant={changes.changed ? "alert" : "default"}
             icon={<GitBranchIcon weight="fill" />}
             title={
-              changes.pinned
-                ? "Pinned to a commit"
-                : changes.changed
-                  ? `${changes.ref} has moved to ${changes.latest.slice(0, 12)}`
-                  : `No new commits on ${changes.ref}`
+              install.build.kind === "adopted"
+                ? `${changes.ref} currently points to ${changes.latest.slice(0, 12)}`
+                : changes.pinned
+                  ? "Pinned to a commit"
+                  : changes.changed
+                    ? `${changes.ref} has moved to ${changes.latest.slice(0, 12)}`
+                    : `No new commits on ${changes.ref}`
             }
             description={
-              changes.pinned
-                ? "It was built from a commit, which never changes. Rebuild it to pick up a new build command or a moved dependency."
-                : changes.changed
-                  ? `Installed: ${changes.installed?.slice(0, 12) ?? "unknown"}. Rebuild it to review the changes before updating.`
-                  : `Still at ${changes.latest.slice(0, 12)}, the commit installed.`
+              install.build.kind === "adopted"
+                ? "The deployed commit is unknown. Build and review this source before updating the existing deployment."
+                : changes.pinned
+                  ? "It was built from a commit, which never changes. Rebuild it to pick up a new build command or a moved dependency."
+                  : changes.changed
+                    ? `Installed: ${changes.installed?.slice(0, 12) ?? "unknown"}. Rebuild it to review the changes before updating.`
+                    : `Still at ${changes.latest.slice(0, 12)}, the commit installed.`
             }
           />
         )}
