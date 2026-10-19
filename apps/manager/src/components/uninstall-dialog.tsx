@@ -88,11 +88,12 @@ export function UninstallDialog({
   const jobStarted = useJobStarted();
   const selfDeploying = install.build.kind === "self-deploying";
   const data = selfDeploying ? [] : install.resources.filter((r) => isDataResourceKind(r.kind));
-  const [ticked, setTicked] = useState<Set<string>>(() => new Set(data.map((r) => r.id)));
+  const initialSelection = () => new Set(install.adoption == null ? data.map((r) => r.id) : []);
+  const [ticked, setTicked] = useState<Set<string>>(initialSelection);
   const [usage, setUsage] = useState<Map<string, ResourceUsage>>(new Map());
 
   function onOpen() {
-    setTicked(new Set(data.map((r) => r.id)));
+    setTicked(initialSelection());
     if (data.length > 0) {
       getResourceUsage({ data: { installId: install.id } })
         .then((rows) => setUsage(new Map(rows.map((u) => [u.id, u]))))

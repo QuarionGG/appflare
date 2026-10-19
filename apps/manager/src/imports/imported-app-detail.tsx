@@ -9,23 +9,26 @@ import { OpenAppButton } from "../components/open-app-button";
 import { PageHeader } from "../components/page-header";
 import { Section, SectionBody } from "../components/section";
 import { Timestamp } from "../components/timestamp";
+import { AdoptImportDialog, type AdoptionActions } from "./adopt-import-dialog";
 import { ImportInventory } from "./import-inventory";
 import { safeImportAddress } from "./imported-apps";
 import type { ImportedApp } from "./types";
 
-/** An imported app's page only reads Cloudflare. Forget deletes this local record alone. */
+/** An imported app stays inventory-only until an admin reviews and adopts it. */
 export function ImportedAppDetail({
   app,
   accountId,
   isAdmin,
   onRefresh,
   onForget,
+  adoption,
 }: {
   app: ImportedApp;
   accountId: string | null;
   isAdmin: boolean;
   onRefresh(): Promise<void>;
   onForget(): Promise<void>;
+  adoption?: { actions: AdoptionActions; onAdopted(installId: string): Promise<void> };
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,14 +66,24 @@ export function ImportedAppDetail({
               <OpenAppButton href={address} label={app.displayName} variant="primary" />
             )}
             {isAdmin && (
-              <BusyButton
-                pending={pending}
-                variant="secondary"
-                icon={<ArrowsClockwiseIcon />}
-                onClick={() => void refresh()}
-              >
-                Refresh inventory
-              </BusyButton>
+              <>
+                {adoption !== undefined && (
+                  <AdoptImportDialog
+                    app={app}
+                    actions={adoption.actions}
+                    onAdopted={adoption.onAdopted}
+                    disabled={pending}
+                  />
+                )}
+                <BusyButton
+                  pending={pending}
+                  variant="secondary"
+                  icon={<ArrowsClockwiseIcon />}
+                  onClick={() => void refresh()}
+                >
+                  Refresh inventory
+                </BusyButton>
+              </>
             )}
           </>
         }
@@ -80,8 +93,13 @@ export function ImportedAppDetail({
         variant="secondary"
         icon={BANNER_ICON.secondary}
         title="Managed by your existing deployment process"
-        description="Your Workers, code, data, domains and settings stay in place. Keep deploying updates as you do today. Appflare records the inventory and never updates, pauses or uninstalls this app."
+        description="Your Workers, code, data, domains and settings stay in place. Keep deploying updates as you do today. This import records inventory; an admin can review adoption to enable Appflare's app controls."
       />
+      {isAdmin && adoption !== undefined && app.workerNames.length !== 1 && (
+        <Text size="sm" variant="secondary">
+          Adoption currently supports apps with one Worker. This app's inventory remains available.
+        </Text>
+      )}
       <Section title="Import details">
         <SectionBody>
           <DescriptionList>

@@ -49,6 +49,7 @@ import { type FakeSandbox, type FakeSandboxOptions, fakeSandbox } from "../test/
 import { fakeSandboxAccount, sandboxRelease } from "../test/fake-sandbox-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
+import { INSTALL_ID, OLD_VERSION, seedInstall } from "../test/seed-install";
 import { type InstallJobParams, runInstall } from "./install";
 import type { JobEnv } from "./run-job";
 import { runSourceBuild, type SourceBuildJobParams } from "./source-build";
@@ -1297,6 +1298,115 @@ describe("building a catalog app from source", () => {
 });
 
 describe("checking for changes and rebuilding", () => {
+  it("builds and applies an adopted deployment's source while retaining its original rollback baseline and secrets", async () => {
+    await seedInstall({
+      version: "Existing deployment",
+      resources: [
+        { kind: "worker", name: "cut", cfId: "cut" },
+        { kind: "kv", binding: "CUT_KV", name: "existing-kv", cfId: "kv-existing" },
+        { kind: "d1", binding: "DB", name: "existing-db", cfId: "d1-existing" },
+        { kind: "secret", binding: "ADMIN_PASSWORD", name: "ADMIN_PASSWORD" },
+        { kind: "cron", name: "0 * * * *" },
+      ],
+    });
+    await env.DB.prepare(
+      `UPDATE installs SET app_slug = 'existing-worker', build_kind = 'adopted',
+       origin = 'repository', catalog_id = NULL, manifest_json = NULL, artifact_url = '',
+       artifact_digest = NULL, pin_sha = NULL, auto_update = 'off',
+       source_url = 'https://github.com/MendyLanda/cut', source_ref = 'main' WHERE id = ?1`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await expect(
+      checkSourceChangesCore({ db: env.DB, listRefs: async () => refsAt(NEWER) }, INSTALL_ID),
+    ).resolves.toMatchObject({ installed: null, latest: NEWER, changed: true });
+    const next = await repositoryBuild(NEWER, NEWER_VERSION, {
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "d1", name: "DB" },
+      ],
+    });
+    const rebuilt = await build({
+      fixture: next,
+      remote: refsAt(NEWER),
+      request: { kind: "rebuild", installId: INSTALL_ID, costConfirmed: true },
+      ids: () => "adopted-build",
+    });
+    expect(rebuilt.error).toBeNull();
+    expect(rebuilt.params).toMatchObject({
+      installId: INSTALL_ID,
+      purpose: "update",
+      origin: "repository",
+      commit: NEWER,
+      avoidVersions: [],
+    });
+    let params: UpdateJobParams | null = null;
+    await updateFromSourceBuildCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "adopted-update",
+      },
+      { buildId: rebuilt.jobId },
+    );
+    if (params === null) throw new Error("no Workflow params");
+    expect(params).toMatchObject({ secrets: {}, prebuilt: { origin: "repository" } });
+    const account = fakeAccount(next, {
+      deployments: [{ id: "original", versions: [{ version_id: OLD_VERSION, percentage: 100 }] }],
+      bookmarks: { "d1-existing": "original-bookmark" },
+      schedules: ["0 * * * *"],
+      versionSecrets: { [OLD_VERSION]: ["ADMIN_PASSWORD"] },
+      previews: [{ status: 200, body: "ok" }],
+    });
+    const fetch = accountFetch(account);
+    const baseEnv: JobEnv = {
+      DB: env.DB,
+      KV: env.KV,
+      CF_API_TOKEN: TOKEN,
+      SANDBOX: rebuilt.sandbox,
+    };
+    await runUpdate({
+      params,
+      step: fakeStep(),
+      env: { ...baseEnv, SELF: fakeSelf(baseEnv, { fetch, now: () => NOW }) },
+      deps: { fetch, now: () => NOW },
+    });
+    expect(
+      await env.DB.prepare("SELECT * FROM installs WHERE id = ?1").bind(INSTALL_ID).first(),
+    ).toMatchObject({
+      build_kind: "sandbox",
+      origin: "repository",
+      source_ref: "main",
+      pin_sha: NEWER,
+      catalog_version: NEWER_VERSION,
+      artifact_digest: next.digest,
+    });
+    expect(
+      await env.DB.prepare("SELECT * FROM snapshots WHERE job_id = 'adopted-update'").first(),
+    ).toMatchObject({
+      worker_version_id: OLD_VERSION,
+      build_kind: "adopted",
+      manifest_json: null,
+      artifact_url: "",
+      catalog_version: "Existing deployment",
+      d1_bookmarks_json: '{"d1-existing":"original-bookmark"}',
+      pin_sha: null,
+      origin: "repository",
+      source_ref: "main",
+    });
+    expect(account.state.versions.at(-1)?.metadata.keep_bindings).toEqual(["secret_text"]);
+    expect(account.state.kv).toEqual([]);
+    expect(account.state.d1).toEqual([]);
+    expect(account.state.schedules).toEqual([]);
+    expect(rebuilt.sandbox.cleanups.at(-1)).toEqual({
+      installId: INSTALL_ID,
+      keepVersions: [NEWER_VERSION],
+    });
+  });
+
   it("finds the newest commit of the branch the install follows", async () => {
     const r = await installFromRepository();
     const deps = { db: env.DB, listRefs: async () => refsAt(NEWER) };

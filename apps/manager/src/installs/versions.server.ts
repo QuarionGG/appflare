@@ -390,6 +390,11 @@ export async function startUpdateCore(
   const install = await readInstall(deps.db, request.installId);
   const refusal = statusRefusal(install.status) ?? (await pausedRefusal(deps.db, install.id));
   if (refusal !== null) throw new VersionActionError(refusal);
+  if (install.origin === "repository") {
+    throw new VersionActionError(
+      "This app follows its own repository. Build and review its source before updating it.",
+    );
+  }
   // Only the install's own catalog: another catalog listing the same slug is another app.
   const app = await deps.loadApp(installAppKey(install));
   if (app === null) {

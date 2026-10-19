@@ -21,7 +21,7 @@ import { type StoredRelease, storedEffectiveManifest } from "../catalog/revision
 import { requireConnection } from "../cloudflare/connection.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
-import { installs, jobs, resources, snapshots } from "../db/schema";
+import { install_adoptions, installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeNote, emailRoutingOfManifest } from "../installs/email-routing";
 import { type VarsRefreshReason, varsNeedRefresh } from "../installs/install-vars";
@@ -133,6 +133,39 @@ function parseManifest(manifestJson: string | null): ArtifactManifest | null {
 
 function cronsOf(manifestJson: string | null): string[] | null {
   return parseManifest(manifestJson)?.worker.crons ?? null;
+}
+
+/** An adopted deployment has no artifact manifest; its schedules are the adoption inventory's. */
+async function adoptedBaselineCrons(
+  orm: Database,
+  installId: string,
+  workerName: string,
+): Promise<string[]> {
+  const [adoption] = await orm
+    .select({ inventoryJson: install_adoptions.inventory_json })
+    .from(install_adoptions)
+    .where(eq(install_adoptions.install_id, installId))
+    .limit(1);
+  const schema = z.object({
+    workers: z.array(
+      z.object({
+        name: z.string(),
+        schedules: z.array(z.object({ cron: z.string().min(1) })),
+      }),
+    ),
+  });
+  let inventory: z.infer<typeof schema> | null = null;
+  try {
+    const parsed = schema.safeParse(JSON.parse(adoption?.inventoryJson ?? "null"));
+    if (parsed.success) inventory = parsed.data;
+  } catch {
+    // An unreadable baseline must never borrow a later version's schedules.
+  }
+  const worker = inventory?.workers.find((w) => w.name === workerName);
+  if (worker === undefined) {
+    throw new JobError("the adopted deployment's original cron schedules are not available");
+  }
+  return [...new Set(worker.schedules.map((s) => s.cron))];
 }
 
 /**
@@ -324,6 +357,7 @@ async function rollbackAccessPlan(
     worker_name: string;
   },
   snapshot: {
+    build_kind: string;
     manifest_json: string | null;
     artifact_digest: string | null;
     config_json: string | null;
@@ -340,7 +374,9 @@ async function rollbackAccessPlan(
   const sharedPaths = before.filter((p) => after.includes(p));
   const manifest = await storedEffectiveManifest(
     orm,
-    storedRelease(snapshot.manifest_json === null ? install : snapshot),
+    storedRelease(
+      snapshot.manifest_json === null && snapshot.build_kind !== "adopted" ? install : snapshot,
+    ),
   );
   const vars = parseStoredVars(snapshot.config_json ?? install.config_json);
   const usesAccess =
@@ -521,12 +557,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     await orm
       .update(installs)
       .set(
-        snapshot.catalog_version !== null && snapshot.artifact_url !== null
+        snapshot.build_kind === "adopted" ||
+          (snapshot.catalog_version !== null && snapshot.artifact_url !== null)
           ? {
               current_version_id: snapshot.worker_version_id,
-              catalog_version: snapshot.catalog_version,
+              catalog_version: snapshot.catalog_version ?? "Existing deployment",
               manifest_json: snapshot.manifest_json,
-              artifact_url: snapshot.artifact_url,
+              artifact_url: snapshot.artifact_url ?? "",
               artifact_digest: snapshot.artifact_digest,
               pin_sha: snapshot.pin_sha,
               build_kind: snapshot.build_kind,
@@ -831,7 +868,10 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
-        snapshotCrons: cronsOf(snapshot.manifest_json),
+        snapshotCrons:
+          snapshot.build_kind === "adopted"
+            ? await adoptedBaselineCrons(orm, params.installId, install.worker_name)
+            : cronsOf(snapshot.manifest_json),
         queueRows: queueRows.map((r) => ({
           id: r.id,
           kind: r.kind,

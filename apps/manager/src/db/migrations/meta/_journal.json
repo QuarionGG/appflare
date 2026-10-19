@@ -99,6 +99,13 @@
       "when": 1792038715138,
       "tag": "0013_imported_apps",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1792378702165,
+      "tag": "0014_install_adoptions",
+      "breakpoints": true
     }
   ]
 }

@@ -1391,6 +1391,24 @@ describe("starting a settings change", () => {
     await seed(await buildArtifactFixture(APP));
   });
 
+  it("requires a reviewed source update before changing an adopted deployment's settings", async () => {
+    await env.DB.prepare(
+      "UPDATE installs SET build_kind = 'adopted', origin = 'repository', manifest_json = NULL, artifact_url = '' WHERE id = ?1",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await expect(start({ vars: { TITLE: "Changed" } })).rejects.toThrow(
+      "Build, review and apply this app's source before changing its settings in Appflare.",
+    );
+    expect(
+      await readInstallSettingsCore(
+        { db: env.DB, sandboxConnected: true, subdomain: SUBDOMAIN },
+        INSTALL_ID,
+      ),
+    ).toBeNull();
+    expect((await env.DB.prepare("SELECT id FROM jobs").all()).results).toEqual([]);
+  });
+
   it("refuses while another job of the install is queued or running", async () => {
     await env.DB.prepare(
       "INSERT INTO jobs (id, install_id, kind, status) VALUES ('busy', ?1, 'update', 'running')",

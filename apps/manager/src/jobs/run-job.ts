@@ -136,6 +136,10 @@ export type JobHandler = (ctx: JobContext) => Promise<void>;
 
 export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   install: runInstall,
+  // Adoption records an existing deployment atomically in the admin request.
+  adopt: async () => {
+    throw new NonRetryableError("adoption is never run as a Workflow job");
+  },
   update: runUpdate,
   rollback: runRollback,
   self_update: runSelfUpdate,

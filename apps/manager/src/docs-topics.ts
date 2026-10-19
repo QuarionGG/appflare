@@ -74,6 +74,8 @@ export function jobFailureTopic(job: {
   if (job.restore === true) return "databaseRestore";
   if (job.deleteRetained === true) return "removedApps";
   switch (job.kind) {
+    case "adopt":
+      return "installFromRepository";
     case "install":
       return "installJob";
     case "update":

@@ -200,6 +200,40 @@ beforeEach(async () => {
 });
 
 describe("update job", () => {
+  it("rejects a queued catalog update of a repository install before any Cloudflare request", async () => {
+    await seedInstall({ status: "updating" });
+    await env.DB.prepare("UPDATE installs SET origin = 'repository' WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('stale-update', ?1, 'update', 'queued')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const fake = fakeAccount(null);
+    await expect(
+      runUpdate({
+        params: {
+          kind: "update",
+          jobId: "stale-update",
+          installId: INSTALL_ID,
+          version: "1.1.0",
+          secrets: {},
+        },
+        step: fakeStep(),
+        env: jobEnv(),
+        deps: { fetch: fake.fetch },
+      }),
+    ).rejects.toThrow("build and review its source before updating it");
+    expect(fake.state.calls).toEqual([]);
+    expect(await env.DB.prepare("SELECT current_version_id, status FROM installs").first()).toEqual(
+      {
+        current_version_id: OLD_VERSION,
+        status: "installed",
+      },
+    );
+  });
+
   it("updates an app end to end: snapshot, new binding, canary, D1, promote, health", async () => {
     const r = await update();
     expect(r.error).toBeNull();

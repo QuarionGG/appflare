@@ -55,6 +55,41 @@ beforeEach(async () => {
 });
 
 describe("startUpdateCore", () => {
+  it.each(["adopted", "sandbox"])(
+    "refuses catalog updates of a %s repository install before reading the catalog",
+    async (kind) => {
+      await seedInstall();
+      await env.DB.prepare(
+        "UPDATE installs SET origin = 'repository', build_kind = ?1 WHERE id = ?2",
+      )
+        .bind(kind, INSTALL_ID)
+        .run();
+      const created: unknown[] = [];
+      await expect(
+        startUpdateCore(
+          {
+            db: env.DB,
+            loadApp: async () => {
+              throw new Error("must not read a catalog for a repository install");
+            },
+            loadManifest: async () => {
+              throw new Error("must not load a catalog artifact");
+            },
+            createJob: async (id, params) => {
+              created.push(params);
+              return { id };
+            },
+          },
+          { installId: INSTALL_ID },
+        ),
+      ).rejects.toThrow("Build and review its source before updating it.");
+      expect(created).toEqual([]);
+      expect(await env.DB.prepare("SELECT status FROM installs").first()).toEqual({
+        status: "installed",
+      });
+    },
+  );
+
   it("claims the install and starts an update to the catalog's newer version", async () => {
     const fixture = await buildArtifactFixture({ version: "1.1.0" });
     await seedInstall({ resources: [ADMIN_SECRET] });

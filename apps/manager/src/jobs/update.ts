@@ -414,6 +414,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         }
         origin = { kind: "prebuilt", build: params.prebuilt };
       } else {
+        if (install.origin === "repository") {
+          throw new JobError(
+            "this app follows its own repository; build and review its source before updating it",
+          );
+        }
         if (env.KV === undefined) throw new JobError("the catalog cache is not available");
         // Its own catalog only: another catalog listing the same slug never updates it.
         const app =
@@ -480,6 +485,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         catalogId: install.catalog_id,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
+        fromBuildKind: install.build_kind,
         recordedVersionId: install.current_version_id,
         // Installs made before the tag was recorded applied every migration
         // of the manifest they were installed from.
@@ -1611,7 +1617,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     if (source.provenance.build_kind === "sandbox") {
       await cleanupSandboxBuildsPhase(steps, env, params.installId, [
         params.version,
-        started.fromVersion,
+        ...(started.fromBuildKind === "adopted" ? [] : [started.fromVersion]),
       ]);
     }
 

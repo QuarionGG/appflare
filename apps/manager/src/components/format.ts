@@ -79,6 +79,7 @@ export function resourceKindLabel(kind: string): string {
  */
 export const JOB_KIND_LABELS: Record<string, string> = {
   install: "Install",
+  adopt: "Adopt existing app",
   update: "Update",
   uninstall: "Uninstall",
   rollback: "Rollback",

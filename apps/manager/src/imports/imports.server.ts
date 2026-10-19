@@ -329,6 +329,24 @@ export async function getImportedAppCore(
   return row ? appOf(row) : null;
 }
 
+/** Reads a saved import's current inventory without changing its metadata or deployment. */
+export async function readImportedAppInventoryCore(
+  deps: ImportDeps,
+  appId: string,
+): Promise<ImportedApp> {
+  const previous = await getImportedAppCore(deps.db, appId);
+  if (previous === null) throw new ImportError("This imported app no longer exists.");
+  const [row] = await createDb(deps.db)
+    .select({ accountId: imported_apps.account_id })
+    .from(imported_apps)
+    .where(eq(imported_apps.id, appId))
+    .limit(1);
+  if (row?.accountId !== deps.api.accountId) {
+    throw new ImportError("This imported app does not belong to the connected account.");
+  }
+  return { ...previous, ...(await readInventory(deps, previous, previous)) };
+}
+
 export async function importExistingAppCore(
   deps: ImportDeps,
   input: ImportSelection & { fingerprint: string },

@@ -1,6 +1,11 @@
 import { Empty, LinkButton } from "@cloudflare/kumo";
 import { CloudArrowDownIcon } from "@phosphor-icons/react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import {
+  adoptImportedApp,
+  getAdoptedInstall,
+  previewAdoption,
+} from "../../../imports/adoptions.functions";
 import { ImportedAppDetail } from "../../../imports/imported-app-detail";
 import {
   forgetImportedApp,
@@ -9,7 +14,13 @@ import {
 } from "../../../imports/imports.functions";
 
 export const Route = createFileRoute("/_app/imports/$appId")({
-  loader: ({ params }) => getImportedApp({ data: { appId: params.appId } }),
+  loader: async ({ params }) => {
+    const app = await getImportedApp({ data: { appId: params.appId } });
+    if (app !== null) return app;
+    const adopted = await getAdoptedInstall({ data: { appId: params.appId } });
+    if (adopted !== null) throw redirect({ href: `/apps/${adopted.installId}` });
+    return null;
+  },
   head: ({ loaderData }) => ({
     meta: [{ title: `${loaderData?.displayName ?? "Imported app"} · Appflare` }],
   }),
@@ -38,6 +49,16 @@ function ImportedAppPage() {
       app={app}
       accountId={accountId}
       isAdmin={viewer.role === "admin"}
+      adoption={{
+        actions: {
+          preview: (selection) => previewAdoption({ data: selection }),
+          commit: (selection) => adoptImportedApp({ data: selection }),
+        },
+        onAdopted: async (installId) => {
+          await router.invalidate();
+          await router.navigate({ href: `/apps/${installId}` });
+        },
+      }}
       onRefresh={async () => {
         await refreshImportedApp({ data: { appId: app.id } });
         await router.invalidate();

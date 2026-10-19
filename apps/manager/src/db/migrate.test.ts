@@ -25,6 +25,7 @@ const EXPECTED_TABLES = [
   "imported_app_workers",
   "imported_apps",
   "install_access",
+  "install_adoptions",
   "installs",
   "job_logs",
   "jobs",
@@ -109,6 +110,20 @@ describe("migrations index", () => {
 });
 
 describe("ensure", () => {
+  it("adds adoption metadata while preserving existing imports", async () => {
+    await createMigrator(migrations.slice(0, -1)).ensure(env.DB);
+    await env.DB.prepare(`INSERT INTO imported_apps
+      (id, account_id, display_name, primary_worker, inventory_json, imported_at, refreshed_at)
+      VALUES ('blog', 'account', 'EmDash', 'existing-worker', '{}', 1, 1)`).run();
+    const before = await env.DB.prepare("SELECT * FROM imported_apps").all();
+    const outcome = await createMigrator(migrations).ensure(env.DB);
+    expect(outcome.applied).toEqual(["0014_install_adoptions"]);
+    expect((await env.DB.prepare("SELECT * FROM imported_apps").all()).results).toEqual(
+      before.results,
+    );
+    expect((await env.DB.prepare("SELECT * FROM install_adoptions").all()).results).toEqual([]);
+  });
+
   it("creates every table on a fresh database and records the version", async () => {
     expect(await readSchemaVersion(env.DB)).toBe(0);
     const outcome = await createMigrator(migrations).ensure(env.DB);

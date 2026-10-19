@@ -7,9 +7,10 @@ import { mediaSrc } from "../catalog/media";
 import type { AppLookup, ListedApp } from "../catalog/merged.server";
 import { type CatalogSource, installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
 import { createDb, type Database } from "../db/client";
-import { type HealthStatus, type InstallOrigin, installs } from "../db/schema";
+import { type HealthStatus, type InstallOrigin, install_adoptions, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { healthBehindAccess } from "../jobs/install/health";
+import { adoptionAddress } from "./adoption.server";
 import { type AddressDomain, type AppAddressInput, appAddress } from "./app-address";
 import { readAddressDomains } from "./app-address.server";
 import { distinctLabels } from "./display-name";
@@ -157,6 +158,9 @@ export interface InstallAddresses {
   domains: Map<string, AddressDomain[]>;
   /** Each installed app's `openPath` (`readOpenPaths`), by install id; none for the root. */
   openPaths: Map<string, string>;
+  /** Preserved addresses of deployments adopted with existing Workers routes. */
+  adoptedAddresses?: ReadonlyMap<string, string>;
+  adoptedNames?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -165,12 +169,26 @@ export interface InstallAddresses {
  * installs' own read.
  */
 export async function readInstallAddresses(db: Database): Promise<InstallAddresses> {
-  const [sub, domains, openPaths] = await Promise.all([
+  const [sub, domains, openPaths, adopted] = await Promise.all([
     subdomain(),
     readAddressDomains(db),
     readOpenPaths(env.DB),
+    db
+      .select({
+        id: install_adoptions.install_id,
+        url: install_adoptions.primary_url,
+        name: install_adoptions.app_name,
+      })
+      .from(install_adoptions),
   ]);
-  return { sub, domains, openPaths };
+  const adoptedAddresses = new Map<string, string>();
+  const adoptedNames = new Map<string, string>();
+  for (const row of adopted) {
+    adoptedNames.set(row.id, row.name);
+    const address = adoptionAddress(row.url);
+    if (address !== null) adoptedAddresses.set(row.id, address);
+  }
+  return { sub, domains, openPaths, adoptedAddresses, adoptedNames };
 }
 
 /**
@@ -183,12 +201,15 @@ export function installRowsOf(
   rows: readonly InstallRecord[],
   lookup: AppLookup,
   records: readonly CatalogRecord[],
-  { sub, domains, openPaths }: InstallAddresses,
+  { sub, domains, openPaths, adoptedAddresses, adoptedNames }: InstallAddresses,
 ): InstallRow[] {
   const sources = new Map(records.map((r) => [r.id, sourceOf(r)]));
   const addressOf = (row: InstallRecord): string | null =>
     appOpenUrl(
-      appAddress(addressInput(row, domains.get(row.id) ?? [], sub)),
+      (domains.get(row.id) ?? []).some((domain) => domain.live)
+        ? appAddress(addressInput(row, domains.get(row.id) ?? [], sub))
+        : (adoptedAddresses?.get(row.id) ??
+            appAddress(addressInput(row, domains.get(row.id) ?? [], sub))),
       openPaths.get(row.id),
     );
   const listedRows = rows.map((row): Omit<InstallRow, "label"> => {
@@ -201,7 +222,10 @@ export function installRowsOf(
       slug: installAppKey(row),
       catalogSource: sourceOfRow(row, sources),
       origin: row.origin,
-      name: listed?.name ?? recordedName(row),
+      name:
+        listed?.name ??
+        (row.manifest_json === null ? adoptedNames?.get(row.id) : null) ??
+        recordedName(row),
       icon: iconOf(found),
       ...namesOf(row),
       status: row.status,
