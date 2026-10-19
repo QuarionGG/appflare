@@ -7,7 +7,7 @@
 export const MANAGER_BUILD_CHANNEL = "quariongg-fork";
 
 export const FORK_MANAGER_UPDATE_MESSAGE =
-  "This QuarionGG fork includes imported-app support. Official Appflare updates would replace that code, so manager updates are disabled. Deploy a reviewed build of this fork to update Appflare. Catalog app updates still work. Rolling back to an official build would hide imported apps until this fork is deployed again.";
+  "This QuarionGG fork includes imported-app support. Official Appflare releases would replace that code, so manager updates are disabled. Deploy a reviewed build of this fork to update Appflare. Catalog app updates still work. Rolling back to an official build would hide imported apps until this fork is deployed again.";
 
 /** Null only on a build whose source explicitly permits official manager updates. */
 export function managerSelfUpdateBlock(): string | null {
