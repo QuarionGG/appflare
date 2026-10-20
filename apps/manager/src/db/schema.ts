@@ -132,6 +132,7 @@ export const JOB_KINDS = [
   "sandbox_disable",
   "self_rollback",
   "source_build",
+  "emdash_upgrade",
   "move_address",
   "pause",
   "resume",
@@ -607,6 +608,41 @@ export const source_builds = sqliteTable(
   (t) => [index("source_builds_install_id_idx").on(t.install_id)],
 );
 
+/** Dependency-only EmDash upgrades; an unmerged PR build is never deployable. */
+export const emdash_upgrades = sqliteTable(
+  "emdash_upgrades",
+  {
+    id: text("id").primaryKey(),
+    install_id: text("install_id")
+      .notNull()
+      .references(() => installs.id),
+    repo: text("repo").notNull(),
+    base_ref: text("base_ref").notNull(),
+    base_sha: text("base_sha").notNull(),
+    target_version: text("target_version").notNull(),
+    status: text("status", {
+      enum: ["preparing", "pr_open", "building", "ready", "merged", "failed"],
+    }).notNull(),
+    preparation_job_id: text("preparation_job_id").notNull(),
+    build_id: text("build_id"),
+    merged_build_id: text("merged_build_id"),
+    write_token_id: text("write_token_id"),
+    branch: text("branch"),
+    head_sha: text("head_sha"),
+    pr_number: integer("pr_number"),
+    pr_url: text("pr_url"),
+    merge_sha: text("merge_sha"),
+    report_json: text("report_json"),
+    error: text("error"),
+    created_at: timestamp("created_at").notNull(),
+    updated_at: timestamp("updated_at").notNull(),
+  },
+  (t) => [
+    index("emdash_upgrades_install_id_idx").on(t.install_id),
+    index("emdash_upgrades_build_id_idx").on(t.build_id),
+  ],
+);
+
 /**
  * GitHub access tokens an admin added (Settings, Building apps): fine-grained,
  * read-only tokens for building private repositories and for downloading
@@ -629,6 +665,10 @@ export const github_tokens = sqliteTable("github_tokens", {
   for_builds: integer("for_builds", { mode: "boolean" }).notNull().default(true),
   /** Appflare reads its own releases with this token (at most one row). */
   for_releases: integer("for_releases", { mode: "boolean" }).notNull().default(false),
+  /** Explicit, repository-exact permission to publish dependency upgrade PRs. */
+  for_repository_updates: integer("for_repository_updates", { mode: "boolean" })
+    .notNull()
+    .default(false),
   created_at: timestamp("created_at").notNull(),
   last_used_at: timestamp("last_used_at"),
 });

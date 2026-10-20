@@ -8,6 +8,7 @@ import { runMoveAddress } from "../domains/move-address-job";
 import { notifyJobEnd } from "../notifications/job-end";
 import { runSandboxDisable } from "../sandbox/disable-job";
 import { runSandboxEnable } from "../sandbox/enable-job";
+import { runEmdashUpgrade } from "./emdash-upgrade";
 import { runInstall } from "./install";
 import { countedEnv, InvocationBudget } from "./invocation-budget";
 import { runPause } from "./pause";
@@ -149,6 +150,7 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   sandbox_update: runSandboxEnable,
   sandbox_disable: runSandboxDisable,
   source_build: runSourceBuild,
+  emdash_upgrade: runEmdashUpgrade,
   move_address: runMoveAddress,
   pause: runPause,
   resume: runResume,

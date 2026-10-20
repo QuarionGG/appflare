@@ -331,6 +331,11 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
+      await env.DB.prepare(
+        "UPDATE emdash_upgrades SET status = 'ready', updated_at = ?2 WHERE build_id = ?1 AND status = 'building' AND merge_sha IS NULL",
+      )
+        .bind(params.jobId, at.getTime())
+        .run();
       await orm
         .update(jobs)
         .set({ status: "succeeded", finished_at: at, error: null })
@@ -345,6 +350,11 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
     await step.do("mark source build failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
+      await env.DB.prepare(
+        "UPDATE emdash_upgrades SET status = 'failed', updated_at = ?2 WHERE build_id = ?1 AND status = 'building'",
+      )
+        .bind(params.jobId, at.getTime())
+        .run();
       await orm
         .update(jobs)
         .set({ status: "failed", error: reason, finished_at: at })

@@ -9,6 +9,7 @@ export * from "./catalog-stats";
 export * from "./categories";
 export * from "./config-patch";
 export * from "./d1";
+export * from "./emdash-upgrades";
 export * from "./field-link";
 export * from "./github-tokens";
 export * from "./hyperdrive";

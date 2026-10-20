@@ -158,6 +158,23 @@ function JobPage() {
       {job.status === "failed" && (
         <JobFailure job={job} failureTopic={failureTopic} isAdmin={isAdmin} />
       )}
+      {job.kind === "emdash_upgrade" && job.emdashUpgrade?.buildId != null && (
+        <Banner
+          variant="default"
+          icon={<GitBranchIcon weight="fill" />}
+          title="Upgrade prepared. Review the build next"
+          description="The pull request revision is being built for review. Nothing was deployed. Review the dependency changes and build results before merging the upgrade."
+          action={
+            <LinkButton
+              href={`/catalog/source/${job.emdashUpgrade.buildId}`}
+              variant="primary"
+              icon={<ArrowRightIcon />}
+            >
+              Review EmDash upgrade
+            </LinkButton>
+          }
+        />
+      )}
       {job.sourceBuild !== null && job.status === "succeeded" && (
         <Banner
           variant="default"

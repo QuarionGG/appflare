@@ -88,6 +88,9 @@ export interface SandboxBuildsBinding {
    * (sandbox Workers whose `info().features` lists `github-tokens`).
    */
   githubFetch(request: unknown): Promise<Response>;
+  prepareEmdashUpgrade(request: unknown): Promise<unknown>;
+  publishEmdashUpgrade(request: unknown): Promise<unknown>;
+  mergeEmdashUpgrade(request: unknown): Promise<unknown>;
 }
 
 /**

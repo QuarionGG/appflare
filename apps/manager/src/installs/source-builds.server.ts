@@ -159,7 +159,15 @@ export type StartSourceBuildRequest =
       buildCommand?: BuildCommandChoice;
       costConfirmed: boolean;
     }
-  | { kind: "rebuild"; installId: string; costConfirmed: boolean };
+  | { kind: "rebuild"; installId: string; costConfirmed: boolean }
+  /** Server-internal: a reviewed EmDash upgrade's exact persisted commit. */
+  | {
+      kind: "emdash-upgrade-build";
+      installId: string;
+      commitSha: string;
+      ref?: string;
+      costConfirmed: boolean;
+    };
 
 /**
  * A repository's branches and tags, and the GitHub access token that read
@@ -335,7 +343,10 @@ async function planBuild(
     origin: install.origin,
     appSlug: install.origin === "source" ? installAppKey(install) : null,
     repo,
-    ref: install.source_ref,
+    ref:
+      request.kind === "emdash-upgrade-build"
+        ? (request.ref ?? install.source_ref)
+        : install.source_ref,
     buildCommand: await lastBuildCommand(deps.db, install.id),
     ...(baseline === undefined ? {} : { baseline }),
     // The build request takes at most 16: the newest snapshots'.
@@ -398,6 +409,10 @@ export async function startSourceBuildCore(
     const remote = await deps.listRefs(plan.repo);
     githubToken = remote.token ?? null;
     resolved = resolveRef(remote, plan.ref, plan.repo);
+    if (request.kind === "emdash-upgrade-build") {
+      if (!/^[0-9a-f]{40}$/.test(request.commitSha)) throw fail("The upgrade commit is invalid.");
+      resolved = { ...resolved, commit: request.commitSha };
+    }
   } catch (error) {
     if (error instanceof GitRefError) throw fail(`${error.message}.`.replace(/\.\.$/, "."));
     throw error;
@@ -1105,6 +1120,7 @@ export async function updateFromSourceBuildCore(
   },
 ): Promise<{ jobId: string }> {
   const fail = (message: string) => new SourceBuildError(message);
+  await assertEmdashUpgradeBuildDeployable(deps.db, input.buildId);
   const built = builtOf(await readSourceBuild(deps.db, input.buildId));
   const { row, manifest, prebuilt } = built;
   if (row.purpose !== "update") throw fail("This build is for a new install, not an update.");
@@ -1196,6 +1212,21 @@ export async function updateFromSourceBuildCore(
     if (error instanceof VersionActionError) throw fail(error.message);
     throw error;
   }
+}
+
+/** A PR verification artifact never becomes deployable, even after its PR merges. */
+export async function assertEmdashUpgradeBuildDeployable(
+  db: D1Database,
+  buildId: string,
+): Promise<void> {
+  const upgrade = await db
+    .prepare("SELECT id FROM emdash_upgrades WHERE build_id = ?1 LIMIT 1")
+    .bind(buildId)
+    .first();
+  if (upgrade !== null)
+    throw new SourceBuildError(
+      "This build verifies an EmDash upgrade pull request. Merge it and build the merged commit before updating the app.",
+    );
 }
 
 /** What throwing a build away needs. */
@@ -1311,6 +1342,12 @@ export async function discardSourceBuildCore(
     .returning({ id: source_builds.id });
   if (claimed.length === 0)
     throw new SourceBuildError("The build changed meanwhile. Reload the page.");
+  await deps.db
+    .prepare(
+      "UPDATE emdash_upgrades SET status='failed', error='The pull request review build was discarded. Prepare the upgrade again to retry.', updated_at=?2 WHERE build_id=?1 AND merge_sha IS NULL",
+    )
+    .bind(buildId, now.getTime())
+    .run();
   if (deps.cleanup === undefined) return "no-sandbox";
   return deleteDiscardedFiles(deps.db, deps.cleanup, buildId, record.row.install_id, now);
 }

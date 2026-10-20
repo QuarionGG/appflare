@@ -90,6 +90,7 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   sandbox_disable: "Disable sandbox builds",
   self_rollback: "Appflare rollback",
   source_build: "Build for review",
+  emdash_upgrade: "Prepare EmDash upgrade",
   move_address: "Move Appflare's address",
   pause: "Pause",
   resume: "Resume",

@@ -81,6 +81,7 @@ describe("addGithubTokenCore", () => {
         repositories: "acme/*",
         forBuilds: true,
         forReleases: false,
+        forRepositoryUpdates: false,
         createdAt: Date.parse("2026-09-26T12:00:00Z"),
         lastUsedAt: null,
       },

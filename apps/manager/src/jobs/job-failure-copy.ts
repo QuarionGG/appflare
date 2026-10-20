@@ -26,6 +26,7 @@ const OWN_JOBS: Record<string, string> = {
   sandbox_update: "Updating sandbox builds",
   sandbox_disable: "Turning off sandbox builds",
   source_build: "Building for review",
+  emdash_upgrade: "Preparing the EmDash upgrade",
   move_address: "Moving Appflare to its new address",
 };
 

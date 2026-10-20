@@ -85,6 +85,23 @@ function layOut(box: HTMLElement, height: number, client = 100) {
 }
 
 describe("the job page", () => {
+  it("links from a completed EmDash preparation directly to its build review", () => {
+    render({
+      ...JOB,
+      kind: "emdash_upgrade",
+      status: "succeeded",
+      emdashUpgrade: {
+        buildId: "prbuild1",
+        prUrl: "https://github.com/acme/blog/pull/2",
+        status: "building",
+      },
+    });
+    expect(container.textContent).toContain("Upgrade prepared. Review the build next");
+    expect(container.textContent).toContain("Nothing was deployed");
+    const link = container.querySelector('a[href="/catalog/source/prbuild1"]');
+    expect(link?.textContent).toContain("Review EmDash upgrade");
+  });
+
   it("shows a build's output in a box a keyboard can scroll, following new lines", () => {
     render({ ...JOB, build: build(["Installing dependencies"]) });
     const box = container.querySelector<HTMLElement>('[role="group"][aria-label="Build output"]');

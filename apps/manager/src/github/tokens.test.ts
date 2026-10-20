@@ -12,6 +12,36 @@ import {
   storedRepositories,
 } from "./tokens";
 
+describe("dedicated repository update tokens", () => {
+  const input = {
+    label: "Blog updates",
+    token: "test_only",
+    repositories: "example/blog",
+    forBuilds: false,
+    forReleases: false,
+    forRepositoryUpdates: true,
+  };
+  it("requires exactly one repository and preserves its scope", () => {
+    expect(storedRepositories(addGithubTokenInput.parse(input))).toBe("example/blog");
+    for (const repositories of ["", "*", "example/*", "example", "example/blog, example/other"]) {
+      expect(addGithubTokenInput.safeParse({ ...input, repositories }).success).toBe(false);
+    }
+  });
+  it("keeps write credentials out of the build and release token pool", () => {
+    expect(addGithubTokenInput.safeParse({ ...input, forBuilds: true }).success).toBe(false);
+    expect(addGithubTokenInput.safeParse({ ...input, forReleases: true }).success).toBe(false);
+    expect(orderTokensFor([{ ...input, createdAt: 1 }], "example/blog")).toEqual([]);
+  });
+  it("requests write access only for the dedicated upgrade use", () => {
+    const write = new URL(newTokenUrl(input.label, input.repositories, input));
+    expect(write.searchParams.get("contents")).toBe("write");
+    expect(write.searchParams.get("pull_requests")).toBe("write");
+    const read = new URL(newTokenUrl("Build", "example/blog"));
+    expect(read.searchParams.get("contents")).toBe("read");
+    expect(read.searchParams.has("pull_requests")).toBe(false);
+  });
+});
+
 describe("repositoryPatterns", () => {
   it("reads owner/repo, owner/*, URLs and lists however they are separated", () => {
     expect(
@@ -162,6 +192,7 @@ describe("addGithubTokenInput", () => {
       token: "github_pat_11ABCDEFG0abcdefghijklmnop",
       forBuilds: true,
       forReleases: false,
+      forRepositoryUpdates: false,
     });
     expect(
       addGithubTokenInput.safeParse({ label: "a", repositories: "b", token: "not a token!" })

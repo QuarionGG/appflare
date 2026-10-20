@@ -29,7 +29,6 @@ import {
   type GithubAccessState,
   getGithubAccess,
 } from "../github/tokens.functions";
-import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
@@ -40,9 +39,9 @@ import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * The Building apps settings' GitHub access section: fine-grained, read-only
- * GitHub tokens for building private repositories and, while Appflare's own
- * releases are private, downloading them. Each token is stored as a secret
+ * The Building apps settings' GitHub access section: fine-grained tokens for
+ * reading private repositories and releases, or a separate token for reviewed
+ * updates to one repository. Each token is stored as a secret
  * on the sandbox Worker and never shown again; the list shows its label,
  * what it is used for, and when it was last used. The section loads its own
  * data, so the page only places it.
@@ -89,7 +88,7 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
           </Badge>
         )
       }
-      description="Read-only GitHub tokens for installing from private repositories and for downloading Appflare's own releases. Each token is kept as a secret on the sandbox Worker and is never shown again."
+      description="GitHub tokens for private builds, Appflare release downloads, and reviewed repository upgrades. Builds and downloads need read-only access; repository updates need a dedicated write token. Each token is kept as a secret on the sandbox Worker and is never shown again."
       // With no token yet, the empty state offers it instead.
       action={hasTokens ? addToken : null}
       error={loadError}
@@ -210,6 +209,7 @@ function TokenTable({
 /** The form's two uses of a token, as `Checkbox.Group` values. */
 const BUILDS = "builds";
 const RELEASES = "releases";
+const REPOSITORY_UPDATES = "repository-updates";
 
 /**
  * Label, the token itself, and what Appflare uses it for: builds of private
@@ -236,6 +236,7 @@ function AddTokenDialog({
   const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
   const forBuilds = uses.includes(BUILDS);
   const forReleases = uses.includes(RELEASES);
+  const forRepositoryUpdates = uses.includes(REPOSITORY_UPDATES);
 
   function reset() {
     setLabel("");
@@ -257,10 +258,11 @@ function AddTokenDialog({
     const parsed = addGithubTokenInput.safeParse({
       label,
       // A description left in the field while builds are unticked is not sent.
-      repositories: forBuilds ? repositories : "",
+      repositories: forBuilds || forRepositoryUpdates ? repositories : "",
       token,
       forBuilds,
       forReleases,
+      forRepositoryUpdates,
     });
     if (!parsed.success) {
       // The repositories field shows its own problem; the banner any other.
@@ -300,12 +302,29 @@ function AddTokenDialog({
         <LayerDialog.Title>Add a GitHub access token</LayerDialog.Title>
         <LayerDialog.Description>
           Create a fine-grained personal access token on GitHub with{" "}
-          <strong className="font-medium text-kumo-default">Contents: Read-only</strong> on the
-          repositories it is for (GitHub adds{" "}
+          <strong className="font-medium text-kumo-default">
+            {forRepositoryUpdates ? "Contents: Read and write" : "Contents: Read-only"}
+          </strong>
+          {forRepositoryUpdates && (
+            <>
+              {" "}
+              and{" "}
+              <strong className="font-medium text-kumo-default">
+                Pull requests: Read and write
+              </strong>
+            </>
+          )}{" "}
+          on{" "}
+          {forRepositoryUpdates ? "only the repository named below" : "the repositories it is for"}{" "}
+          (GitHub adds{" "}
           <strong className="font-medium text-kumo-default">Metadata: Read-only</strong> itself),
           and nothing else.{" "}
           <Link
-            href={newTokenUrl(label, repositories, { forBuilds, forReleases })}
+            href={newTokenUrl(label, repositories, {
+              forBuilds,
+              forReleases,
+              forRepositoryUpdates,
+            })}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -336,18 +355,37 @@ function AddTokenDialog({
             <Checkbox.Group
               legend="Use it for"
               value={uses}
-              onValueChange={(next: string[]) => setUses(next)}
+              onValueChange={(next: string[]) => {
+                setUses(
+                  next.includes(REPOSITORY_UPDATES) && !uses.includes(REPOSITORY_UPDATES)
+                    ? [REPOSITORY_UPDATES]
+                    : next.filter((use) => use !== REPOSITORY_UPDATES),
+                );
+              }}
               disabled={pending}
             >
               <div className="grid gap-3">
                 <Checkbox.Item value={BUILDS} label="Builds of private repositories" />
-                {forBuilds && (
+                <Checkbox.Item value={REPOSITORY_UPDATES} label="Repository updates" />
+                {forRepositoryUpdates && (
+                  <Text variant="secondary" size="sm">
+                    Create and merge reviewed EmDash upgrade pull requests in one repository. This
+                    needs a separate token with write access.
+                  </Text>
+                )}
+                {(forBuilds || forRepositoryUpdates) && (
                   <div className="pl-6">
                     <Input
-                      label="Repositories"
-                      required={false}
-                      description={<FieldHelp text={REPOSITORIES_HELP} />}
-                      placeholder="acme/api, acme/*"
+                      label={forRepositoryUpdates ? "Repository" : "Repositories"}
+                      required={forRepositoryUpdates}
+                      description={
+                        forRepositoryUpdates ? (
+                          "One exact owner/repository. On GitHub, select only this repository for the token."
+                        ) : (
+                          <FieldHelp text={REPOSITORIES_HELP} />
+                        )
+                      }
+                      placeholder={forRepositoryUpdates ? "acme/blog" : "acme/api, acme/*"}
                       value={repositories}
                       onChange={(e) => {
                         setRepositories(e.currentTarget.value);

@@ -15,6 +15,7 @@ import m0011 from "./0011_notification_pause_failed_event.sql?raw";
 import m0012 from "./0012_notification_account_limit_event.sql?raw";
 import m0013 from "./0013_imported_apps.sql?raw";
 import m0014 from "./0014_install_adoptions.sql?raw";
+import m0015 from "./0015_emdash_upgrades.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -33,4 +34,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0012_notification_account_limit_event", sql: m0012 },
   { tag: "0013_imported_apps", sql: m0013 },
   { tag: "0014_install_adoptions", sql: m0014 },
+  { tag: "0015_emdash_upgrades", sql: m0015 },
 ];
