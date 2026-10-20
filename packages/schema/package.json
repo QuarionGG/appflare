@@ -55,9 +55,11 @@
     "codemod-manifest-v1": "node scripts/codemod-manifest-v1.mjs"
   },
   "dependencies": {
+    "semver": "7.8.5",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@types/semver": "^7.8.0",
     "jsonc-parser": "3.3.1"
   }
 }

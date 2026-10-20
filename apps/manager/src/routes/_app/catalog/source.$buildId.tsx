@@ -25,6 +25,10 @@ import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { ConfirmDialog } from "../../../components/confirm-dialog";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink, RequirementDocsLink } from "../../../components/docs-link";
+import {
+  canDeployEmDashUpgradeBuild,
+  EmDashUpgradeReview,
+} from "../../../components/emdash-updates-card";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { focusAfterDialog } from "../../../components/focus-after-dialog";
 import { resourceKindLabel } from "../../../components/format";
@@ -42,6 +46,8 @@ import { PageHeader } from "../../../components/page-header";
 import { Section, SectionBody, SectionRows, SectionTable } from "../../../components/section";
 import { Timestamp } from "../../../components/timestamp";
 import { UpdateFromBuild } from "../../../components/update-from-build";
+import type { EmDashUpgradeView } from "../../../installs/emdash-upgrades";
+import { getEmdashUpgradeForBuild } from "../../../installs/emdash-upgrades.functions";
 import {
   type InstallAgainRecord,
   type InstallFormPrefill,
@@ -79,14 +85,15 @@ export const Route = createFileRoute("/_app/catalog/source/$buildId")({
   validateSearch: z.object({ again: z.string().min(1).max(64).optional() }),
   loaderDeps: ({ search }) => ({ again: search.again }),
   loader: async ({ params, deps }) => {
-    const [build, again] = await Promise.all([
+    const [build, again, upgrade] = await Promise.all([
       getSourceBuild({ data: { buildId: params.buildId } }),
       // Admins only; anyone else gets the review as it is.
       deps.again === undefined
         ? null
         : getInstallAgain({ data: { installId: deps.again } }).catch(() => null),
+      getEmdashUpgradeForBuild({ data: { buildId: params.buildId } }),
     ]);
-    return { build, again };
+    return { build, again, upgrade };
   },
   component: ReviewPage,
 });
@@ -141,7 +148,7 @@ function againHere(record: InstallAgainRecord | null, build: SourceBuildView): A
 }
 
 function ReviewPage() {
-  const { build, again: record } = Route.useLoaderData();
+  const { build, again: record, upgrade } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const router = useRouter();
   const isAdmin = viewer.role === "admin";
@@ -208,6 +215,7 @@ function ReviewPage() {
           review={build.review}
           isAdmin={isAdmin}
           again={again}
+          upgrade={upgrade}
           onThrownAway={() => setThrewAwayId(build.id)}
         />
       )}
@@ -401,12 +409,14 @@ function Review({
   review,
   isAdmin,
   again,
+  upgrade,
   onThrownAway,
 }: {
   build: SourceBuildView;
   review: SourceBuildReview;
   isAdmin: boolean;
   again: AgainHere | null;
+  upgrade: EmDashUpgradeView | null;
   onThrownAway: () => void;
 }) {
   // Never carried over from an install that did not finish: confirmed again every time.
@@ -425,6 +435,19 @@ function Review({
   return (
     <>
       <SourceCard build={build} review={review} />
+      {upgrade !== null && (
+        <EmDashUpgradeReview
+          upgrade={upgrade}
+          buildId={build.id}
+          canMerge={
+            waiting &&
+            isAdmin &&
+            !refused &&
+            (upgrade.status === "ready" ||
+              (upgrade.mergeSha !== null && upgrade.mergedBuildId === null))
+          }
+        />
+      )}
       {refused && (
         <Banner
           variant="error"
@@ -501,7 +524,7 @@ function Review({
           prefill={start?.prefill ?? null}
         />
       )}
-      {waiting && build.purpose === "update" && (
+      {waiting && build.purpose === "update" && canDeployEmDashUpgradeBuild(build.id, upgrade) && (
         <UpdateFromBuild build={build} review={review} canUpdate={isAdmin && !refused} />
       )}
       {waiting && isAdmin && (

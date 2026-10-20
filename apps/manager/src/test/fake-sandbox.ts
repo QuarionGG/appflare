@@ -210,6 +210,15 @@ export function fakeSandbox(
     runs,
     statusCalls,
     githubRequests,
+    async prepareEmdashUpgrade() {
+      throw new Error("this fake sandbox does not prepare EmDash upgrades");
+    },
+    async publishEmdashUpgrade() {
+      throw new Error("this fake sandbox does not publish EmDash upgrades");
+    },
+    async mergeEmdashUpgrade() {
+      throw new Error("this fake sandbox does not merge EmDash upgrades");
+    },
     async info() {
       fake.infoCalls += 1;
       const versions = opts.versionIds ?? [];

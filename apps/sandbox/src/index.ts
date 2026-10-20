@@ -5,12 +5,14 @@ import {
   buildCleanupRequestSchema,
   buildKeys,
   buildProgressRequestSchema,
+  type EmdashUpgradeOutcome,
   type RepositoryBuildOutcome,
   SANDBOX_FEATURE_ASSETS_ONLY,
   SANDBOX_FEATURE_BUILD_ENV,
   SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
+  SANDBOX_FEATURE_EMDASH_UPGRADES,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
@@ -24,6 +26,8 @@ import {
 } from "@appflare/schema";
 import { runBuild } from "./build";
 import { accountReader } from "./discover";
+import { prepareEmdashUpgrade } from "./emdash-upgrade";
+import { mergeEmdashUpgrade, publishEmdashUpgrade } from "./emdash-upgrade-github";
 import { githubFetch, heldGithubToken } from "./github";
 import { readProgress } from "./log";
 import { serveBuildObject } from "./range";
@@ -55,6 +59,14 @@ export {
  * validated here: RPC arguments are data from another Worker.
  */
 export class SandboxBuilds extends WorkerEntrypoint<Env> {
+  /** These restricted writes never expose a GitHub write token to build code. */
+  publishEmdashUpgrade(request: unknown) {
+    return publishEmdashUpgrade(this.env, request);
+  }
+
+  mergeEmdashUpgrade(request: unknown) {
+    return mergeEmdashUpgrade(this.env, request);
+  }
   /** Protocol and version, checked by the manager before it trusts this sandbox Worker. */
   info(): SandboxInfo {
     return {
@@ -65,6 +77,7 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
         SANDBOX_FEATURE_SELF_DEPLOYING,
         SANDBOX_FEATURE_REPOSITORY,
         SANDBOX_FEATURE_GITHUB_TOKENS,
+        SANDBOX_FEATURE_EMDASH_UPGRADES,
         SANDBOX_FEATURE_INSTALL_DIRS,
         SANDBOX_FEATURE_CONFIG_PATCH,
         SANDBOX_FEATURE_D1_SEED,
@@ -102,6 +115,16 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
    */
   buildRepository(request: unknown): Promise<RepositoryBuildOutcome> {
     return runRepositoryBuild(request, {
+      bucket: this.env.BUILDS,
+      sandboxVersion: this.env.APPFLARE_VERSION,
+      openSandbox: (id, instanceType) => openBuildSandbox(this.env, id, instanceType),
+      githubToken: (secretName) => heldGithubToken(this.env, secretName),
+    });
+  }
+
+  /** Prepare a dependency-only EmDash upgrade without writing GitHub or deploying it. */
+  prepareEmdashUpgrade(request: unknown): Promise<EmdashUpgradeOutcome> {
+    return prepareEmdashUpgrade(request, {
       bucket: this.env.BUILDS,
       sandboxVersion: this.env.APPFLARE_VERSION,
       openSandbox: (id, instanceType) => openBuildSandbox(this.env, id, instanceType),

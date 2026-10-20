@@ -77,7 +77,11 @@ async function recordedStart(db: D1Database, row: ActiveJobRow): Promise<boolean
 export const STRANDED_ENABLE_MS = 5 * 60 * 1000;
 
 /** Job kinds whose row is claimed before their Workflow instance is created. */
-const CLAIMED_FIRST: ReadonlySet<string> = new Set(["sandbox_enable", "move_address"]);
+const CLAIMED_FIRST: ReadonlySet<string> = new Set([
+  "sandbox_enable",
+  "move_address",
+  "emdash_upgrade",
+]);
 
 /** Whether `row` is such a job whose start died before creating its instance. */
 function isStrandedEnable(row: ActiveJobRow, at: Date): boolean {
@@ -230,6 +234,13 @@ async function reconcileJob(
         )
         .returning({ id: jobs.id });
       if (removed.length > 0) {
+        if (row.kind === "emdash_upgrade")
+          await db
+            .prepare(
+              "UPDATE emdash_upgrades SET status='failed', error='The preparation never started.', updated_at=?2 WHERE preparation_job_id=?1 AND status='preparing'",
+            )
+            .bind(row.id, now().getTime())
+            .run();
         console.warn("removed a job whose start never created it", { jobId: row.id });
         return true;
       }
@@ -251,6 +262,13 @@ async function reconcileJob(
       .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
       .returning({ id: jobs.id });
     if (updated.length === 0) return false;
+    if (row.kind === "emdash_upgrade")
+      await db
+        .prepare(
+          "UPDATE emdash_upgrades SET status='failed', error='The preparation ended before its review build started.', updated_at=?2 WHERE preparation_job_id=?1 AND status IN ('preparing','pr_open')",
+        )
+        .bind(row.id, at.getTime())
+        .run();
     await settleUpdating(orm, row, at);
     // A self-update that completed was promoted; its history entry is written
     // the same way its last step writes it (and never twice).
@@ -275,6 +293,13 @@ async function reconcileJob(
         .set({ status: "failed", updated_at: at })
         .where(and(eq(installs.id, row.install_id), eq(installs.status, "installing")));
     }
+    if (row.kind === "emdash_upgrade")
+      await db
+        .prepare(
+          "UPDATE emdash_upgrades SET status='failed', error=?2, updated_at=?3 WHERE preparation_job_id=?1 AND status IN ('preparing','pr_open')",
+        )
+        .bind(row.id, error, at.getTime())
+        .run();
     await settleUpdating(orm, row, at);
     if (error === INSTANCE_NEVER_STARTED) {
       console.warn("a job's Workflow instance was never started", {

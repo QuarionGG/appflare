@@ -20,6 +20,7 @@ const EXPECTED_TABLES = [
   "catalog_revisions",
   "catalogs",
   "cloudflare_grant",
+  "emdash_upgrades",
   "featured_dismissals",
   "github_tokens",
   "imported_app_workers",
@@ -111,17 +112,43 @@ describe("migrations index", () => {
 
 describe("ensure", () => {
   it("adds adoption metadata while preserving existing imports", async () => {
-    await createMigrator(migrations.slice(0, -1)).ensure(env.DB);
+    const adoptionIndex = migrations.findIndex(
+      (migration) => migration.tag === "0014_install_adoptions",
+    );
+    await createMigrator(migrations.slice(0, adoptionIndex)).ensure(env.DB);
     await env.DB.prepare(`INSERT INTO imported_apps
       (id, account_id, display_name, primary_worker, inventory_json, imported_at, refreshed_at)
       VALUES ('blog', 'account', 'EmDash', 'existing-worker', '{}', 1, 1)`).run();
     const before = await env.DB.prepare("SELECT * FROM imported_apps").all();
-    const outcome = await createMigrator(migrations).ensure(env.DB);
+    const outcome = await createMigrator(migrations.slice(0, adoptionIndex + 1)).ensure(env.DB);
     expect(outcome.applied).toEqual(["0014_install_adoptions"]);
     expect((await env.DB.prepare("SELECT * FROM imported_apps").all()).results).toEqual(
       before.results,
     );
     expect((await env.DB.prepare("SELECT * FROM install_adoptions").all()).results).toEqual([]);
+  });
+
+  it("adds upgrade records without granting existing GitHub tokens write usage", async () => {
+    const index = migrations.findIndex((migration) => migration.tag === "0015_emdash_upgrades");
+    await createMigrator(migrations.slice(0, index)).ensure(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO github_tokens (id, label, repositories, for_builds, for_releases, created_at) VALUES ('read-only', 'Blog build', 'example/blog', 1, 0, 1)",
+    ).run();
+    expect((await createMigrator(migrations).ensure(env.DB)).applied).toEqual([
+      "0015_emdash_upgrades",
+    ]);
+    expect(
+      await env.DB.prepare(
+        "SELECT label, repositories, for_builds, for_releases, for_repository_updates FROM github_tokens WHERE id='read-only'",
+      ).first(),
+    ).toEqual({
+      label: "Blog build",
+      repositories: "example/blog",
+      for_builds: 1,
+      for_releases: 0,
+      for_repository_updates: 0,
+    });
+    expect((await env.DB.prepare("SELECT * FROM emdash_upgrades").all()).results).toEqual([]);
   });
 
   it("creates every table on a fresh database and records the version", async () => {

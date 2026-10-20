@@ -45,10 +45,35 @@ export const addGithubTokenInput = z
     forBuilds: z.boolean().default(true),
     /** Appflare reads its own releases with it; any other token marked so is unmarked. */
     forReleases: z.boolean().default(false),
+    /** Publishing and merging reviewed dependency PRs; never a build credential. */
+    forRepositoryUpdates: z.boolean().default(false),
   })
-  .refine((input) => input.forBuilds || input.forReleases, {
+  .refine((input) => input.forBuilds || input.forReleases || input.forRepositoryUpdates, {
     message: "Choose what Appflare uses the token for.",
     path: ["forBuilds"],
+  })
+  .superRefine((input, ctx) => {
+    if (!input.forRepositoryUpdates) return;
+    const patterns = repositoryPatterns(input.repositories);
+    if (
+      patterns.length !== 1 ||
+      !/^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9._-]{1,100}$/.test(patterns[0] ?? "")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["repositories"],
+        message:
+          "Repository updates require exactly one repository, as owner/repo, without wildcards.",
+      });
+    }
+    if (input.forBuilds || input.forReleases) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["forRepositoryUpdates"],
+        message:
+          "Use a separate token for repository updates. It must not be used for builds or release downloads.",
+      });
+    }
   });
 export type AddGithubTokenInput = z.input<typeof addGithubTokenInput>;
 
@@ -58,10 +83,12 @@ export type AddGithubTokenInput = z.input<typeof addGithubTokenInput>;
  * description only orders the tokens tried for a build).
  */
 export function storedRepositories(
-  input: Pick<z.output<typeof addGithubTokenInput>, "repositories" | "forBuilds">,
+  input: Pick<z.output<typeof addGithubTokenInput>, "repositories" | "forBuilds"> & {
+    forRepositoryUpdates?: boolean;
+  },
 ): string | null {
   const text = input.repositories?.trim() ?? "";
-  return input.forBuilds && text.length > 0 ? text : null;
+  return (input.forBuilds || input.forRepositoryUpdates) && text.length > 0 ? text : null;
 }
 
 export const githubTokenIdInput = z.object({ id: z.string().min(1).max(64) });
@@ -76,6 +103,8 @@ export interface GithubTokenView {
   forBuilds: boolean;
   /** Appflare downloads its own releases with it. */
   forReleases: boolean;
+  /** Missing on older clients means false; this token never enters a build. */
+  forRepositoryUpdates?: boolean;
   /** ISO 8601. */
   createdAt: string;
   /** ISO 8601; null until a build, a check or a release download used it. */
@@ -169,7 +198,10 @@ export const REPOSITORIES_HELP =
  * for a token that lost its only use (release downloads moved to another).
  */
 export function githubTokenUses(
-  token: Pick<GithubTokenView, "repositories" | "forBuilds" | "forReleases">,
+  token: Pick<
+    GithubTokenView,
+    "repositories" | "forBuilds" | "forReleases" | "forRepositoryUpdates"
+  >,
 ): string[] {
   const uses: string[] = [];
   if (token.forBuilds) {
@@ -179,6 +211,8 @@ export function githubTokenUses(
     );
   }
   if (token.forReleases) uses.push("Appflare release downloads");
+  if (token.forRepositoryUpdates)
+    uses.push(`Repository updates of ${repositoryPatterns(token.repositories).join(", ")}`);
   return uses.length === 0 ? ["Not used"] : uses;
 }
 
@@ -196,7 +230,7 @@ export function releaseTakeoverNote(current: Pick<GithubTokenView, "label" | "fo
 
 /** What deleting a token does, for its confirmation. */
 export function deleteTokenDescription(
-  token: Pick<GithubTokenView, "forBuilds" | "forReleases">,
+  token: Pick<GithubTokenView, "forBuilds" | "forReleases" | "forRepositoryUpdates">,
 ): string {
   const parts = ["Appflare deletes the token from the sandbox Worker."];
   if (token.forBuilds) {
@@ -209,6 +243,10 @@ export function deleteTokenDescription(
       "Appflare then downloads its own releases without it, with the GitHub token Appflare was installed with, if there is one.",
     );
   }
+  if (token.forRepositoryUpdates)
+    parts.push(
+      "Preparing or merging repository update pull requests needs another dedicated update token. Installed apps keep running.",
+    );
   parts.push("Revoke the token on GitHub as well.");
   return parts.join(" ");
 }
@@ -222,27 +260,33 @@ export function deleteTokenDescription(
 export function newTokenUrl(
   label: string,
   repositories: string,
-  uses: { forBuilds: boolean; forReleases: boolean } = { forBuilds: true, forReleases: false },
+  uses: { forBuilds: boolean; forReleases: boolean; forRepositoryUpdates?: boolean } = {
+    forBuilds: true,
+    forReleases: false,
+  },
 ): string {
   const url = new URL(NEW_FINE_GRAINED_TOKEN_URL);
   url.searchParams.set("name", (label.trim() || "Appflare").slice(0, 40));
   const releasesOnly = uses.forReleases && !uses.forBuilds;
   url.searchParams.set(
     "description",
-    releasesOnly
-      ? "Appflare: read-only access to download its releases"
-      : "Appflare: read-only access to build private repositories",
+    uses.forRepositoryUpdates
+      ? "Appflare: dependency upgrade pull requests for one repository"
+      : releasesOnly
+        ? "Appflare: read-only access to download its releases"
+        : "Appflare: read-only access to build private repositories",
   );
   const named = releasesOnly
     ? [APPFLARE_REPOSITORY]
-    : uses.forBuilds
+    : uses.forBuilds || uses.forRepositoryUpdates
       ? repositoryPatterns(repositories)
       : [];
   const owner = named
     .map((pattern) => pattern.split("/")[0] ?? "")
     .find((name) => /^[a-z0-9](?:[a-z0-9-]{0,38})$/.test(name));
   if (owner !== undefined) url.searchParams.set("target_name", owner);
-  url.searchParams.set("contents", "read");
+  url.searchParams.set("contents", uses.forRepositoryUpdates ? "write" : "read");
+  if (uses.forRepositoryUpdates) url.searchParams.set("pull_requests", "write");
   url.searchParams.set("metadata", "read");
   return url.toString();
 }

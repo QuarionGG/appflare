@@ -41,6 +41,7 @@ export interface GithubTokenRecord {
   forBuilds: boolean;
   /** Appflare downloads its own releases with it (at most one token). */
   forReleases: boolean;
+  forRepositoryUpdates?: boolean;
   /** ms since the epoch. */
   createdAt: number;
   lastUsedAt: number | null;
@@ -58,6 +59,7 @@ export async function readGithubTokens(db: D1Database): Promise<GithubTokenRecor
     repositories: row.repositories,
     forBuilds: row.for_builds,
     forReleases: row.for_releases,
+    forRepositoryUpdates: row.for_repository_updates,
     createdAt: row.created_at.getTime(),
     lastUsedAt: row.last_used_at?.getTime() ?? null,
   }));
@@ -71,6 +73,7 @@ export function githubTokenViews(records: readonly GithubTokenRecord[]): GithubT
     repositories: r.repositories,
     forBuilds: r.forBuilds,
     forReleases: r.forReleases,
+    forRepositoryUpdates: r.forRepositoryUpdates === true,
     createdAt: new Date(r.createdAt).toISOString(),
     lastUsedAt: r.lastUsedAt === null ? null : new Date(r.lastUsedAt).toISOString(),
   }));
@@ -181,6 +184,7 @@ export async function addGithubTokenCore(
     repositories: storedRepositories(input),
     for_builds: input.forBuilds,
     for_releases: input.forReleases,
+    for_repository_updates: input.forRepositoryUpdates,
     created_at: at,
     last_used_at: null,
   });

@@ -56,6 +56,37 @@ function linksToItsOwnPage(): string[] {
 }
 
 describe("GithubAccessCard", () => {
+  it("keeps repository write access separate from build-only access and asks for one repository", async () => {
+    await show({ tokens: [], sandboxConnected: true, sandboxSupportsTokens: true });
+    const add = [...document.body.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Add token",
+    );
+    if (add === undefined) throw new Error("No add token action");
+    await act(async () => add.click());
+    const labelledCheckbox = (name: string): HTMLInputElement => {
+      const label = [...document.body.querySelectorAll("label")].find((item) =>
+        item.textContent?.startsWith(name),
+      );
+      const found = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      if (found === undefined || found === null) throw new Error(`No checkbox label for ${name}`);
+      return found;
+    };
+    await act(async () => labelledCheckbox("Repository updates").click());
+    expect(labelledCheckbox("Builds of private repositories").checked).toBe(false);
+    expect(page()).toContain("Contents: Read and write");
+    expect(page()).toContain("Pull requests: Read and write");
+    expect(page()).toContain("One exact owner/repository");
+    const create = [...document.body.querySelectorAll("a")].find((a) =>
+      a.textContent?.includes("Create it on GitHub"),
+    );
+    expect(create?.getAttribute("href")).toContain("contents=write");
+    expect(create?.getAttribute("href")).toContain("pull_requests=write");
+    await act(async () => labelledCheckbox("Builds of private repositories").click());
+    expect(labelledCheckbox("Repository updates").checked).toBe(false);
+    expect(create?.getAttribute("href")).toContain("contents=read");
+    expect(create?.getAttribute("href")).not.toContain("pull_requests=write");
+  });
+
   it("points up at the sandbox builds section when they are off, without linking to its own page", async () => {
     await show({ tokens: [], sandboxConnected: false, sandboxSupportsTokens: null });
     expect(page()).toContain("Sandbox builds are off");

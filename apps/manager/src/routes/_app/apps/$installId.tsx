@@ -39,6 +39,7 @@ import { DescriptionItem, DescriptionList } from "../../../components/descriptio
 import { DocsLink } from "../../../components/docs-link";
 import { DomainName, DomainNameList } from "../../../components/domain-name";
 import { emailLeftOutSummary } from "../../../components/email-again";
+import { EmDashUpdatesCard } from "../../../components/emdash-updates-card";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
@@ -228,6 +229,7 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
     <>
       <Details install={install} isAdmin={isAdmin} />
       {!gone && <SourceChangesCard install={install} isAdmin={isAdmin} />}
+      {!gone && <EmDashUpdatesCard key={install.id} install={install} isAdmin={isAdmin} />}
       {!gone && install.postInstall.length > 0 && (
         <Section id="next-steps" title="Next steps" className={FLUSH_RING_CLASS}>
           <SectionBody>

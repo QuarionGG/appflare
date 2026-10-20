@@ -109,6 +109,8 @@ export interface JobView {
    * is at `/catalog/source/<job id>`). Null for other jobs.
    */
   sourceBuild: { purpose: string; origin: string } | null;
+  /** The preparation's follow-up source build, so the job page can open its review. */
+  emdashUpgrade?: { buildId: string | null; prUrl: string | null; status: string } | null;
   /**
    * A move of Appflare's address: where to, and the sign-in page there,
    * where the browser goes once the job succeeded. Null for other jobs.
@@ -275,11 +277,20 @@ export const getJob = createServerFn({ method: "GET" })
             version: building.version,
             kind: building.kind,
           });
+    const emdashUpgrade =
+      job.kind === "emdash_upgrade"
+        ? await env.DB.prepare(
+            "SELECT build_id AS buildId, pr_url AS prUrl, status FROM emdash_upgrades WHERE preparation_job_id=?1 LIMIT 1",
+          )
+            .bind(job.id)
+            .first<{ buildId: string | null; prUrl: string | null; status: string }>()
+        : null;
     return {
       id: job.id,
       kind: job.kind,
       build,
       sourceBuild: job.kind === "source_build" ? sourceBuildOfInput(job.input_json) : null,
+      emdashUpgrade,
       addressMove: job.kind === "move_address" ? addressMoveOf(job.input_json) : null,
       restore: isRestoreJob(job),
       accessChange: isAccessChangeJob(job),
