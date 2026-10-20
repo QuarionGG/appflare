@@ -106,8 +106,12 @@ export async function emdashWriteToken(
 }
 
 async function readText(fetcher: FetchLike, url: string, missing = false): Promise<string | null> {
+  const githubSource = new URL(url).hostname === "api.github.com";
   const response = await fetcher(url, {
-    headers: { accept: "application/vnd.github.raw+json", "user-agent": "Appflare" },
+    headers: {
+      accept: githubSource ? "application/vnd.github.raw+json" : "application/json",
+      "user-agent": "Appflare",
+    },
     signal: AbortSignal.timeout(15_000),
   });
   if (missing && response.status === 404) {

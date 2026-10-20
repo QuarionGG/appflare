@@ -65,11 +65,21 @@ function dependencies() {
     },
   });
   const jobs: Array<{ id: string; params: unknown }> = [];
-  const fetcher = async (url: string) => {
+  const requests: Array<{ url: string; accept: string | null }> = [];
+  const fetcher = async (url: string, init?: RequestInit) => {
+    const accept = new Headers(init?.headers).get("accept");
+    requests.push({ url, accept });
     if (url.includes("info/refs")) return new Response(ADVERTISEMENT);
-    if (url.includes("/contents/package.json?")) return new Response(JSON.stringify(PKG));
-    if (url.includes("/contents/pnpm-lock.yaml?")) return new Response(LOCK);
-    if (url.startsWith("https://registry.npmjs.org/")) return Response.json({ version: "1.3.0" });
+    if (url.includes("/contents/")) {
+      if (accept !== "application/vnd.github.raw+json")
+        return new Response("Not Acceptable", { status: 406 });
+      if (url.includes("/contents/package.json?")) return new Response(JSON.stringify(PKG));
+      if (url.includes("/contents/pnpm-lock.yaml?")) return new Response(LOCK);
+    }
+    if (url.startsWith("https://registry.npmjs.org/"))
+      return accept === "application/json"
+        ? Response.json({ version: "1.3.0" })
+        : new Response("Not Acceptable", { status: 406 });
     throw new Error(`Unexpected test request ${url}`);
   };
   let sequence = 0;
@@ -100,7 +110,7 @@ function dependencies() {
       },
     },
   };
-  return { deps, sandbox, jobs };
+  return { deps, sandbox, jobs, requests };
 }
 
 beforeEach(async () => {
@@ -116,6 +126,22 @@ beforeEach(async () => {
 });
 
 describe("custom EmDash upgrade orchestration", () => {
+  it("requests npm release metadata as JSON and GitHub source files as raw content", async () => {
+    const { deps, requests } = dependencies();
+    await checkEmdashUpgradeCore(deps, "i1");
+    expect(requests.filter(({ url }) => url.startsWith("https://registry.npmjs.org/"))).toEqual([
+      { url: "https://registry.npmjs.org/emdash/latest", accept: "application/json" },
+      {
+        url: "https://registry.npmjs.org/@emdash-cms%2fcloudflare/latest",
+        accept: "application/json",
+      },
+    ]);
+    expect(
+      requests
+        .filter(({ url }) => url.includes("/contents/"))
+        .every(({ accept }) => accept === "application/vnd.github.raw+json"),
+    ).toBe(true);
+  });
   it("reports locked core and preserves custom plugin declarations", async () => {
     const { deps } = dependencies();
     const plan = await checkEmdashUpgradeCore(deps, "i1");
